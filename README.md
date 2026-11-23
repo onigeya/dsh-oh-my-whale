@@ -34,12 +34,16 @@ DSH 记忆插件。**本版本只有底座**：可被宿主加载、可用一条
 
 **不要**改 `cordis.yml`：它是每次启动都被重写的生成物，文件头就写着「Edit cordis.patch.yml, not this file」。把条目写错地方时，`omw doctor` 会直接告诉你 `OMW_CONFIG_WRONG_PATCH_FILE` 并指向正确文件。
 
-### ③ 重启后验证
+### ③ 验证（装完即可用，不必重启）
+
+web profile 里 `dsh-hmr` 是启用的：它监听 profile 的 `package.json`、`cordis.patch.yml` 与 `--patch` 覆盖层，**profile 重新组合时会替换"磁盘上已加载文件发生变化"的插件**——包括 `node_modules` 下的已安装包与 `link:` 包的目标。因此改完本插件（源码重建、`assets/persona.md` 等）之后，触发一次重新组合即可热生效：改一行 `cordis.patch.yml`（例如给条目加一个 `config:` 键），或在 Plugin Manager 里做一次操作。实测：改身份段文本后触发重组合，宿主提示里的 `omw:persona` 段当场换成新文本，无需重启。
+
+headless / SDK / ACP 组合包默认关闭 HMR，那些场景下仍以重启为准。
 
 ```bash
 dsh --profile <名字> --dump-config   # 组合后的树里应出现 {id: oh-my-whale, name: dsh-oh-my-whale}
 dsh --profile <名字> "hi"            # stderr 恰一次 [omw] loaded ... section=omw:persona
-omw doctor --profile <名字>          # 五项全绿，退出码 0
+omw doctor --profile <名字>          # 无失败即退出码 0（库被宿主占用时 1/2/3 项 skip）
 ```
 
 stderr 的加载行由插件自己写，不走 `ctx.logger`：宿主只把插件日志压进内存环形缓冲，且唯一的 exporter 只转发 `warn`/`error`。这一行也**不**写进 `omw.log`，否则「库坏时 `omw.log` 恰一行」就不成立。
