@@ -1,15 +1,15 @@
 /**
  * Test support: recording contexts, temporary homes, and log readers.
  *
- * The recording context is the production one used by `omw doctor`, so a test
- * and a diagnosis observe exactly the same registrations.
+ * The recording context is the same one the plugin sees in tests, so a test and
+ * a diagnosis observe exactly the same registrations.
  * @module
  */
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createRecordingContext } from '../../src/cli/recording-ctx.ts'
 import { createLogger, createMemorySink, type Logger } from '../../src/seams/logger.ts'
+import { createRecordingContext } from './recording-ctx.ts'
 
 export { createRecordingContext }
 

@@ -185,3 +185,23 @@ describe('load: tool registration is all-or-nothing', () => {
     expect(disposed).toEqual(['recall', 'remember'])
   })
 })
+
+describe('load: optional host surfaces', () => {
+  it('does not fail the mount when the tools property throws without inject', () => {
+    const home = tempHome()
+    homes.push(home)
+    const recorder = createRecordingContext({ home: home.dir })
+    const guarded = {
+      ...recorder.ctx,
+      get: (_name: string): unknown => undefined,
+      get tools(): never {
+        // Mirrors Cordis: reading an un-injected service throws.
+        throw new Error('cannot get property "tools" without inject')
+      },
+    }
+    const { stderr } = captureStderr(() => apply(guarded, {}))
+    expect(stderr).toContain('[omw] loaded state=ok')
+    // The mount survived, so the section was registered on the guarded context.
+    expect(guarded.get('tools')).toBeUndefined()
+  })
+})

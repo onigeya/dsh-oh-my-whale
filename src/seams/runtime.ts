@@ -396,9 +396,15 @@ function resolveToolRegistry(ctx: RuntimeContext): ToolRegistryLike | undefined 
     } catch {
       // Fall through to the direct property: a harness may expose one or the other.
     }
-    return ctx.tools
   }
-  return ctx.tools
+  // A real Cordis context throws on an un-injected property ("cannot get property
+  // "tools" without inject"), so the direct property is only usable behind a guard.
+  // Test doubles and embedding harnesses expose it as a plain value.
+  try {
+    return ctx.tools
+  } catch {
+    return undefined
+  }
 }
 
 /** Whether a value looks like a Cordis tool registry. */

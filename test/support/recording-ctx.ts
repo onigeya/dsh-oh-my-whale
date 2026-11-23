@@ -1,16 +1,15 @@
 /**
  * A recording host context for offline verification.
  *
- * `omw doctor` has to answer "does the built artifact register the identity
- * section?" without a live host, without a model turn, without network, and
- * without writing business nodes. It does that by calling the real `apply` with
- * this recording context and inspecting what was registered.
+ * Tests mount the real `apply` against this context and inspect what the plugin
+ * registered: sections, runtime contexts, tool definitions, disposers. No live
+ * host, no model turn, no network, no business writes.
  * @module
  */
 import { join } from 'node:path'
-import type { HomePath } from '../seams/config.ts'
-import type { SystemPromptLike } from '../seams/prompt-composer.ts'
-import type { ToolDefinitionLike, ToolRegistryLike } from '../seams/tools.ts'
+import type { HomePath } from '../../src/seams/config.ts'
+import type { SystemPromptLike } from '../../src/seams/prompt-composer.ts'
+import type { ToolDefinitionLike, ToolRegistryLike } from '../../src/seams/tools.ts'
 
 /** One recorded `systemPrompt.section` call. */
 export interface RecordedSection {
@@ -80,7 +79,7 @@ function textOf(value: string | (() => string)): string {
  * @returns the recorder and the context it exposes.
  */
 export function createRecordingContext(options: RecordingContextOptions = {}): RecordingContext {
-  const home = options.home ?? join(process.cwd(), '.omw-doctor')
+  const home = options.home ?? join(process.cwd(), '.omw-test')
   const sections: RecordedSection[] = []
   const contexts: RecordedContext[] = []
   const tools: string[] = []

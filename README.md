@@ -32,7 +32,7 @@ DSH 记忆插件。**本版本只有底座**：可被宿主加载、可用一条
 
 新增插件必须写成 `- insert:` 下的行；裸条目（只有 `id:`）只能覆盖已存在的 id。
 
-**不要**改 `cordis.yml`：它是每次启动都被重写的生成物，文件头就写着「Edit cordis.patch.yml, not this file」。把条目写错地方时，`omw doctor` 会直接告诉你 `OMW_CONFIG_WRONG_PATCH_FILE` 并指向正确文件。
+**不要**改 `cordis.yml`：它是每次启动都被重写的生成物，文件头就写着「Edit cordis.patch.yml, not this file」。写错地方时插件不会加载——改完后用 `/omw doctor` 看第 5 项是否 pass，就能确认这次改动有没有真的生效。
 
 ### ③ 验证（装完即可用，不必重启）
 
@@ -43,52 +43,32 @@ headless / SDK / ACP 组合包默认关闭 HMR，那些场景下仍以重启为�
 ```bash
 dsh --profile <名字> --dump-config   # 组合后的树里应出现 {id: oh-my-whale, name: dsh-oh-my-whale}
 dsh --profile <名字> "hi"            # stderr 恰一次 [omw] loaded ... section=omw:persona
-omw doctor --profile <名字>          # 无失败即退出码 0（库被宿主占用时 1/2/3 项 skip）
 ```
 
 stderr 的加载行由插件自己写，不走 `ctx.logger`：宿主只把插件日志压进内存环形缓冲，且唯一的 exporter 只转发 `warn`/`error`。这一行也**不**写进 `omw.log`，否则「库坏时 `omw.log` 恰一行」就不成立。
 
-## 体检：`/omw doctor`（聊天里）与 `omw doctor`（终端）
+## 体检：`/omw doctor`
 
-**在聊天里**：直接发 `/omw doctor`。它在本进程内跑同样五项，**复用当前实例已经打开的库句柄**，因此不会和运行中的宿主抢租约——这也正是它比终端命令更适合日常使用的原因。插件处于 `no-op` 时命令照样可用（那时最需要它），输出第 1 项会直接点名让插件退场的那个码。
+在输入框里直接发 `/omw doctor`。它在本进程内跑五项检查，**复用当前实例已经打开的库句柄**——所以它不会和运行中的宿主抢数据库租约，也不需要另起一个进程。插件处于 `no-op` 时命令照样注册（那时最需要它），第 1 项会直接点名让插件退场的那个码。
 
 ```
 /omw doctor   五项检查
 /omw help     说明
 ```
 
-**在终端里**（不给 DSH 运行时用，或要检查一个没启动的 profile）：
-
-```bash
-omw doctor [--home <DSH_HOME>] [--profile <名字>] [--json]
-```
-
 五项按固定顺序检查，逐项 pass / FAIL / skip：
 
 | # | 检查 | 判据 | 失败码 |
 | --- | --- | --- | --- |
-| 1 | 库能开 | 打开 `oh-my-whale.tdb`（今日快照可校验时以只读打开，否则可写以便补做）；被运行中的宿主持租约时判 skip | `OMW_DB_OPEN` |
+| 1 | 库能开 | 当前实例的库句柄可用；整体退场时点名让它退场的码 | `OMW_DB_OPEN` |
 | 2 | 快照校验过 | 今天有已校验快照，缺则补做一份 | `OMW_SNAPSHOT_VERIFY` |
 | 3 | 维度匹配 | `db.dim` 与库一致 | `OMW_DIM_MISMATCH` |
 | 4 | 凭据可用 | `embedding.apiKeyEnv` 指向的环境变量已设置 | `OMW_EMBED_AUTH` |
-| 5 | 注入段已注册 | 构建产物在临时数据目录里调 `apply` 后注册了 `omw:persona` 且文本非空 | `OMW_SECTION_NOT_REGISTERED` |
+| 5 | 注入段已注册 | 本实例注册了 `omw:persona` 且文本非空，并报出已注册的工具数 | `OMW_SECTION_NOT_REGISTERED` |
 
-退出码：**0** 没有失败（skip 不计入失败）、**1** 有检查失败、**2** 未找到 profile。
+退出码不适用（它是聊天里的命令）：命令用消息文本报告，有失败时以错误样式返回，摘要给出「k/5 通过」与首个失败码。
 
-宿主正在运行、库被它的访问租约独占时，第 1 项判 **skip** 而不是 FAIL，第 2、3 项随之 skip，摘要写明「N 项跳过（库被占用）」。占用是正常状态，不是库坏了；真正损坏或无法打开的库仍然报 `OMW_DB_OPEN`。
-
-结构性配置错误不占用上面五项，而是先于它们被判：
-
-| 码 | 含义 |
-| --- | --- |
-| `OMW_CONFIG_DEP_NOT_DECLARED` | profile 的 `dsh.profile.bundles` 没有本包 |
-| `OMW_CONFIG_WRONG_PATCH_FILE` | 条目写进了生成物 `cordis.yml` |
-| `OMW_CONFIG_PATCH_ENTRY_MISSING` | `cordis.patch.yml` 里没有 insert 条目 |
-| `OMW_CONFIG_SCHEMA` | 条目 `config:` 不合法（点名键与收到的类型） |
-
-体检的边界：一次运行**只追加一行** `omw.log`、**不发任何网络请求**（凭据项只读环境变量）、**不写业务节点**。「凭据可用」不校验密钥真伪——那需要一次真实请求，与「零网络」冲突；密钥是否有效在第一次真正调用 embedding 时由 `OMW_EMBED_AUTH` 判定。
-
-> 第 5 项会用录制式假 ctx 加载 `lib/index.js` 并调用 `apply`，因此你会在这条命令的 stderr 里也看到一次 `[omw] loaded`。那正是它验的东西。该次挂载跑在 `mkdtemp` 出来的临时数据目录里（`db.path` 指向其中），因此宿主运行中也能拿到 `state=ok` 与真实工具数，既不会碰用户的库、也不会产生快照或第二行 `omw.log`；临时目录在返回前删除。
+体检的边界：**零网络**（凭据项只读环境变量）、不新开数据库连接、不写业务节点。缺当天快照时会补做并校验——这是「快照校验过」这一项的字面含义。「凭据可用」不校验密钥真伪：那需要一次真实请求，与零网络冲突；密钥是否有效由第一次真正调用 embedding 时的 `OMW_EMBED_AUTH` 判定。
 
 ## 降级：只有三档，没有中间态
 
@@ -120,7 +100,7 @@ omw doctor [--home <DSH_HOME>] [--profile <名字>] [--json]
 
 ```bash
 pnpm install
-pnpm build          # 产出 lib/index.js 与 lib/cli.js
+pnpm build          # 清空 lib/ 后产出 lib/index.js（插件入口）
 pnpm test           # vitest；会先自动 build
 pnpm lint           # tsc --noEmit + scripts/check-layers.mjs + eslint .
 pnpm gate -- --gate g0-6   # 层依赖闸门取证 -> docs/implementation-artifacts/gates/g0-6.json
