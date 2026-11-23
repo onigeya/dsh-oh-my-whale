@@ -1,0 +1,17 @@
+# The dsh-oh-my-whale bundle patch (declared by package.json `dsh.bundle.patch`).
+#
+# This file deliberately contributes no rows. Loading the plugin takes two
+# separate declarations, and neither one alone is enough:
+#
+#   1. the package is listed in the *profile's* package.json under
+#      `dsh.profile.bundles` (the dependency declaration), and
+#   2. the *profile's* `cordis.patch.yml` carries the insert entry:
+#
+#          - insert:
+#              - id: oh-my-whale
+#                name: dsh-oh-my-whale
+#                config: {}
+#
+# Editing the generated `cordis.yml` instead is the classic mistake; it is
+# rewritten on every boot. See README.md § 启用三步.
+[]

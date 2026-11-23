@@ -1,2 +1,7 @@
 _bmad/
 .agents/
+node_modules/
+lib/
+.omw-e2e/
+coverage/
+*.tsbuildinfo

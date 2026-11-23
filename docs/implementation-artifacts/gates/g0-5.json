@@ -1,8 +1,8 @@
 {
   "gate": "G0-5",
   "status": "pass",
-  "timestamp": "2026-11-23T07:30:58.880Z",
-  "baselineRevision": "cf04e95038f7fd6d7be37589f3f3fd03bbdcb9b7",
+  "timestamp": "2026-11-23T08:10:44.566Z",
+  "baselineRevision": "489780a6852de33aa1dbb5ddeb2ea2968e816dee",
   "node": "v24.21.0",
   "platform": "win32-x64",
   "checks": [
@@ -14,7 +14,7 @@
     {
       "name": "e2e-loads-plugin",
       "ok": true,
-      "detail": "Duration  5.60s (tests 99%)"
+      "detail": "[omw] loaded state=ok section=omw:persona data=C:\\Users\\ellio\\AppData\\Local\\Temp\\omw-e2e-r4GgQq\\oh-my-whale"
     }
   ]
 }
