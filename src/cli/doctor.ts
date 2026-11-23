@@ -18,7 +18,8 @@
  * exactly one line to `omw.log`.
  * @module
  */
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { calendarDay, ensureDailySnapshot, listSnapshots, verifySnapshotAt } from '../ops/snapshots.ts'
@@ -115,6 +116,22 @@ export interface DoctorOptions {
 /** Default built entry: `lib/index.js` two levels above `lib/cli/` or `src/cli/`. */
 export function defaultEntryPath(): string {
   return fileURLToPath(new URL('../../lib/index.js', import.meta.url))
+}
+
+/**
+ * Is this open failure the engine's access lease — another process holding the file?
+ *
+ * A running DSH is the normal case, not a defect: the single-file engine grants one
+ * lease at a time, so the doctor cannot open the same file while the host has it.
+ * Everything else that fails to open (a corrupt file, an unreadable one) stays a
+ * failure; only the lease is downgraded to a skip.
+ * @param opened - the failed open attempt.
+ * @returns true when the file is held by a live lease.
+ */
+function isAccessLeaseLock(opened: { readonly errorCode?: string; readonly reason: string }): boolean {
+  if (opened.errorCode === 'TDB_DATABASE_LOCKED') return true
+  const text = opened.reason.toLowerCase()
+  return text.includes('database locked') || text.includes('incompatible access lease')
 }
 
 /** Pad a check id to a stable column width. */
@@ -229,6 +246,8 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
   let db: Database | undefined
   /** A dimension mismatch surfaces as an open failure, before any handle exists. */
   let dimFromOpenError: { fileDim: number | null; requestedDim: number } | undefined
+  /** True when the open failed on the engine's access lease, i.e. a host is running. */
+  let leaseLock = false
 
   // 1/5 — the database opens.
   //
@@ -270,6 +289,17 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
       status: 'pass',
       detail: `${paths.dbFile}（可打开；维度与 db.dim 不符，见第 3 项）`,
     })
+  } else if (isAccessLeaseLock(opened)) {
+    // A live host holds the one lease the engine grants. That is the normal state of
+    // an installed and running plugin, not a broken database — so the deep checks are
+    // skipped instead of reporting the occupancy as a failure.
+    leaseLock = true
+    checks.push({
+      id: 'db',
+      label: '库能开',
+      status: 'skip',
+      detail: `${paths.dbFile} 正被运行中的 DSH 占用，本项跳过深度校验（真正损坏或无法打开的库仍为 FAIL）`,
+    })
   } else {
     checks.push({ id: 'db', label: '库能开', status: 'fail', code: 'OMW_DB_OPEN', detail: `库打不开：${opened.reason}` })
   }
@@ -280,7 +310,9 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
       id: 'snapshot',
       label: '快照校验过',
       status: 'skip',
-      detail: dimFromOpenError === undefined ? '依赖第 1 项，未执行' : '库句柄不可用（维度不符），未执行',
+      detail: leaseLock
+        ? '库正被运行中的 DSH 占用（依赖第 1 项），未执行'
+        : dimFromOpenError === undefined ? '依赖第 1 项，未执行' : '库句柄不可用（维度不符），未执行',
     })
   } else {
     try {
@@ -329,7 +361,12 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
       detail: `db.dim=${config.db.dim}，库=${dimFromOpenError.fileDim === null ? '未知' : dimFromOpenError.fileDim}`,
     })
   } else if (db === undefined) {
-    checks.push({ id: 'dim', label: '维度匹配', status: 'skip', detail: '依赖第 1 项，未执行' })
+    checks.push({
+      id: 'dim',
+      label: '维度匹配',
+      status: 'skip',
+      detail: leaseLock ? '库正被运行中的 DSH 占用（依赖第 1 项），未执行' : '依赖第 1 项，未执行',
+    })
   } else {
     let actual: number | null = null
     try {
@@ -374,13 +411,14 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
   }
 
   // 5/5 — the built artifact registers the identity section.
+  //
+  // This must work while a host is running and holds the database lease, so the
+  // check mounts the plugin against a scratch data directory of its own (see
+  // {@link checkSection}). The live database and snapshot tree stay untouched.
   checks.push(await checkSection({
     home,
     ...(options.entryPath === undefined ? {} : { entryPath: options.entryPath }),
-    // The real config, so the check exercises the paths the user configured — but
-    // with unlimited retention, because mounting the plugin also runs the daily
-    // snapshot step, and a diagnosis must not rotate anyone's history away.
-    config: { ...config, snapshot: { ...config.snapshot, keep: Number.MAX_SAFE_INTEGER } },
+    config,
     logger: createLogger(createMemorySink(), { now, keepEvents: false }),
   }))
 
@@ -396,20 +434,26 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
     ...(firstFailure?.code === undefined ? {} : { code: firstFailure.code }),
   })
   return buildReport({
+    // Skips are not failures: a host that is running is exactly when the lease is
+    // taken, and the doctor must still answer the question it can answer.
     exitCode: failed === 0 ? 0 : 1,
     profile: options.profile,
     home,
     dataDir: paths.dataDir,
     checks,
+    ...(leaseLock ? { skipNote: '库被占用' } : {}),
   })
 }
 
 /**
  * Exercise the built entry against a recording context.
  *
- * The profile's own config is passed through, so the check exercises the paths
- * the user actually configured, and logging goes to memory so this run still
- * appends exactly one `omw.log` line.
+ * The profile's own config is passed through, with one substitution: the database
+ * path points into a throwaway directory. Mounting the plugin opens the database and
+ * may create today's snapshot, so touching the live data root would fail whenever a
+ * host holds the lease — precisely the situation this check has to survive. The
+ * scratch directory is removed before returning, and logging goes to memory so this
+ * run still appends exactly one `omw.log` line.
  */
 async function checkSection(options: {
   home: string
@@ -427,6 +471,14 @@ async function checkSection(options: {
       detail: `未找到构建产物 ${entry}，先跑 pnpm build`,
     }
   }
+  const scratch = mkdtempSync(join(tmpdir(), 'omw-doctor-section-'))
+  const isolated: Config = {
+    ...options.config,
+    db: { ...options.config.db, path: join(scratch, 'oh-my-whale.tdb') },
+    // Unlimited retention is moot in a scratch directory, but keeps the mount from
+    // spending time on rotation if the implementation ever changes.
+    snapshot: { ...options.config.snapshot, keep: Number.MAX_SAFE_INTEGER },
+  }
   const recorder = createRecordingContext({ home: options.home })
   try {
     const module = await import(pathToFileURL(entry).href) as { apply?: unknown }
@@ -441,7 +493,7 @@ async function checkSection(options: {
     }
     ;(module.apply as (ctx: unknown, config: unknown, seams?: unknown) => void)(
       recorder.ctx,
-      options.config,
+      isolated,
       { logger: options.logger },
     )
     const section = recorder.sections.find(entrySection => entrySection.name === PERSONA_SECTION_NAME)
@@ -479,6 +531,7 @@ async function checkSection(options: {
     }
   } finally {
     recorder.dispose()
+    rmSync(scratch, { recursive: true, force: true })
   }
 }
 
@@ -504,6 +557,8 @@ function buildReport(input: {
   dataDir: string
   checks: readonly DoctorCheck[]
   structural?: DoctorCheck
+  /** Short reason appended to the skip count, e.g. `库被占用`. */
+  skipNote?: string
 }): DoctorReport {
   const lines: string[] = []
   if (input.structural !== undefined) {
@@ -516,11 +571,14 @@ function buildReport(input: {
   const failed = input.checks.filter(check => check.status === 'fail').length
   const skipped = input.checks.filter(check => check.status === 'skip').length
   const firstFailure = input.structural ?? input.checks.find(check => check.status === 'fail')
+  const skipSuffix = skipped === 0
+    ? ''
+    : `、${skipped} 跳过${input.skipNote === undefined ? '' : `（${input.skipNote}）`}`
   const summary = input.exitCode === 2
     ? `omw doctor: 未找到 profile "${input.profile}"`
     : firstFailure === undefined
-      ? `omw doctor: ${passed}/${input.checks.length} 通过`
-      : `omw doctor: ${passed}/${input.checks.length} 通过、${failed} 失败${skipped === 0 ? '' : `、${skipped} 跳过`}；首个失败 ${firstFailure.code ?? firstFailure.id}`
+      ? `omw doctor: ${passed}/${input.checks.length} 通过${skipSuffix}`
+      : `omw doctor: ${passed}/${input.checks.length} 通过、${failed} 失败${skipSuffix}；首个失败 ${firstFailure.code ?? firstFailure.id}`
   lines.push(summary)
   lines.push(`数据目录：${input.dataDir}`)
   return {

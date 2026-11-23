@@ -1,7 +1,7 @@
 {
   "name": "dsh-oh-my-whale",
   "version": "0.1.0",
-  "description": "哦鲸鲸（oh-my-whale）— DSH 记忆插件底座：可加载、可体检、可降级（Epic 1）",
+  "description": "鲸鲸（oh-my-whale）— DSH 记忆插件底座：可加载、可体检、可降级（Epic 1）",
   "type": "module",
   "main": "lib/index.js",
   "types": "./lib/index.d.ts",

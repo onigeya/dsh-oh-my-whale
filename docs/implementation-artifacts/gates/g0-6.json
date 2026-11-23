@@ -1,8 +1,8 @@
 {
   "gate": "G0-6",
   "status": "pass",
-  "timestamp": "2026-11-23T08:10:38.333Z",
-  "baselineRevision": "489780a6852de33aa1dbb5ddeb2ea2968e816dee",
+  "timestamp": "2026-11-23T08:46:08.273Z",
+  "baselineRevision": "15ba1150047a99541de52337c3e8dbce3236638f",
   "node": "v24.21.0",
   "platform": "win32-x64",
   "checks": [

@@ -243,6 +243,60 @@ describe('doctor: snapshot backfill', () => {
   })
 })
 
+describe('doctor: a running host holds the database lease', () => {
+  /** Open the live database and keep the lease, the way a running DSH does. */
+  function holdLease(home: TempHome) {
+    const dataDir = home.path('oh-my-whale')
+    mkdirSync(dataDir, { recursive: true })
+    const opened = openDatabase({ file: join(dataDir, 'oh-my-whale.tdb'), dim: 1024, memoryLimitMb: 512 })
+    expect(opened.ok).toBe(true)
+    if (!opened.ok) throw new Error(opened.reason)
+    return opened.db
+  }
+
+  it('skips db, snapshot and dim instead of reporting a locked file as broken', async () => {
+    const home = makeProfile()
+    const holder = holdLease(home)
+    try {
+      const report = await doctor(home)
+      const statusOf = (id: string): string | undefined => report.checks.find(check => check.id === id)?.status
+      expect(statusOf('db')).toBe('skip')
+      expect(statusOf('snapshot')).toBe('skip')
+      expect(statusOf('dim')).toBe('skip')
+      expect(report.checks.some(check => check.status === 'fail')).toBe(false)
+      expect(report.exitCode).toBe(0)
+      expect(report.summary).toContain('跳过')
+      expect(report.summary).toContain('库被占用')
+      expect(report.checks.find(check => check.id === 'db')?.detail).toContain('被运行中的 DSH 占用')
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      closeDatabase(holder)
+    }
+  })
+
+  it('still registers the section from a scratch directory, leaving the live data untouched', async () => {
+    const home = makeProfile()
+    const holder = holdLease(home)
+    const dataDir = home.path('oh-my-whale')
+    const before = readdirSync(dataDir).sort()
+    try {
+      const report = await doctor(home)
+      const section = report.checks.find(check => check.id === 'section')
+      expect(section?.status).toBe('pass')
+      expect(section?.detail).toContain('4 个工具')
+      // The section check mounted the plugin in its own scratch directory: no
+      // snapshot, no second log line, nothing else in the user's data root.
+      expect(existsSync(join(dataDir, 'snapshots'))).toBe(false)
+      expect(readdirSync(dataDir).sort()).toEqual([...before, 'omw.log'].sort())
+      const logLines = readJsonLines(join(dataDir, 'omw.log'))
+      expect(logLines).toHaveLength(1)
+      expect(logLines[0]).toMatchObject({ code: 'OMW_DOCTOR' })
+    } finally {
+      closeDatabase(holder)
+    }
+  })
+})
+
 describe('doctor: process exit codes', () => {
   const cli = join(repoRoot, 'lib', 'cli.js')
 

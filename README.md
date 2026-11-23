@@ -1,4 +1,4 @@
-# dsh-oh-my-whale（哦鲸鲸）
+# dsh-oh-my-whale（鲸鲸）
 
 DSH 记忆插件。**本版本只有底座**：可被宿主加载、可用一条命令体检、坏掉时可以整档退场或只关向量路径。记忆语义（记住、想起、遗忘、解释）属于后续 epic，四个工具名在此只注册占位，调用返回 `E_NOT_IMPLEMENTED`。
 
@@ -54,13 +54,15 @@ omw doctor [--home <DSH_HOME>] [--profile <名字>] [--json]
 
 | # | 检查 | 判据 | 失败码 |
 | --- | --- | --- | --- |
-| 1 | 库能开 | 打开 `oh-my-whale.tdb`（已存在则以只读打开） | `OMW_DB_OPEN` |
+| 1 | 库能开 | 打开 `oh-my-whale.tdb`（今日快照可校验时以只读打开，否则可写以便补做）；被运行中的宿主持租约时判 skip | `OMW_DB_OPEN` |
 | 2 | 快照校验过 | 今天有已校验快照，缺则补做一份 | `OMW_SNAPSHOT_VERIFY` |
 | 3 | 维度匹配 | `db.dim` 与库一致 | `OMW_DIM_MISMATCH` |
 | 4 | 凭据可用 | `embedding.apiKeyEnv` 指向的环境变量已设置 | `OMW_EMBED_AUTH` |
-| 5 | 注入段已注册 | 构建产物调 `apply` 后注册了 `omw:persona` 且文本非空 | `OMW_SECTION_NOT_REGISTERED` |
+| 5 | 注入段已注册 | 构建产物在临时数据目录里调 `apply` 后注册了 `omw:persona` 且文本非空 | `OMW_SECTION_NOT_REGISTERED` |
 
-退出码：**0** 全部通过、**1** 有检查失败、**2** 未找到 profile。
+退出码：**0** 没有失败（skip 不计入失败）、**1** 有检查失败、**2** 未找到 profile。
+
+宿主正在运行、库被它的访问租约独占时，第 1 项判 **skip** 而不是 FAIL，第 2、3 项随之 skip，摘要写明「N 项跳过（库被占用）」。占用是正常状态，不是库坏了；真正损坏或无法打开的库仍然报 `OMW_DB_OPEN`。
 
 结构性配置错误不占用上面五项，而是先于它们被判：
 
@@ -73,7 +75,7 @@ omw doctor [--home <DSH_HOME>] [--profile <名字>] [--json]
 
 体检的边界：一次运行**只追加一行** `omw.log`、**不发任何网络请求**（凭据项只读环境变量）、**不写业务节点**。「凭据可用」不校验密钥真伪——那需要一次真实请求，与「零网络」冲突；密钥是否有效在第一次真正调用 embedding 时由 `OMW_EMBED_AUTH` 判定。
 
-> 第 5 项会用录制式假 ctx 加载 `lib/index.js` 并调用 `apply`，因此你会在这条命令的 stderr 里也看到一次 `[omw] loaded`。那正是它验的东西。
+> 第 5 项会用录制式假 ctx 加载 `lib/index.js` 并调用 `apply`，因此你会在这条命令的 stderr 里也看到一次 `[omw] loaded`。那正是它验的东西。该次挂载跑在 `mkdtemp` 出来的临时数据目录里（`db.path` 指向其中），因此宿主运行中也能拿到 `state=ok` 与真实工具数，既不会碰用户的库、也不会产生快照或第二行 `omw.log`；临时目录在返回前删除。
 
 ## 降级：只有三档，没有中间态
 
