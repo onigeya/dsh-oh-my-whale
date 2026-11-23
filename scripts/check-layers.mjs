@@ -14,6 +14,9 @@
  *   triviumdb-owner    triviumdb is importable only from src/store/**
  *   prompt-seam-owner  systemPrompt.section(/.context( only in src/seams/prompt-composer.ts
  *   hard-delete-owner  delete(/deleteManyAtomic(/unlink(/unlinkLabel( only in src/ops/snapshots.ts
+ *   write-authority    every engine write method only in src/store/commits/** (AD-4)
+ *   tql-owner          prepareTql/executePreparedTql only in src/store/templates/**
+ *   exists-owner       the only query prefix allowed is `superseded_at: {$exists: false}`, and only in src/store/templates/**
  *
  * Usage: node scripts/check-layers.mjs [--root <dir>] [--json]
  * Exit: 0 when every rule holds, 1 with one line per violation.
@@ -59,6 +62,55 @@ const HARD_DELETE_TOKENS = ['delete(', 'deleteManyAtomic(', 'unlink(', 'unlinkLa
 
 /** Tokens that must never appear outside the prompt composer (AD-7). */
 const PROMPT_SEAM_TOKENS = ['systemPrompt.section(', 'systemPrompt.context(']
+
+/**
+ * Files allowed to call an engine write method.
+ *
+ * AD-4 says one write entry point, one transaction; the commit engine is that
+ * point. The two older modules are named exceptions because they predate it and
+ * write one narrowly-scoped node each — the contract flag and the vector state —
+ * through the same handle, not through the commit path.
+ */
+const WRITE_AUTHORITY_OWNERS = [
+  join('store', 'commits'),
+  join('store', 'meta.ts'),
+  join('store', 'vector-write.ts'),
+  join('store', 'schema.ts'),
+]
+
+/** Every method that mutates the store. A new one belongs here too. */
+const WRITE_TOKENS = [
+  'insert(',
+  'insertWithId(',
+  'batchInsert(',
+  'upsertWithId(',
+  'patchPayload(',
+  'updatePayload(',
+  'updateVector(',
+  'link(',
+  'upsertEdge(',
+  'commitTransaction(',
+  'tqlMut(',
+]
+
+/** Directory allowed to hold TQL text (AD-8: one place, literal, precompiled). */
+const TQL_OWNER_DIR = join('store', 'templates')
+
+/** TQL entry points that must stay inside {@link TQL_OWNER_DIR}. */
+const TQL_TOKENS = ['prepareTql(', 'executePreparedTql(']
+
+/**
+ * The one predicate-filter prefix this codebase is allowed to contain.
+ *
+ * `$exists` cannot be parameterised — TQL takes its filter as a literal — so the
+ * live-version filter is repeated in each template rather than shared. That is
+ * why the rule pins both the directory and the exact shape.
+ */
+const EXISTS_OWNER_DIR = join('store', 'templates')
+const EXISTS_ALLOWED = 'superseded_at: {$exists: false}'
+
+/** Tokens whose presence means an `$exists` filter is being written. */
+const EXISTS_TOKENS = ['$exists']
 
 /** Recursively collect source files. */
 function sourceFiles(root) {
@@ -124,6 +176,23 @@ function layerOfSpecifier(file, specifier, root) {
   return LAYERS.includes(first) ? { kind: 'layer', layer: first } : { kind: 'outside' }
 }
 
+/**
+ * Index of the first `token` that is a call and not the tail of a longer name.
+ *
+ * A bare `indexOf` would read `unlink(` as `link(`, and the write gate would then
+ * blame the snapshot module for a call it never makes. A preceding `.` is fine
+ * (that is how every call is written); any other identifier character is not.
+ * @param code - source text with comments stripped.
+ * @param token - the call token, parentheses included.
+ * @returns the index, or `-1`.
+ */
+function findCall(code, token) {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/gu, match => `\\${match}`)
+  const pattern = new RegExp(`(?<![A-Za-z0-9_$])${escaped}`, 'u')
+  const found = pattern.exec(code)
+  return found === null ? -1 : found.index
+}
+
 /** Check one file against the rules. */
 function checkFile(file, root, violations) {
   const relativePath = relative(root, file)
@@ -174,6 +243,68 @@ function checkFile(file, root, violations) {
           file: relativePath,
           line: codeOnly.slice(0, index).split('\n').length,
           message: `只有 src/seams/prompt-composer.ts 可以调用 ${token}`,
+        })
+      }
+    }
+  }
+
+  const ownsWriteAuthority = WRITE_AUTHORITY_OWNERS.some((owner) => {
+    const normalized = owner.split(sep).join(sep)
+    return srcRelative === normalized || srcRelative.startsWith(`${normalized}${sep}`)
+  })
+  if (!ownsWriteAuthority) {
+    for (const token of WRITE_TOKENS) {
+      const index = findCall(codeOnly, token)
+      if (index >= 0) {
+        violations.push({
+          rule: 'write-authority',
+          file: relativePath,
+          line: codeOnly.slice(0, index).split('\n').length,
+          message: `写方法只允许经 src/store/commits/ 的提交引擎调用：${token}`,
+        })
+      }
+    }
+  }
+
+  const ownsTql = srcRelative === TQL_OWNER_DIR || srcRelative.startsWith(`${TQL_OWNER_DIR}${sep}`)
+  if (!ownsTql) {
+    for (const token of TQL_TOKENS) {
+      const index = findCall(codeOnly, token)
+      if (index >= 0) {
+        violations.push({
+          rule: 'tql-owner',
+          file: relativePath,
+          line: codeOnly.slice(0, index).split('\n').length,
+          message: `TQL 只允许出现在 src/store/templates/：${token}`,
+        })
+      }
+    }
+  }
+
+  // `$exists` is scanned in `uncommented`, not in `codeOnly`: the filter lives in a
+  // string literal, which is exactly what `stripStrings` erases. Comments are
+  // still gone, because the module comment quotes the filter when explaining it.
+  if (uncommented.includes('$exists')) {
+    const ownsExists = srcRelative === EXISTS_OWNER_DIR || srcRelative.startsWith(`${EXISTS_OWNER_DIR}${sep}`)
+    if (!ownsExists) {
+      violations.push({
+        rule: 'exists-owner',
+        file: relativePath,
+        line: uncommented.slice(0, uncommented.indexOf('$exists')).split('\n').length,
+        message: `$exists 只允许出现在 src/store/templates/：${EXISTS_TOKENS.join(', ')}`,
+      })
+    } else {
+      // Inside the owning directory the shape is pinned: every occurrence has to
+      // belong to the live-version filter, not to some new predicate nobody
+      // reviewed.
+      const occurrences = uncommented.split('$exists').length - 1
+      const allowed = uncommented.split(EXISTS_ALLOWED).length - 1
+      if (occurrences > allowed) {
+        violations.push({
+          rule: 'exists-owner',
+          file: relativePath,
+          line: uncommented.slice(0, uncommented.indexOf('$exists')).split('\n').length,
+          message: `$exists 只允许 ${EXISTS_ALLOWED} 这一种形态`,
         })
       }
     }

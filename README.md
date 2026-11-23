@@ -131,7 +131,10 @@ OMW_E2E=1 pnpm test -- test/e2e   # 真实 dsh 会话（临时 DSH_HOME，不动
 
 ## 本版本的边界
 
-- 不实现 `remember` / `recall` / `forget` / `explain` 的业务行为，只按名注册占位。
+- `remember` 已实现（Story 2.1）：整张补丁表规划后一次事务写入，冲突整表拒收并补写一条 `rejected`；`recall` / `forget` / `explain` 仍是占位。
+- 写入的节点 `vec_state` 恒为 `pending`：向量补算属于 Story 2.5，在那之前新记忆不进向量召回。
+- 谓词基数只能由用户通过 `/omw pred promote <名> --single|--multi --reason <理由>` 修改。
+- `/omw doctor` 只读：不建索引、不写种子、不写审计行。
 - 不做抽取、不做 dream 八步、不做 tier/rerank/预算裁剪、不做审计轮转、不做迁移与卸载。
 - 不做 GUI，不做治理命令，不做 eval 数据集。
 - 单进程纯插件：不监听端口、不起后台服务、不 spawn 子进程。

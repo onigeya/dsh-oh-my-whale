@@ -38,6 +38,8 @@ export const DEFAULT_API_KEY_ENV = 'SILICONFLOW_API_KEY'
 export const DEFAULT_EMBEDDING_ENDPOINT = 'https://api.siliconflow.cn/v1/embeddings'
 /** Default recall result count (AD-8). */
 export const DEFAULT_TOP_K = 5
+/** Most predicates a model may introduce in one local day (AD-27). */
+export const DEFAULT_MAX_NEW_PREDS_PER_DAY = 20
 
 const dbSchema = z.object({
   /** Explicit database file; when set, its directory becomes `<dataDir>`. */
@@ -75,6 +77,15 @@ const recallSchema = z.object({
   candidatePool: z.number().int().min(1).default(12),
 })
 
+const tboxSchema = z.object({
+  /**
+   * Predicates the model may introduce per local day before new facts degrade to
+   * scene text. Reaching the cap is not an error: the assertion is still kept,
+   * it just stops creating registry entries (AD-27).
+   */
+  maxNewPredsPerDay: z.number().int().min(1).default(DEFAULT_MAX_NEW_PREDS_PER_DAY),
+})
+
 /** The complete configuration schema: keys, defaults and bounds. */
 // Every leaf carries its own `.default()`, so a partial block such as
 // `{ db: { dim: 1024 } }` keeps the other keys. These group defaults only cover a
@@ -84,6 +95,7 @@ const DEFAULT_SNAPSHOT = snapshotSchema.parse({})
 const DEFAULT_EMBEDDING = embeddingSchema.parse({})
 const DEFAULT_INJECT = injectSchema.parse({})
 const DEFAULT_RECALL = recallSchema.parse({})
+const DEFAULT_TBOX = tboxSchema.parse({})
 
 export const configSchema = z.object({
   db: dbSchema.default(DEFAULT_DB),
@@ -91,6 +103,7 @@ export const configSchema = z.object({
   embedding: embeddingSchema.default(DEFAULT_EMBEDDING),
   inject: injectSchema.default(DEFAULT_INJECT),
   recall: recallSchema.default(DEFAULT_RECALL),
+  tbox: tboxSchema.default(DEFAULT_TBOX),
 })
 
 /** Validated configuration, with any host-supplied unknown keys preserved. */

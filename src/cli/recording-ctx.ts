@@ -65,8 +65,14 @@ export interface RecordingContext {
   readonly definitions: readonly ToolDefinitionLike[]
   /** How many disposers have run. */
   readonly disposed: number
-  /** Run every recorded disposer, newest first. */
-  dispose(): void
+  /**
+   * Run every recorded disposer, newest first.
+   *
+   * Awaited, because a disposer may drain a write queue before its handle goes
+   * away: a caller that only fires and forgets would delete a scratch
+   * directory while a transaction is still being written into it.
+   */
+  dispose(): Promise<void>
 }
 
 /** Resolve the text a host would see (the composer passes a string). */
@@ -85,7 +91,7 @@ export function createRecordingContext(options: RecordingContextOptions = {}): R
   const contexts: RecordedContext[] = []
   const tools: string[] = []
   const definitions: ToolDefinitionLike[] = []
-  const disposers: Array<() => void> = []
+  const disposers: Array<() => void | Promise<void>> = []
   let disposed = 0
 
   /** Register a disposer that removes one recorded entry by identity. */
@@ -142,8 +148,8 @@ export function createRecordingContext(options: RecordingContextOptions = {}): R
     get disposed() {
       return disposed
     },
-    dispose() {
-      while (disposers.length > 0) disposers.pop()?.()
+    async dispose() {
+      while (disposers.length > 0) await disposers.pop()?.()
       disposed += 1
     },
   }

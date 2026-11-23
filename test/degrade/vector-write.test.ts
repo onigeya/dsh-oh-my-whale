@@ -26,8 +26,10 @@ import { createRecordingContext, tempHome, type TempHome } from '../support/fake
 const homes: TempHome[] = []
 const runtimes: Runtime[] = []
 
-afterEach(() => {
-  while (runtimes.length > 0) runtimes.pop()?.dispose()
+afterEach(async () => {
+  // `dispose()` is async since Story 2.1: it drains the write queue before
+  // closing the handle, so the home cannot be removed under a live write.
+  while (runtimes.length > 0) await runtimes.pop()?.dispose()
   while (homes.length > 0) homes.pop()?.remove()
 })
 

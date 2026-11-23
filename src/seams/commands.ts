@@ -9,8 +9,12 @@
  *
  * A slash command is not a model-facing tool: it is registered even in `no-op`,
  * because a plugin that stepped aside is precisely when the user needs to ask
- * why. Nothing here writes business nodes, opens a network connection, or
- * registers a tool.
+ * why. Nothing here opens a network connection or registers a tool.
+ *
+ * Story 2.1 adds `/omw pred promote`: the one write the *user* may perform, and
+ * the only way a predicate becomes single-valued (AD-27). It goes through the
+ * same write service as `remember`, so the queue, the ledger and the audit row
+ * are the same ones — a promotion is not a side door.
  * @module
  */
 import type { Config, Paths } from './config.ts'
@@ -20,6 +24,7 @@ import type { Database } from '../store/db.ts'
 import { databaseDim, nodeCount } from '../store/db.ts'
 import { PERSONA_SECTION_NAME } from './prompt-composer.ts'
 import type { Logger } from './logger.ts'
+import type { WritePort } from './write-port.ts'
 
 /** Outcome of one invocation, as the host's command registry expects it. */
 export type CommandResultLike =
@@ -240,24 +245,95 @@ export function inspectInProcess(view: DoctorView): DoctorReport {
 
 /** Usage text for `/omw` with no or an unknown subcommand. */
 export const OMW_USAGE = `/omw doctor — 在本进程内跑五项体检（库、快照、维度、凭据、注入段），复用当前实例的库句柄
+/omw pred promote <谓词名> --single|--multi --reason <理由> — 把谓词提升为单值或多值（只有用户能做这件事）
 /omw help — 显示这段说明`
+
+/** One parsed `/omw pred promote` invocation. */
+export interface PromoteRequest {
+  readonly name: string
+  readonly cardinality: 'single' | 'multi'
+  readonly reason: string
+}
+
+/** Outcome of parsing a promote request: the request, or why it is unusable. */
+export type PromoteParse =
+  | { readonly ok: true; readonly request: PromoteRequest }
+  | { readonly ok: false; readonly reason: string }
+
+/**
+ * Parse `pred promote <名> --single|--multi --reason <文本>`.
+ *
+ * Two rules that are easy to get wrong and are decided here:
+ *
+ * - the flag names are case-insensitive (`/omw PRED PROMOTE` works), but the
+ *   reason keeps its original case, because it is prose the user wrote;
+ * - everything after `--reason` is the reason, verbatim. A `--multi` inside the
+ *   sentence is text, not a second cardinality — while an unrecognised token
+ *   *before* `--reason` is an error rather than silently folded into the reason.
+ * @param raw - the command text after `/omw`.
+ * @returns the parsed request or a reason it cannot be used.
+ */
+export function parsePromote(raw: string): PromoteParse {
+  const text = raw.trim()
+  const tokens = [...text.matchAll(/\S+/gu)]
+  const lower = tokens.map(match => match[0].toLowerCase())
+  if (lower[0] !== 'pred') return { ok: false, reason: '未知子命令' }
+  if (lower[1] !== 'promote') {
+    return { ok: false, reason: `未知子命令 "pred ${tokens[1]?.[0] ?? ''}"`.trim() }
+  }
+  const name = tokens[2]?.[0]
+  if (name === undefined) return { ok: false, reason: '缺少谓词名：/omw pred promote <谓词名> --single|--multi --reason <理由>' }
+  let cardinality: 'single' | 'multi' | undefined
+  let reason: string | undefined
+  for (let position = 3; position < tokens.length; position += 1) {
+    const token = tokens[position]!
+    const flag = token[0].toLowerCase()
+    if (flag === '--reason') {
+      reason = text.slice((token.index ?? 0) + token[0].length).trim()
+      break
+    }
+    if (flag === '--single' || flag === '--multi') {
+      const wanted = flag === '--single' ? 'single' : 'multi'
+      if (cardinality !== undefined && cardinality !== wanted) {
+        return { ok: false, reason: '--single 与 --multi 只能选一个' }
+      }
+      cardinality = wanted
+      continue
+    }
+    return { ok: false, reason: `无法识别的参数 "${token[0]}"（参数必须写在 --reason 之前）` }
+  }
+  if (cardinality === undefined) return { ok: false, reason: '必须用 --single 或 --multi 指定基数' }
+  if (reason === undefined || reason === '') return { ok: false, reason: '必须用 --reason 给出理由' }
+  return { ok: true, request: { name, cardinality, reason } }
+}
 
 /**
  * Register `/omw` on a command registry.
  * @param registry - the host's command registry.
  * @param view - reads the live instance at invocation time.
+ * @param write - reads the write side at invocation time, or `undefined` when it is not ready.
  * @returns the disposer.
  */
-export function registerOmwCommand(registry: CommandRegistryLike, view: () => DoctorView): () => void {
+export function registerOmwCommand(
+  registry: CommandRegistryLike,
+  view: () => DoctorView,
+  write?: () => WritePort | undefined,
+): () => void {
   return registry.register({
     name: 'omw',
-    description: '哦鲸鲸体检：/omw doctor 在当前进程内跑五项检查',
-    input: { hint: 'doctor' },
-    handler: (invocation: CommandInvocationLike): CommandResultLike => {
+    description: '哦鲸鲸体检：/omw doctor 在当前进程内跑五项检查；/omw pred promote 提升谓词基数',
+    input: { hint: 'doctor | pred promote <名> --single|--multi --reason <理由>' },
+    handler: async (invocation: CommandInvocationLike): Promise<CommandResultLike> => {
       const sub = invocation.rawInput.trim().toLowerCase()
       if (sub === 'doctor') {
         const report = inspectInProcess(view())
         return { kind: report.failures === 0 ? 'success' : 'error', text: report.text }
+      }
+      // Exactly `pred promote`: a prefix match would route `/omw predict` or
+      // `/omw predicate` here and then answer "unknown subcommand" about a
+      // command the user never typed.
+      if (sub === 'pred' || sub.startsWith('pred ')) {
+        return promote(invocation.rawInput, write)
       }
       if (sub === '' || sub === 'help' || sub === '--help') {
         return { kind: 'success', text: OMW_USAGE }
@@ -265,4 +341,28 @@ export function registerOmwCommand(registry: CommandRegistryLike, view: () => Do
       return { kind: 'error', text: `未知子命令 "${sub}"\n\n${OMW_USAGE}` }
     },
   })
+}
+
+/**
+ * Run one `pred promote`.
+ *
+ * A missing write side is reported as such rather than as a failure of the
+ * request: the user asks "did it work", and the honest answer is "the store is
+ * not writable on this start".
+ * @param raw - the command text after `/omw`.
+ * @param write - reads the write side at invocation time.
+ * @returns the command result.
+ */
+async function promote(raw: string, write?: () => WritePort | undefined): Promise<CommandResultLike> {
+  const parsed = parsePromote(raw)
+  if (!parsed.ok) {
+    return { kind: 'error', text: `${parsed.reason}\n\n${OMW_USAGE}` }
+  }
+  const port = write?.()
+  if (port === undefined) {
+    return { kind: 'error', text: '写面未就绪（schema 未安装或库句柄只读），本次没有改动谓词登记表。' }
+  }
+  const answer = await port.promote(parsed.request.name, parsed.request.cardinality, parsed.request.reason)
+  const head = answer.ok ? '已更新谓词登记表' : `未能更新谓词登记表（${answer.code}）`
+  return { kind: answer.ok ? 'success' : 'error', text: `${head}：${answer.message}` }
 }

@@ -530,7 +530,9 @@ async function checkSection(options: {
       detail: `调用 apply 失败：${error instanceof Error ? error.message : String(error)}`,
     }
   } finally {
-    recorder.dispose()
+    // Await the drain before deleting the scratch directory: a disposal that
+    // is still writing would otherwise have its directory removed mid-write.
+    await recorder.dispose()
     rmSync(scratch, { recursive: true, force: true })
   }
 }

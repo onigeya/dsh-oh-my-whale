@@ -9,8 +9,14 @@
  *   4. compare `db.dim` and the stored contract version,
  *   5. decide the state from those four probes,
  *   6. register the identity section — in every state,
- *   7. register the four tools — only when the state is `ok`,
- *   8. hand back a disposer.
+ *   7. install the seed registry and open the write side — only past the gate,
+ *   8. register the four tools — only when the state is `ok`,
+ *   9. hand back a disposer.
+ *
+ * Steps 7 and 8 fail independently of each other and of the identity section. A
+ * database that opens but cannot take the seed registry still injects the
+ * identity and still says `ok`; what it loses is the write side, and
+ * `remember` then answers `E_GATE_DOWN` instead of pretending to write.
  *
  * Injection and tool registration each sit in their own try/catch: a failure in
  * one never rolls back the other (AD-18). Nothing here starts a process, binds a
@@ -24,6 +30,7 @@ import { fileURLToPath } from 'node:url'
 import { DegradeMachine, type DegradeDetail, type DegradeState, type OmwCode } from '../core/degrade.ts'
 import { decideGates, type ContractProbe, type DbOpenProbe, type DimProbe, type SnapshotProbe } from '../core/gates.ts'
 import { ensureDailySnapshot } from '../ops/snapshots.ts'
+import { ensureSchema } from '../store/schema.ts'
 import { closeDatabase, databaseDim, openDatabase, type Database } from '../store/db.ts'
 import {
   SUPPORTED_CONTRACT_VERSION,
@@ -36,6 +43,7 @@ import { createAppendFileSink, createLogger, type Logger } from './logger.ts'
 import { PromptComposer, type PersonaState, type SystemPromptLike } from './prompt-composer.ts'
 import { registerPlaceholderTools, type ToolRegistryLike } from './tools.ts'
 import { createVectorPolicy, type VectorPolicy } from './vector.ts'
+import { createWriteAudit, createWritePort, type WritePort } from './write-port.ts'
 
 /**
  * Diagnostic log codes for registration problems.
@@ -51,6 +59,18 @@ export const OPERATIONAL_LOG_CODES = {
   toolRegistrationFailed: 'OMW_TOOL_NOT_REGISTERED',
   /** The contract version could not be recorded on a brand-new database. */
   contractWriteFailed: 'OMW_CONTRACT_NOT_RECORDED',
+  /**
+   * The seed registry or the indexes could not be installed.
+   *
+   * Not a degradation: the store still reads, the identity is still injected,
+   * and the state stays `ok`. Only the write side is missing, which is why the
+   * tools answer `E_GATE_DOWN` and why this line has to exist in `omw.log`.
+   */
+  schemaNotReady: 'OMW_SCHEMA_NOT_READY',
+  /** The write queue could not be drained before the handle was closed. */
+  writeCloseFailed: 'OMW_WRITE_CLOSE_FAILED',
+  /** A write audit row could not be appended. The write itself already landed. */
+  auditWriteFailed: 'OMW_AUDIT_WRITE_FAILED',
 } as const
 
 /** The slice of `ctx` the plugin actually uses. */
@@ -104,8 +124,21 @@ export interface Runtime {
   /** Character count of the identity section as registered, for diagnostics. */
   readonly sectionChars: number
   readonly loaded: LoadedInfo
-  /** Close the database and release both injection registrations. Idempotent. */
-  dispose(): void
+  /**
+   * The write side, present only when the store accepted the seed registry.
+   *
+   * Absent is a fact the caller can act on: `remember` refuses with
+   * `E_GATE_DOWN` and `/omw pred promote` reports that the write side is not
+   * ready. It is never absent while `state` is `ok` *and* the store opened
+   * writable — that combination is a bug, not a degraded mode.
+   */
+  readonly write?: WritePort
+  /**
+   * Drain the write queue, then close the database and release both injection
+   * registrations. Idempotent, and returns a promise the caller must await:
+   * closing the handle under a queued write would lose it.
+   */
+  dispose(): Promise<void>
 }
 
 /** Inputs of {@link startRuntime}. */
@@ -186,6 +219,9 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
   const paths = resolvePaths(config, home)
   const logger = deps.logger ?? createLogger(createAppendFileSink(paths.logFile))
   const machine = new DegradeMachine()
+  // One clock for the whole start: the audit rows, the seed payloads and the
+  // write timestamps have to agree about which instant this boot happened at.
+  const nowMs = (): number => (deps.now?.() ?? new Date()).getTime()
   const composer = new PromptComposer({
     personaText: deps.personaText ?? loadPersonaText(deps.personaPath),
     personaMaxChars: config.inject.personaMaxChars,
@@ -197,7 +233,9 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
   let sectionRegistered = false
   let tools: readonly string[] = []
   let vector: VectorPolicy | undefined
+  let write: WritePort | undefined
   let disposed = false
+  let disposing: Promise<void> | undefined
 
   const registerSection = (): void => {
     try {
@@ -213,21 +251,41 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
     const registry = resolveToolRegistry(ctx)
     if (registry === undefined) return
     try {
-      tools = registerPlaceholderTools(registry)
+      tools = registerPlaceholderTools(registry, write)
     } catch (error) {
       tools = []
       logger.warn(OPERATIONAL_LOG_CODES.toolRegistrationFailed, { reason: describeError(error) })
     }
   }
 
-  const dispose = (): void => {
-    if (disposed) return
+  const dispose = (): Promise<void> => {
+    if (disposing !== undefined) return disposing
     disposed = true
-    composer.dispose()
-    if (db !== undefined) {
-      closeDatabase(db)
-      db = undefined
-    }
+    // Closing the queue first makes every later `remember` refuse instead of
+    // queueing behind a drain that will never run; the drain itself is awaited
+    // before the handle goes away, so an accepted write is never dropped.
+    const port = write
+    write = undefined
+    disposing = (async () => {
+      composer.dispose()
+      let closedByPort = false
+      if (port !== undefined) {
+        try {
+          await port.dispose()
+          closedByPort = true
+        } catch (error) {
+          logger.warn(OPERATIONAL_LOG_CODES.writeCloseFailed, { reason: describeError(error) })
+        }
+      }
+      // The write port's own dispose closes the handle it was given. Closing
+      // it again here would report a failure the second time and hide a real
+      // one, so the handle is only closed here when the port never ran.
+      if (db !== undefined) {
+        if (!closedByPort) closeDatabase(db)
+        db = undefined
+      }
+    })()
+    return disposing
   }
 
   const snapshot: DegradeSnapshotResult = (() => {
@@ -318,7 +376,59 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
     }
   }
 
+  // Step 7: the store's own shape. Indexes and the seed registry are installed
+  // once, idempotently, and only on a handle we may write through. A failure
+  // here is not a degradation: reads still work, the identity is still injected,
+  // and the only thing lost is the write side (AD-18 keeps the halves
+  // independent).
+  //
+  // The audit object is built before the bootstrap because the bootstrap itself
+  // is a write worth recording: installing the seed registry is the one write
+  // that happens without a tool call behind it.
+  const audit = createWriteAudit(paths.dataDir, deps.now)
+  const auditWrite = (row: { outcome: 'bootstrap' | 'committed' | 'rejected' | 'downgraded'; code: string; mem_keys: readonly string[]; elapsed_ms: number }): void => {
+    try {
+      audit.append({ kind: 'write', ts: new Date(nowMs()).toISOString(), ...row })
+    } catch (error) {
+      logger.warn(OPERATIONAL_LOG_CODES.auditWriteFailed, { reason: describeError(error) })
+    }
+  }
+
+  const bootstrap = db === undefined
+    ? { ok: false as const, writable: false as const, code: 'OMW_DB_OPEN', reason: '数据库句柄不可用' }
+    : ensureSchema(db, {
+      now: nowMs,
+      onEvent: event => {
+        auditWrite({
+          outcome: 'bootstrap',
+          code: event.code,
+          mem_keys: [],
+          elapsed_ms: event.elapsed_ms,
+        })
+      },
+    })
+
+  const schemaWritable = bootstrap.ok && bootstrap.writable
+  if (!schemaWritable) {
+    logger.warn(OPERATIONAL_LOG_CODES.schemaNotReady, {
+      code: bootstrap.ok ? 'OMW_SCHEMA_READ_ONLY' : bootstrap.code,
+      reason: bootstrap.reason,
+    })
+  }
+
   registerSection()
+  // The write side is a single switch: either the store took the registry and we
+  // can hand a port to the tools, or we hand them nothing and they refuse.
+  if (db !== undefined && schemaWritable) {
+    write = createWritePort({
+      db,
+      audit,
+      logger,
+      maxNewPredsPerDay: config.tbox.maxNewPredsPerDay,
+      contractVersion: SUPPORTED_CONTRACT_VERSION,
+      now: nowMs,
+    })
+  }
   registerTools()
   if (db !== undefined) {
     vector = createVectorPolicy({
@@ -362,6 +472,7 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
         return { state: machine.state, dataDir: paths.dataDir, sectionRegistered, tools }
       },
       ...(vector === undefined ? {} : { vector }),
+      ...(write === undefined ? {} : { write }),
       dispose,
     }
   }

@@ -43,8 +43,32 @@ export interface RecallAuditRow {
   readonly degraded_reason: readonly DegradedReason[]
 }
 
+/** How a write ended. */
+export const WRITE_OUTCOMES = ['committed', 'rejected', 'downgraded', 'bootstrap'] as const
+
+/** One write outcome. */
+export type WriteOutcomeKind = (typeof WRITE_OUTCOMES)[number]
+
+/**
+ * One row recording a write (AD-20).
+ *
+ * The keys, never the node ids: a row is evidence that can leave the machine,
+ * and an id is only meaningful inside one database file (AD-3). `outcome` says
+ * whether anything landed, `code` says why when nothing did or when a fact was
+ * kept in a degraded shape, and `mem_keys` is empty whenever the write failed —
+ * a key listed here is a key a reader may rely on being present.
+ */
+export interface WriteAuditRow {
+  readonly kind: 'write'
+  readonly ts: string
+  readonly outcome: WriteOutcomeKind
+  readonly code: string
+  readonly mem_keys: readonly string[]
+  readonly elapsed_ms: number
+}
+
 /** Any row this module can write. */
-export type AuditRow = InjectionAuditRow | RecallAuditRow
+export type AuditRow = InjectionAuditRow | RecallAuditRow | WriteAuditRow
 
 /** Destination of rendered audit rows. */
 export interface AuditSink {
@@ -89,6 +113,17 @@ export function createMemoryAuditSink(): AuditSink & { readonly writes: { file: 
 }
 
 /**
+ * Reject any write row naming an outcome outside the closed vocabulary.
+ * @param row - the candidate row.
+ * @throws when `outcome` is not one of {@link WRITE_OUTCOMES}.
+ */
+export function assertClosedOutcome(row: WriteAuditRow): void {
+  if (!(WRITE_OUTCOMES as readonly string[]).includes(row.outcome)) {
+    throw new Error(`unknown write outcome ${JSON.stringify(row.outcome)}; closed set is ${WRITE_OUTCOMES.join(', ')}`)
+  }
+}
+
+/**
  * Reject any row naming a reason outside the closed vocabulary.
  * @param row - the candidate row.
  * @throws when `degraded_reason` contains a value this epic does not define.
@@ -116,6 +151,7 @@ export function createAudit(options: AuditOptions): Audit {
     path: (date: Date = now()) => pathOf(date),
     append(row: AuditRow): { readonly file: string; readonly row: AuditRow } {
       if (row.kind === 'recall') assertClosedReasons(row)
+      if (row.kind === 'write') assertClosedOutcome(row)
       const file = pathOf(now())
       rows.push(row)
       sink.write(file, `${JSON.stringify(row)}\n`)

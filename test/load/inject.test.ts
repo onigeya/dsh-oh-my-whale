@@ -71,8 +71,11 @@ describe('load: identity section', () => {
 
   it('normalizes CRLF so a Windows checkout injects the same bytes', () => {
     const raw = readFileSync(personaFile, 'utf8')
-    const crlf = raw.replace(/\n/gu, '\r\n')
-    expect(normalizePersona(crlf, 1200).text).toBe(normalizePersona(raw, 1200).text)
+    // The asset may already be CRLF on a Windows checkout, so normalise to LF
+    // first: replacing every \n blindly would turn \r\n into \r\r\n.
+    const lf = raw.replace(/\r\n/gu, '\n')
+    const crlf = lf.replace(/\n/gu, '\r\n')
+    expect(normalizePersona(crlf, 1200).text).toBe(normalizePersona(lf, 1200).text)
   })
 
   it('registers no state tail in Epic 1', () => {
@@ -139,7 +142,7 @@ describe('load: host seams', () => {
     expect('tools' in recorder.ctx).toBe(false)
   })
 
-  it('keeps the no-op state and the database unchanged across repeated mounts', () => {
+  it('keeps the no-op state and the database unchanged across repeated mounts', async () => {
     const home = tempHome()
     homes.push(home)
     mkdirSync(home.path('oh-my-whale'), { recursive: true })
@@ -156,7 +159,7 @@ describe('load: host seams', () => {
       states.push(stderr)
       expect(recorder.tools).toEqual([])
       expect(recorder.sections.find(section => section.name === 'omw:persona')).toBeDefined()
-      recorder.dispose()
+      await recorder.dispose()
     }
 
     expect(states).toHaveLength(2)

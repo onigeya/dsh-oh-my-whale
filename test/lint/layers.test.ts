@@ -87,4 +87,94 @@ describe('lint: layer dependencies', () => {
       rmSync(file, { force: true })
     }
   })
+
+  it('rejects a write method outside the commit engine', () => {
+    const file = join(fixture, 'src', 'ops', 'writer.ts')
+    writeFileSync(file, 'export function write(db: any) {\n  return db.insert([], {})\n}\n')
+    try {
+      const result = check(fixture)
+      expect(result.status).toBe(1)
+      expect(result.output).toContain('write-authority')
+      expect(result.output).toContain('writer.ts')
+    } finally {
+      rmSync(file, { force: true })
+    }
+  })
+
+  it('rejects every write token it knows, one fixture per token', () => {
+    const tokens = [
+      'insert',
+      'insertWithId',
+      'batchInsert',
+      'upsertWithId',
+      'patchPayload',
+      'updatePayload',
+      'updateVector',
+      'link',
+      'upsertEdge',
+      'commitTransaction',
+      'tqlMut',
+    ]
+    for (const token of tokens) {
+      const file = join(fixture, 'src', 'ops', `writer-${token}.ts`)
+      writeFileSync(file, `export function write(db: any) {\n  return db.${token}(1, 2)\n}\n`)
+      try {
+        const result = check(fixture)
+        expect(result.output, `token ${token} was not caught`).toContain('write-authority')
+      } finally {
+        rmSync(file, { force: true })
+      }
+    }
+  })
+
+  it('does not read unlink( as link(', () => {
+    const file = join(fixture, 'src', 'ops', 'unlinker.ts')
+    writeFileSync(file, 'export function write(db: any) {\n  return db.unlink(1)\n}\n')
+    try {
+      const result = check(fixture)
+      // unlink( is a hard delete, so the snapshot rule names it, not the write gate.
+      expect(result.output).toContain('hard-delete-owner')
+      expect(result.output).not.toContain('write-authority')
+    } finally {
+      rmSync(file, { force: true })
+    }
+  })
+
+  it('rejects TQL text outside the template directory', () => {
+    const file = join(fixture, 'src', 'ops', 'query.ts')
+    writeFileSync(file, "export function q(db: any) {\n  return db.prepareTql('FIND *')\n}\n")
+    try {
+      const result = check(fixture)
+      expect(result.status).toBe(1)
+      expect(result.output).toContain('tql-owner')
+      expect(result.output).toContain('query.ts')
+    } finally {
+      rmSync(file, { force: true })
+    }
+  })
+
+  it('rejects an $exists filter outside the live-version shape', () => {
+    mkdirSync(join(fixture, 'src', 'store', 'templates'), { recursive: true })
+    const file = join(fixture, 'src', 'store', 'templates', 'loose.ts')
+    writeFileSync(file, "export const Q = 'FIND {deleted_at: {$exists: false}} RETURN *'\n")
+    try {
+      const result = check(fixture)
+      expect(result.status).toBe(1)
+      expect(result.output).toContain('exists-owner')
+    } finally {
+      rmSync(file, { force: true })
+    }
+  })
+
+  it('allows the live-version filter in the template directory', () => {
+    mkdirSync(join(fixture, 'src', 'store', 'templates'), { recursive: true })
+    const file = join(fixture, 'src', 'store', 'templates', 'live.ts')
+    writeFileSync(file, "export const Q = 'FIND {superseded_at: {$exists: false}} RETURN *'\n")
+    try {
+      const result = check(fixture)
+      expect(result.output).not.toContain('exists-owner')
+    } finally {
+      rmSync(file, { force: true })
+    }
+  })
 })
