@@ -12,6 +12,7 @@
  * exactly one `omw.log` line, and a load line there would break that count.
  * @module
  */
+import { registerOmwCommand, type CommandRegistryLike, type DoctorView } from './seams/commands.ts'
 import { parseConfig } from './seams/config.ts'
 import type { Logger } from './seams/logger.ts'
 import { PERSONA_SECTION_NAME } from './seams/prompt-composer.ts'
@@ -90,7 +91,51 @@ export function apply(ctx: ApplyContext, config?: unknown, seams?: ApplySeams): 
   })
   process.stderr.write(loadedLine(runtime.state, runtime.paths.dataDir, runtime.loaded.sectionRegistered))
 
+  // The chat surface is user-facing, so it is registered in every state: a plugin
+  // that stepped aside is exactly when `/omw doctor` has something to report. A
+  // registry failure must not cost the load, so it is contained here.
+  const disposeCommand = (() => {
+    const commands = resolveCommandRegistry(ctx)
+    if (commands === undefined) return undefined
+    try {
+      return registerOmwCommand(commands, (): DoctorView => ({
+        state: runtime.state,
+        ...(runtime.code === undefined ? {} : { code: runtime.code }),
+        config: runtime.config,
+        paths: runtime.paths,
+        ...(runtime.db === undefined ? {} : { db: runtime.db }),
+        logger: runtime.logger,
+        sectionRegistered: runtime.loaded.sectionRegistered,
+        sectionChars: runtime.sectionChars,
+        tools: runtime.loaded.tools,
+      }))
+    } catch {
+      return undefined
+    }
+  })()
+
   if (typeof ctx.effect === 'function') {
-    ctx.effect(() => () => runtime.dispose())
+    ctx.effect(() => () => {
+      disposeCommand?.()
+      runtime.dispose()
+    })
+  }
+}
+
+/**
+ * Find the command registry without triggering Cordis's injection guard.
+ * @param ctx - the context slice the plugin holds.
+ * @returns the registry, or `undefined` when this harness exposes no command surface.
+ */
+function resolveCommandRegistry(ctx: RuntimeContext): CommandRegistryLike | undefined {
+  if (typeof ctx.get !== 'function') return undefined
+  try {
+    const service = ctx.get('commands')
+    return typeof service === 'object' && service !== null
+      && typeof (service as { register?: unknown }).register === 'function'
+      ? service as CommandRegistryLike
+      : undefined
+  } catch {
+    return undefined
   }
 }

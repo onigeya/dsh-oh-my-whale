@@ -48,7 +48,16 @@ omw doctor --profile <名字>          # 无失败即退出码 0（库被宿主�
 
 stderr 的加载行由插件自己写，不走 `ctx.logger`：宿主只把插件日志压进内存环形缓冲，且唯一的 exporter 只转发 `warn`/`error`。这一行也**不**写进 `omw.log`，否则「库坏时 `omw.log` 恰一行」就不成立。
 
-## 体检：`omw doctor`
+## 体检：`/omw doctor`（聊天里）与 `omw doctor`（终端）
+
+**在聊天里**：直接发 `/omw doctor`。它在本进程内跑同样五项，**复用当前实例已经打开的库句柄**，因此不会和运行中的宿主抢租约——这也正是它比终端命令更适合日常使用的原因。插件处于 `no-op` 时命令照样可用（那时最需要它），输出第 1 项会直接点名让插件退场的那个码。
+
+```
+/omw doctor   五项检查
+/omw help     说明
+```
+
+**在终端里**（不给 DSH 运行时用，或要检查一个没启动的 profile）：
 
 ```bash
 omw doctor [--home <DSH_HOME>] [--profile <名字>] [--json]

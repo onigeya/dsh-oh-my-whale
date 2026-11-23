@@ -99,6 +99,10 @@ export interface Runtime {
    */
   readonly vector?: VectorPolicy
   readonly logger: Logger
+  /** Validated configuration this instance mounted with (read-only view). */
+  readonly config: Config
+  /** Character count of the identity section as registered, for diagnostics. */
+  readonly sectionChars: number
   readonly loaded: LoadedInfo
   /** Close the database and release both injection registrations. Idempotent. */
   dispose(): void
@@ -350,6 +354,10 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
       paths,
       db,
       logger,
+      config,
+      get sectionChars() {
+        return composer.composePersona().text.length
+      },
       get loaded(): LoadedInfo {
         return { state: machine.state, dataDir: paths.dataDir, sectionRegistered, tools }
       },
@@ -384,10 +392,11 @@ function resolveToolRegistry(ctx: RuntimeContext): ToolRegistryLike | undefined 
     // resolving an optional surface must never take the whole plugin down.
     try {
       const service = ctx.get('tools')
-      return isToolRegistry(service) ? service : undefined
+      if (isToolRegistry(service)) return service
     } catch {
-      return undefined
+      // Fall through to the direct property: a harness may expose one or the other.
     }
+    return ctx.tools
   }
   return ctx.tools
 }
