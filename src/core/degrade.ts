@@ -32,12 +32,6 @@ export const OMW_CODES = [
 /** One of the eight closed runtime degradation codes. */
 export type OmwCode = (typeof OMW_CODES)[number]
 
-/**
- * Codes that force the whole plugin into `no-op` (AD-13). A missing embedding
- * credential is deliberately absent: it closes only the vector path.
- */
-export const NO_OP_CODES = ['OMW_DB_OPEN', 'OMW_SNAPSHOT_VERIFY', 'OMW_DIM_MISMATCH'] as const
-
 /** The closed `degraded_reason` vocabulary written to audit rows (AD-20). */
 export const DEGRADED_REASONS = [
   'recall_timeout',

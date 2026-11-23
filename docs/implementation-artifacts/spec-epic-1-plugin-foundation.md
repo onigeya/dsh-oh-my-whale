@@ -3,7 +3,7 @@ title: 'Epic 1 — 装得上、坏得起：插件底座与可验证的启用'
 type: 'feature'
 created: '2026-11-23'
 status: 'done'
-baseline_revision: 'cf04e95038f7fd6d7be37589f3f3fd03bbdcb9b7'
+baseline_revision: '489780a6852de33aa1dbb5ddeb2ea2968e816dee'
 review_loop_iteration: 0
 followup_review_recommended: true
 context:
@@ -170,6 +170,8 @@ deferred:
 - Given 缺 `snapshots/pre-migration-<ts>`，when 请求迁移前置判定，then 拒绝并给出原因。
 
 ## Spec Change Log
+
+- 2026-11-23 — 复盘发现记录值失真：`baseline_revision` 原写 `cf04e950…`，但该提交不在实现提交的祖先链上（`git merge-base --is-ancestor` 为假），真实父提交是 `489780a`；两者相差 20 个 `docs/planning-artifacts` 文件（+24733/−1585）。修正为 `489780a`，避免他人按记录的基线复现 diff 时混入规划产物噪声。已知代价：此前评审用的 diff 以 `cf04e950` 为左端、并以 `:(exclude)docs/planning-artifacts` 排除规划产物，代码面覆盖不受影响。KEEP：评审通过的 45 条修复与 91 个测试不得因此回退。
 
 ## Review Triage Log
 

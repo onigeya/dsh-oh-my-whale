@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-23-2026 12:43
-last_updated: 11-23-2026 16:22
+last_updated: 11-23-2026 16:30
 project: DSH哦鲸鲸
 project_key: NOKEY
 tracking_system: file-system
@@ -41,7 +41,7 @@ development_status:
   1-3-库坏了整体-no-op-但鲸鲸还是鲸鲸: done
   1-4-向量路径坏了只关向量: done
   1-5-每天一份已校验快照-留-7-份: done
-  epic-1-retrospective: optional
+  epic-1-retrospective: done
 
   epic-2: backlog
   2-1-用-remember-写下一条断言-立刻能按业务键读回: backlog
@@ -88,3 +88,34 @@ development_status:
   7-3-把-mnemon-迁进来-且可以重来: backlog
   7-4-回滚开关只恢复-legacy-注入: backlog
   epic-7-retrospective: optional
+action_items:
+  - id: "epic-1-retro-item-1-下一个-epic-起一故事一-spec-或提交主题带故事号-恢复按故事归因"
+    epic: 1
+    action: "下一个 epic 起一故事一 spec，或提交主题带故事号，恢复按故事归因"
+    owner: "Epic 2 planning"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-1-retro-2026-11-23.md"
+  - id: "epic-1-retro-item-2-g0-4-写入-注入-召回闭环-在-epic-2-首条故事交付并通过闸门"
+    epic: 1
+    action: "G0-4（写入→注入→召回闭环）在 Epic 2 首条故事交付并通过闸门"
+    owner: "Epic 2"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-1-retro-2026-11-23.md"
+  - id: "epic-1-retro-item-3-接入-vitest-覆盖率并在-epic-2-的-dod-设阈值"
+    epic: 1
+    action: "接入 vitest 覆盖率并在 Epic 2 的 DoD 设阈值"
+    owner: "Epic 2"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-1-retro-2026-11-23.md"
+  - id: "epic-1-retro-item-4-omw-doctor-home-指向不像-dsh-home-的目录时给出警告"
+    epic: 1
+    action: "omw doctor --home 指向不像 DSH home 的目录时给出警告"
+    owner: "Epic 2"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-1-retro-2026-11-23.md"
+  - id: "epic-1-retro-item-5-把跨故事边界三问写进-epic-2-的-spec-检查清单-外部通道默认值-降级"
+    epic: 1
+    action: "把跨故事边界三问写进 Epic 2 的 spec 检查清单（外部通道默认值/降级分支可达性/诊断命令副作用）"
+    owner: "Epic 2 planning"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-1-retro-2026-11-23.md"
