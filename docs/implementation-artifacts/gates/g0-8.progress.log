@@ -1,0 +1,13 @@
+05:19:19 judgments start extract=Qwen/Qwen3.5-9B verify=deepseek-ai/DeepSeek-R1-0528-Qwen3-8B noThink=true
+05:19:19 → Qwen/Qwen3.5-9B think=off-flat max_tokens=2000 timeout=90000
+05:19:33 ← Qwen/Qwen3.5-9B 200 13325ms 1154B
+05:19:33 → deepseek-ai/DeepSeek-R1-0528-Qwen3-8B think=on max_tokens=4000 timeout=90000
+05:20:13 ← deepseek-ai/DeepSeek-R1-0528-Qwen3-8B 200 39755ms 2075B
+05:20:13 → deepseek-ai/DeepSeek-R1-0528-Qwen3-8B think=on max_tokens=4000 timeout=90000
+05:20:32 retry verify (2/2) fetch failed
+05:20:32 → deepseek-ai/DeepSeek-R1-0528-Qwen3-8B think=on max_tokens=4000 timeout=90000
+05:20:46 ← deepseek-ai/DeepSeek-R1-0528-Qwen3-8B 200 13876ms 1339B
+05:20:46 → deepseek-ai/DeepSeek-R1-0528-Qwen3-8B think=on max_tokens=4000 timeout=90000
+05:21:04 ← deepseek-ai/DeepSeek-R1-0528-Qwen3-8B 200 18737ms 1448B
+05:21:04 → deepseek-ai/DeepSeek-R1-0528-Qwen3-8B think=on max_tokens=4000 timeout=90000
+05:21:10 ← deepseek-ai/DeepSeek-R1-0528-Qwen3-8B 200 5261ms 857B

@@ -1,0 +1,32 @@
+[
+ {
+  "claim": "各仓库机制与代码位置（10 个项目）",
+  "class": "repo_code",
+  "pub_date": "2026-11-22"
+ },
+ {
+  "claim": "star 数 / 维护活跃度",
+  "class": "activity",
+  "pub_date": "2026-11-22"
+ },
+ {
+  "claim": "学术基准规模与分数（CharacterBench/CharacterEval/RoleLLM/PersonaLLM）",
+  "class": "academic",
+  "pub_date": "2026-11-22"
+ },
+ {
+  "claim": "漂移实证（8 轮内漂移、compaction 不能可靠复位）",
+  "class": "drift",
+  "pub_date": "2026-11-22"
+ },
+ {
+  "claim": "DSH 宿主约束（section/KV/只读日志/定时任务）",
+  "class": "host",
+  "pub_date": "2026-11-22"
+ },
+ {
+  "claim": "主动性/打断代价结论（ComPeer、Mark 2008、Horvitz 1999）",
+  "class": "proactive",
+  "pub_date": "2026-11-22"
+ }
+]

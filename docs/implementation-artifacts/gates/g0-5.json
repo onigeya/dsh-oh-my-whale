@@ -1,0 +1,20 @@
+{
+  "gate": "G0-5",
+  "status": "pass",
+  "timestamp": "2026-11-23T07:30:58.880Z",
+  "baselineRevision": "cf04e95038f7fd6d7be37589f3f3fd03bbdcb9b7",
+  "node": "v24.21.0",
+  "platform": "win32-x64",
+  "checks": [
+    {
+      "name": "dsh-available",
+      "ok": true,
+      "detail": "C:\\Users\\ellio\\AppData\\Roaming\\npm\\dsh"
+    },
+    {
+      "name": "e2e-loads-plugin",
+      "ok": true,
+      "detail": "Duration  5.60s (tests 99%)"
+    }
+  ]
+}

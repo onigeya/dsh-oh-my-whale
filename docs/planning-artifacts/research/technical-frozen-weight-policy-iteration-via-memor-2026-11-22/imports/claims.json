@@ -1,0 +1,136 @@
+{
+ "claims": [
+  {
+   "id": 1,
+   "claim": "JitRL 记忆第三元是折扣回报 G_t 而非即时 reward",
+   "class": "mechanism",
+   "pub_date": "2026-09-27"
+  },
+  {
+   "id": 2,
+   "claim": "JitRL 检索不用 embedding，代码显式 encoder_available=False",
+   "class": "mechanism",
+   "pub_date": "2026-09-22"
+  },
+  {
+   "id": 3,
+   "claim": "JitRL 合成权重 0.7 history + 0.3 task，阈值随步数衰减",
+   "class": "mechanism",
+   "pub_date": "2026-09-22"
+  },
+  {
+   "id": 4,
+   "claim": "JitRL A(s,a)=Q−V；未见动作 5% 概率乐观探索",
+   "class": "mechanism",
+   "pub_date": "2026-09-22"
+  },
+  {
+   "id": 5,
+   "claim": "JitRL 实现是概率空间加性 + 贪心 argmax（非 logit 空间 + 采样）",
+   "class": "mechanism",
+   "pub_date": "2026-09-22"
+  },
+  {
+   "id": 6,
+   "claim": "JitRL WebArena 平均 46.98 / Final 51.35",
+   "class": "benchmark",
+   "pub_date": "2026-09-27"
+  },
+  {
+   "id": 7,
+   "claim": "AWM 无检索器，全量注入 7.3–7.4 条 workflow",
+   "class": "mechanism",
+   "pub_date": "2024-09-11"
+  },
+  {
+   "id": 8,
+   "claim": "AWM WebArena 总成功率 35.5",
+   "class": "benchmark",
+   "pub_date": "2024-09-11"
+  },
+  {
+   "id": 9,
+   "claim": "Memento 案例只有 {question, plan, reward}",
+   "class": "mechanism",
+   "pub_date": "2025-10-05"
+  },
+  {
+   "id": 10,
+   "claim": "Memento GAIA val 87.88 / test 79.40",
+   "class": "benchmark",
+   "pub_date": "2025-08-25"
+  },
+  {
+   "id": 11,
+   "claim": "Memento 案例库 OOD 增益 +4.7~+9.6",
+   "class": "benchmark",
+   "pub_date": "2025-08-25"
+  },
+  {
+   "id": 12,
+   "claim": "Memento-Skills 归因→重写→合成测试+judge→原子部署/失败保留原树",
+   "class": "mechanism",
+   "pub_date": "2026-08-17"
+  },
+  {
+   "id": 13,
+   "claim": "Meta-TTL accepted = mean_z[candidate] > mean_z[star] + accept_margin",
+   "class": "mechanism",
+   "pub_date": "2026-09-26"
+  },
+  {
+   "id": 14,
+   "claim": "meta-ttl 仓库无任何 benchmark 数字（阴性事实）",
+   "class": "mechanism",
+   "pub_date": "2026-09-26"
+  },
+  {
+   "id": 15,
+   "claim": "LTPO reward = top-k(k=10) 平均负对数概率",
+   "class": "mechanism",
+   "pub_date": "2025-10-05"
+  },
+  {
+   "id": 16,
+   "claim": "LTPO 平均 48.66 vs Zero-Shot CoT 42.35",
+   "class": "benchmark",
+   "pub_date": "2025-10-05"
+  },
+  {
+   "id": 17,
+   "claim": "OptiLLM 全文件仅 2 处 logprob 且均为透传",
+   "class": "engineering",
+   "pub_date": "2026-11-16"
+  },
+  {
+   "id": 18,
+   "claim": "OptiLLM 无缓存、无跨请求学习；spl 插件 7 行占位",
+   "class": "engineering",
+   "pub_date": "2026-11-16"
+  },
+  {
+   "id": 19,
+   "claim": "纯 API 干预手段：logit_bias / logprobs / n / seed 的真实限制",
+   "class": "api-capability",
+   "pub_date": "2026-11-18"
+  },
+  {
+   "id": 20,
+   "claim": "DSH GenerateOptions 无 logprobs/logit_bias/n",
+   "class": "host-api",
+   "pub_date": "2026-11-22"
+  },
+  {
+   "id": 21,
+   "claim": "DSH llm/stream 对 loop 请求 deep-frozen",
+   "class": "host-api",
+   "pub_date": "2026-11-22"
+  },
+  {
+   "id": 22,
+   "claim": "DSH DeepSeekLlmApiExtensionMap 可合并顶层请求字段",
+   "class": "host-api",
+   "pub_date": "2026-11-22"
+  }
+ ]
+}

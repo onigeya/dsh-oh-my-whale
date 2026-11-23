@@ -1,0 +1,104 @@
+{
+  "claims": [
+    {
+      "claim": "Stop Slop 零脚本、5 维自评 1–10 无 rubric",
+      "class": "repo/code",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "Humanizer 26 条 / A–F 六组，:37 指示补「真细节」",
+      "class": "repo/code",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "Humanizer-zh 31 条 / 6 组，套话词只作示例不当黑名单",
+      "class": "repo/code",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "四规则仓库均无可复现「人性化得分」；唯一守门脚本只查受保护片段逐字未变",
+      "class": "repo/code",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "Empanel 独立评委=同网关不同 lens + history 置空；stdev<0.05 判定加权退化为均值",
+      "class": "repo/code",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "SoulSpec 无禁止句式字段，硬约束是 RULES.md 的 Must always/never",
+      "class": "repo/code",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "HerAndHim closeness 三档映射正式度，人设与状态分仓（AGPL 只借设计）",
+      "class": "repo/code",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "Caveman 输入削减 0%、输出中位 3–35%，更短 ≠ 更像人",
+      "class": "self-report",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "生成后助手正文只能审计：assistant/message 禁 surface 替换、node 0 只允许 prompt 原地替换、turn-stopping 只能 steer",
+      "class": "host/docs",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "PromptSection 变化即前缀缓存击穿；PromptContext 变化才追加",
+      "class": "host/docs",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "tools/post-execute 是卡片/通知文案唯一硬门禁出口；Web 插槽拿不到 ctx",
+      "class": "host/docs",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "llm/stream 可短接但文档要求 read it never rewrite it",
+      "class": "host/docs",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "mnemon 每轮注入与 VoiceState 争同一 per-turn 上下文位",
+      "class": "host/docs",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "项目 brief：无可信记忆前人格是表演；与 dsh-mnemon 关系为 BLOCKING 未决",
+      "class": "project/doc",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "JitRL 实为 top_logprobs 重排、DSH 无 logprobs → reward 只能走 sink 接口",
+      "class": "project/doc",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "世界模型降级为可回溯事实状态图，superseded_at IS NULL 默认查询",
+      "class": "project/doc",
+      "pub_date": "2026-11-22"
+    },
+    {
+      "claim": "slop 无公认定义与特征表，全自动测量仍开放",
+      "class": "paper/method",
+      "pub_date": "2025-09-23"
+    },
+    {
+      "claim": "RoPoLL：单评委系统性偏差下小组共识偏差无界，需稳健均值",
+      "class": "paper/method",
+      "pub_date": "2026-06-29"
+    },
+    {
+      "claim": "奖励模型过优化 gold 分先升后降（Goodhart 定量）",
+      "class": "paper/method",
+      "pub_date": "2022-10-19"
+    },
+    {
+      "claim": "DIPPER 使检测/水印失效但检索仍是有效防御",
+      "class": "paper/method",
+      "pub_date": "2023-03-23"
+    }
+  ]
+}

@@ -1,0 +1,353 @@
+{
+  "probe": "g0-8",
+  "at": "2026-11-23T04:57:45.296Z",
+  "api": "https://api.siliconflow.cn/v1",
+  "catalog": {
+    "ok": true,
+    "status": 200,
+    "count": 59,
+    "qwen35": [
+      "Qwen/Qwen3.5-35B-A3B",
+      "Qwen/Qwen3.5-27B",
+      "Qwen/Qwen3.5-9B",
+      "Qwen/Qwen3.5-4B"
+    ],
+    "deepseekR1": [
+      "deepseek-ai/DeepSeek-R1",
+      "Pro/deepseek-ai/DeepSeek-R1",
+      "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
+    ]
+  },
+  "extractModel": {
+    "short": "Qwen3.5-4B",
+    "id": "Qwen/Qwen3.5-9B",
+    "how": "命令行指定（--extract-model）",
+    "inCatalog": true,
+    "nearMisses": []
+  },
+  "verifyModel": {
+    "short": "DeepSeek-R1-0528-Qwen3-8B",
+    "id": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+    "how": "目录匹配候选 deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+    "inCatalog": true,
+    "nearMisses": []
+  },
+  "extract": {
+    "model": "Qwen/Qwen3.5-9B",
+    "ok": true,
+    "httpStatus": 200,
+    "latencyMs": 86286,
+    "usage": {
+      "prompt_tokens": 364,
+      "completion_tokens": 6983,
+      "total_tokens": 7347,
+      "completion_tokens_details": {
+        "reasoning_tokens": 6391
+      },
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 364
+    },
+    "finishReason": "stop",
+    "contentChars": 1512,
+    "reasoningChars": 20270,
+    "artifact": {
+      "assertions": [
+        {
+          "text": "用户下周三要去杭州出差三天",
+          "kind": "plan",
+          "subj": "用户",
+          "pred": "要去",
+          "obj": "杭州出差三天",
+          "evidence": [
+            {
+              "session_id": "probe-g0-8",
+              "seq_from": 101,
+              "seq_to": 101,
+              "quote": "我下周三要去杭州出差三天"
+            }
+          ]
+        },
+        {
+          "text": "周报本来周五交",
+          "kind": "fact",
+          "subj": "周报",
+          "pred": "交",
+          "obj": "周五",
+          "evidence": [
+            {
+              "session_id": "probe-g0-8",
+              "seq_from": 101,
+              "seq_to": 101,
+              "quote": "本来周五交的"
+            }
+          ]
+        },
+        {
+          "text": "用户更喜欢把周报放在周五下午",
+          "kind": "preference",
+          "subj": "用户",
+          "pred": "更喜欢",
+          "obj": "把周报放在周五下午",
+          "evidence": [
+            {
+              "session_id": "probe-g0-8",
+              "seq_from": 118,
+              "seq_to": 118,
+              "quote": "其实我更喜欢把周报放在周五下午"
+            }
+          ]
+        },
+        {
+          "text": "用户不喝咖啡",
+          "kind": "preference",
+          "subj": "用户",
+          "pred": "不",
+          "obj": "喝咖啡",
+          "evidence": [
+            {
+              "session_id": "probe-g0-8",
+              "seq_from": 131,
+              "seq_to": 131,
+              "quote": "我不喝咖啡"
+            }
+          ]
+        },
+        {
+          "text": "出差期间住西湖边就行",
+          "kind": "preference",
+          "subj": "用户",
+          "pred": "住",
+          "obj": "西湖边",
+          "evidence": [
+            {
+              "session_id": "probe-g0-8",
+              "seq_from": 147,
+              "seq_to": 147,
+              "quote": "出差那几天住西湖边就行"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "artifactSource": "model（提炼模型真实产出）",
+  "cases": {
+    "artifactSource": "model（提炼模型真实产出）",
+    "goodAssertions": 5,
+    "bad": "证据数组被清空（共删掉 5 条指针）",
+    "forged": "每条断言的第一条引文被换成片段里不存在的句子（5 处）"
+  },
+  "verifyOnGood": {
+    "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+    "ok": true,
+    "httpStatus": 200,
+    "latencyMs": 73356,
+    "usage": {
+      "prompt_tokens": 891,
+      "completion_tokens": 1890,
+      "total_tokens": 2781,
+      "completion_tokens_details": {
+        "reasoning_tokens": 1714
+      },
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 891
+    },
+    "finishReason": "stop",
+    "verdict": "fail",
+    "reasons": [
+      "Not all assertions have valid evidence"
+    ],
+    "defects": [
+      {
+        "type": "quote_not_found",
+        "assertion_index": 0,
+        "detail": "Session ID 'probe-g0-8' not found in the conversation fragment."
+      },
+      {
+        "type": "quote_not_found",
+        "assertion_index": 1,
+        "detail": "Session ID 'probe-g0-8' not found in the conversation fragment."
+      },
+      {
+        "type": "quote_not_found",
+        "assertion_index": 2,
+        "detail": "Session ID 'probe-g0-8' not found in the conversation fragment."
+      },
+      {
+        "type": "quote_not_found",
+        "assertion_index": 3,
+        "detail": "Session ID 'probe-g0-8' not found in the conversation fragment."
+      },
+      {
+        "type": "quote_not_found",
+        "assertion_index": 4,
+        "detail": "Session ID 'probe-g0-8' not found in the conversation fragment."
+      }
+    ],
+    "contentChars": 693,
+    "reasoningChars": 3598,
+    "content": "{\"verdict\":\"fail\",\"reasons\":[\"Not all assertions have valid evidence\"],\"defects\":[{\"type\":\"quote_not_found\",\"assertion_index\":0,\"detail\":\"Session ID 'probe-g0-8' not found in the conversation fragment.\"},{\"type\":\"quote_not_found\",\"assertion_index\":1,\"detail\":\"Session ID 'probe-g0-8' not found in the conversation fragment.\"},{\"type\":\"quote_not_found\",\"assertion_index\":2,\"detail\":\"Session ID 'probe-g0-8' not found in the conversation fragment.\"},{\"type\":\"quote_not_found\",\"assertion_index\":3,\"detail\":\"Session ID 'probe-g0-8' not found in the conversation fragment.\"},{\"type\":\"quote_not_found\",\"assertion_index\":4,\"detail\":\"Session ID 'probe-g0-8' not found in the conversation fragment.\"}]}"
+  },
+  "verifyOnBad": {
+    "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+    "ok": true,
+    "httpStatus": 200,
+    "latencyMs": 16595,
+    "usage": {
+      "prompt_tokens": 640,
+      "completion_tokens": 505,
+      "total_tokens": 1145,
+      "completion_tokens_details": {
+        "reasoning_tokens": 458
+      },
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 640
+    },
+    "finishReason": "stop",
+    "verdict": "fail",
+    "reasons": [
+      "所有断言缺少证据"
+    ],
+    "defects": [
+      {
+        "type": "missing_evidence",
+        "assertion_index": 0,
+        "detail": "缺少证据引用，证据应来自seq=101"
+      }
+    ],
+    "contentChars": 132,
+    "reasoningChars": 744,
+    "content": "{\"verdict\":\"fail\",\"reasons\":[\"所有断言缺少证据\"],\"defects\":[{\"type\":\"missing_evidence\",\"assertion_index\":0,\"detail\":\"缺少证据引用，证据应来自seq=101\"}]}"
+  },
+  "verifyOnForged": {
+    "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+    "ok": true,
+    "httpStatus": 200,
+    "latencyMs": 33436,
+    "usage": {
+      "prompt_tokens": 940,
+      "completion_tokens": 656,
+      "total_tokens": 1596,
+      "completion_tokens_details": {
+        "reasoning_tokens": 473
+      },
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 940
+    },
+    "finishReason": "stop",
+    "verdict": "fail",
+    "reasons": [
+      "所有断言的证据引文与会话片段不匹配"
+    ],
+    "defects": [
+      {
+        "type": "quote_not_found",
+        "assertion_index": 0,
+        "detail": "证据引文应来自序号101，但提供的引文错误"
+      },
+      {
+        "type": "quote_not_found",
+        "assertion_index": 1,
+        "detail": "证据引文应来自序号101，但提供的引文错误"
+      },
+      {
+        "type": "quote_not_found",
+        "assertion_index": 2,
+        "detail": "证据引文应来自序号118，但提供的引文错误"
+      },
+      {
+        "type": "quote_not_found",
+        "assertion_index": 3,
+        "detail": "证据引文应来自序号131，但提供的引文错误"
+      },
+      {
+        "type": "quote_not_found",
+        "assertion_index": 4,
+        "detail": "证据引文应来自序号147，但提供的引文错误"
+      }
+    ],
+    "content": "{\"verdict\":\"fail\",\"reasons\":[\"所有断言的证据引文与会话片段不匹配\"],\"defects\":[{\"type\":\"quote_not_found\",\"assertion_index\":0,\"detail\":\"证据引文应来自序号101，但提供的引文错误\"},{\"type\":\"quote_not_found\",\"assertion_index\":1,\"detail\":\"证据引文应来自序号101，但提供的引文错误\"},{\"type\":\"quote_not_found\",\"assertion_index\":2,\"detail\":\"证据引文应来自序号118，但提供的引文错误\"},{\"type\":\"quote_not_found\",\"assertion_index\":3,\"detail\":\"证据引文应来自序号131，但提供的引文错误\"},{\"type\":\"quote_not_found\",\"assertion_index\":4,\"detail\":\"证据引文应来自序号147，但提供的引文错误\"}]}"
+  },
+  "verifyOnEmpty": {
+    "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+    "ok": true,
+    "httpStatus": 200,
+    "latencyMs": 12067,
+    "usage": {
+      "prompt_tokens": 373,
+      "completion_tokens": 258,
+      "total_tokens": 631,
+      "completion_tokens_details": {
+        "reasoning_tokens": 243
+      },
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 373
+    },
+    "verdict": "pass",
+    "reasons": [
+      ""
+    ],
+    "content": "{\"verdict\":\"pass\",\"reasons\":[\"\"],\"defects\":[]}"
+  },
+  "judgments": [
+    {
+      "id": "J1",
+      "question": "提炼模型可调用，且返回里能读 token 用量",
+      "verdict": "PASS",
+      "required": true,
+      "detail": "HTTP 200 · 86286ms | usage 可读: prompt=364 completion=6983 total=7347 | 产物可解析，5 条断言"
+    },
+    {
+      "id": "J2",
+      "question": "核验模型可调用，且返回里能读 token 用量",
+      "verdict": "PASS",
+      "required": true,
+      "detail": "HTTP 200 · 73356ms | usage 可读: prompt=891 completion=1890 total=2781 | 对完整产物判定：fail"
+    },
+    {
+      "id": "J3",
+      "question": "对证据齐全的产物判 pass（假阳性哨兵，非闸门）",
+      "verdict": "FAIL",
+      "required": false,
+      "detail": "核验过敏：Not all assertions have valid evidence"
+    },
+    {
+      "id": "J4",
+      "question": "对「证据缺失」的产物必须判不通过（闸门本体，requirements.md:86）",
+      "verdict": "PASS",
+      "required": true,
+      "detail": "HTTP 200 · 16595ms · 判定 fail | 所有断言缺少证据 | 指出 1 处缺陷"
+    },
+    {
+      "id": "J5",
+      "question": "对「引文与片段对不上」的产物判 fail（参考项，不计闸门）",
+      "verdict": "PASS",
+      "required": false,
+      "detail": "判定 fail · 所有断言的证据引文与会话片段不匹配"
+    },
+    {
+      "id": "J6",
+      "question": "对「零断言」的空产物判 fail（参考项：真空也算证据缺失）",
+      "verdict": "FAIL",
+      "required": false,
+      "detail": "判定 pass · "
+    }
+  ],
+  "status": "PASS",
+  "gatePass": true
+}

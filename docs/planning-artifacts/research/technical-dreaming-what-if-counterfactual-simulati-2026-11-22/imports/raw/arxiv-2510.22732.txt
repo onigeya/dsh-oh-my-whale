@@ -1,0 +1,1136 @@
+WebATLAS: An LLM Agent with Experience-Driven Memory and Action Simulation
+ 
+
+- 
+ 
+ 
+
+- 
+
+- 
+
+- 
+
+- 
+
+- 
+
+- 
+- 
+ 
+
+ 
+ 
+ 
+
+##### Report GitHub Issue
+
+ ×
+ 
+
+ 
+ Title:
+ 
+
+ Content selection saved. Describe the issue below:
+
+ Description:
+ 
+ 
+
+ 
+ Submit without GitHub
+ Submit in GitHub
+ 
+ 
+
+ 
+ arXiv is now an independent nonprofit!
+ Learn more
+ &times;
+ 
+
+ 
+ 
+ Back to arXiv
+ 
+ 
+
+ 
+ 
+ Why HTML?
+ 
+ 
+ 
+ 
+ Report Issue
+ 
+ 
+ 
+ 
+ 
+ 
+ Back to Abstract
+ 
+ 
+ 
+ 
+ 
+ 
+ Download PDF
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+- Abstract
+
+- 1 Introduction
+
+- 2 Related Work
+
+- LLM-Based Autonomous Agents
+
+- Web Navigation Agents
+
+- Memory-Augmented Agents
+
+- Planning and Simulation in AI Agents
+
+- Actor-Critic Methods and Look-ahead Planning
+
+- Curiosity-Driven Exploration
+
+- 3 Method
+
+- 3.1 Problem formulation
+
+- 3.2 Architecture Overview
+
+- Planner
+
+- Actor-Critic interplay with look-ahead
+
+- Multi-layered memory
+
+- 3.3 Memory construction via Curiosity-Driven Exploration
+
+- Motivation
+
+- Memory construction
+
+- Memory layer 1: Cognitive Map
+
+- Memory layer 2: Semantic Memory (World Knowledge)
+
+- 3.4 Look-ahead Action Simulation (LAS)
+
+- Comparison to prior work
+
+- 3.5 Look-ahead Action Simulation-backed Dynamic Replanning and Memory Update
+
+- Replanning
+
+- Memory Update
+
+- 4 Experimental Setup
+
+- 5 Results
+
+- 5.1 Comparison with Other Baselines
+
+- 5.2 Ablation Study
+
+- 6 Conclusion
+
+- Future Work
+
+- References
+
+ 
+ License: CC BY 4.0
+ 
+ 
+arXiv:2510.22732v2 [cs.LG] 19 Dec 2025
+
+\workshoptitle
+LAW 2025: Bridging Language, Agent, and World Models for Reasoning and Planning
+
+# WebATLAS: An LLM Agent with Experience-Driven Memory and Action Simulation
+
+Jiali Cheng
+††thanks: Work done during internship at Amazon
+Affiliation: University of Massachusetts Lowell
+
+  
+Anjishnu Kumar
+
+Affiliation: Amazon Alexa AI
+
+  
+Roshan Lal
+
+Affiliation: Amazon Alexa AI
+
+  
+Rishi Rajasekaran
+
+Affiliation: Amazon Alexa AI
+
+  
+Hani Ramezani
+
+Affiliation: Amazon Alexa AI
+
+  
+Omar Zia Khan
+
+Affiliation: Amazon Alexa AI
+
+  
+Oleg Rokhlenko
+
+Affiliation: Amazon Alexa AI
+
+  
+Sunny Chiu-Webster
+
+Affiliation: Amazon Alexa AI
+
+  
+Gang Hua
+
+Affiliation: Amazon Alexa AI
+
+  
+Hadi Amiri
+
+Affiliation: University of Massachusetts Lowell
+
+###### Abstract
+
+ 
+Large Language Model (LLM) web agents often struggle with long-horizon web navigation and web task completion in new websites, producing inefficient action sequences unless fine-tuned on environment-specific data. We show that experience-driven memory, combined with look-ahead action simulation, is 
+sufficient for LLM agents to adapt to unseen web environments by remembering past failures and predicting the consequences of future actions. We introduce WebATLAS (Actor-Critic Task-completion with Look-ahead Action Simulation), a memory-augmented LLM web agent that learns a lightweight internal mo
+del of the environment from interaction experience and performs hypothetical action rollouts before acting in the real world. WebATLAS builds a persistent cognitive map via curiosity-driven exploration, stores interaction outcomes as experience-based memory, and evaluates candidate actions in cognit
+ive space using a planner–simulator–critic loop. This enables the agent to reuse past experience, avoid previously unsuccessful behaviors, and generate more efficient plans. We evaluate WebATLAS on the WebArena-Lite benchmark for autonomous web navigation and demonstrate a success rate of 63%, outpe
+rforming the previous state-of-the-art at 53.9%. Unlike previous systems, our modular architecture requires no website-specific LLM fine-tuning. Ablation studies confirm that experience-driven memory, look-ahead action simulation, and hierarchical replanning play complementary roles in enabling robu
+st, training-free web agents.
+
+ 
+
+## 1 Introduction
+
+Autonomous agents that can navigate and act on the web have the potential to perform complex tasks like information gathering, transactions, and site configuration on behalf of users (Yao et al., 2022; Sodhi, 2023). However, current web-based agents fall far short of human-level reliability on long-
+horizon tasks (Koh et al., 2024). The difficulty stems from partial observability, vast action spaces, the need for multi-step planning and memory in a web environment. For example, tasks in WebArena (Zhou et al., 2024) span diverse websites and require reasoning over multi-page navigation and conte
+nt. An agent might be asked to “Tell me how many fulfilled orders I have over the past three days, and the total amount spent” on an e-commerce site, or “Set the homepage URL on my GitLab profile to https://egg.tart.com.” Solving these tasks demands understanding site structure (e.g. admin dashboard
+s, forms), remembering relevant information (like login states or filters applied), and avoiding irreversible mistakes (like deleting data or purchasing an item unintentionally).
+
+Large language models (LLMs) have markedly improved semantic understanding and generation, suggesting they can enrich web navigation. Yet reliable long-horizon control remains elusive because LLM agents are typically reactive and lack structured memory and explicit planning. Current state-of-the-art
+ web agents such as Plan-and-Act by Erdogan et al. (2025) have significant gaps - the agent’s planner module is not grounded to the structure of the website and requires website-specific model fine-tuning of both planner and executor modules in order to enable new use-cases.
+
+We address these gaps with WebATLAS—an inference-time, actor–critic web agent that plans before acting via look-ahead simulation and retrieves structured memories to remain goal-directed over extended interactions. WebATLAS has a modular architecture with four components: (1) a Planner that decompos
+es the task into subgoals; (2) an Actor that proposes diverse next-step candidates; (3) a Critic that forecasts each candidate’s outcome by simulating state transitions and selects the safest, goal-advancing action; and (4) a multi-layer memory that is updated online and queried on demand. Together,
+ these modules perform a simulated look-ahead tree search in conceptual space, enabling adaptive environment-grounded planning, and efficient action selection in realistic, partially observable websites, including those with unexpected environmental hazards.
+
+Our agent uses a hierarchical memory structure: (i) Working Memory for recent context; (ii) a Cognitive Map encoding state transitions and expected action outcomes; and (iii) Semantic Memory that captures environment-specific constraints (e.g. formats, hazards) in the form of world knowledge. The ma
+p is constructed via curiosity-driven exploration (MCTS-style trajectory mining) and agentic summarization that records action-to-outcome deltas in natural language, avoiding HTML bloat. During inference, the Actor conditions on the plan, retrieved memories, and in-context trajectories; the Critic f
+ilters out risky or myopic moves by simulating their consequences.
+
+We summarize our contributions as the following:
+
+- • 
+
+An actor-critic planner with LLM-based look-ahead that evaluates actions via simulated outcomes.
+
+- • 
+
+A multi-layer memory with a cognitive map built through exploration and agentic summarization, used online for retrieval and replanning.
+
+- • 
+
+A practical modular architecture that integrates planning, memory, and simulation to transform high-level instructions into safe, executable action sequences for long-horizon web tasks. Unlike previous systems, our system does not require website-specific LLM fine-tuning to ground to new websites and can thus easily be ported to new websites and new underlying LLMs.
+
+## 2 Related Work
+
+#### LLM-Based Autonomous Agents
+
+The integration of large language models into autonomous agents has revolutionized web navigation capabilities. Yao and others (2023) pioneered the ReAct framework, demonstrating how LLMs can effectively combine reasoning and acting in interactive environments. This approach has been extended by Shi
+nn and others (2024) with Reflexion, which incorporates self-reflection mechanisms for improved decision-making over extended horizons.
+
+#### Web Navigation Agents
+
+Early web navigation systems relied predominantly on rule-based approaches and predefined scripts Liu and others (2018), which, while interpretable, lacked the adaptability required for dynamic web environments. Recent advances have shifted toward learning-based methods, with several notable develop
+ments in autonomous web agents. Zhou et al. (2024) introduced WebArena, a comprehensive benchmark for evaluating web agents across realistic multi-step tasks, establishing a foundation for systematic evaluation in this domain. Building on this, Liu et al. (2024b) introduced WebArena-Lite, a curated 
+subset addressing quality and scalability concerns in the original benchmark.
+
+Recent work has focused on enhancing LLM agents with structured approaches to planning and memory and demonstrated significant progress: Qi et al. (2024) applied reinforcement learning principles to web navigation, achieving notable improvements through policy optimization. Zhang et al. (2025) devel
+oped WebPilot, focusing on multimodal understanding of web content, while Erdogan et al. (2025) introduced Plan-and-Act, emphasizing hierarchical task decomposition. Wang et al. (2024b) introduced Agent Workflow Memory (AWM), demonstrating the importance of persistent memory in multi-step web tasks.
+ Yang et al. (2024) developed AgentOccam and demonstrated the effectiveness of simplifying the action space to natural language.
+
+#### Memory-Augmented Agents
+
+Memory mechanisms have emerged as crucial components for long-horizon task completion. Weston et al. (2014) established foundational work on memory networks, which has been adapted for sequential decision-making contexts. More recently, Zhong et al. (2023) proposed MemoryBank, a comprehensive framew
+ork for managing episodic and semantic memory in LLM-based agents. The concept of cognitive maps, originally from cognitive science Tolman (1948), has been adapted for artificial agents. Wayne and others (2018) demonstrated neural implementations of cognitive mapping in reinforcement learning contex
+ts, while Park and others (2023) showed how LLMs can maintain and utilize spatial-temporal memory representations for complex behavioral simulation.
+
+#### Planning and Simulation in AI Agents
+
+Tree search and simulation-based planning have long been central to AI agent design. While classical approaches like Monte Carlo Tree Search Browne and others (2012) have proven effective in discrete domains, recent work has extended these concepts to natural language environments. Yao and others (2
+024) introduced Tree of Thoughts, enabling LLMs to explore multiple reasoning paths through structured search.
+
+World models, which enable agents to simulate future states without environment interaction, have gained renewed attention. Ha and Schmidhuber (2018) established foundational work on learned world models, while more recent efforts by Micheli and others (2022) have shown how transformer architectures can serve as effective world models for sequential decision-making.
+
+#### Actor-Critic Methods and Look-ahead Planning
+
+Actor-critic architectures have proven particularly effective for combining policy learning with value estimation. While traditional actor-critic methods focus on reinforcement learning training Sutton and Barto (2018), recent work has adapted these principles to LLM-based agents. The integration of
+ look-ahead planning with actor-critic frameworks has been explored in various contexts, with Silver and others (2016) demonstrating the power of combining tree search with learned value functions in AlphaGo.
+
+#### Curiosity-Driven Exploration
+
+Exploration remains a fundamental challenge in autonomous agent design. Pathak et al. (2017) introduced intrinsic curiosity modules that drive exploration through prediction error, establishing a foundation for self-supervised exploration. Recent work has extended these concepts to language-based environments: Mu and others (2024) demonstrated curiosity-driven exploration in embodied AI settings.
+
+Our work builds upon these foundations by combining memory-augmented planning with look-ahead simulation in a modular architecture specifically designed for web navigation tasks. Unlike previous approaches that require environment-specific fine-tuning, WebATLAS achieves strong performance through in
+ference-time planning and memory retrieval, making it readily adaptable to new domains and underlying models.
+
+## 3 Method
+
+### 3.1 Problem formulation
+
+We cast web navigation as a Partially Observable Markov Decision Process (POMDP) defined by the tuple (𝒮,𝒜,𝒪,T,R)(\mathcal{S},\mathcal{A},\mathcal{O},T,R), where
+𝒮\mathcal{S} denotes the state set,
+𝒜\mathcal{A} denotes the action set,
+𝒪\mathcal{O} denotes the observation set,
+TT denotes the state transition function, and
+RR denotes the reward.
+Given a natural-language goal qq, the agent must synthesize a plan and execute a sequence of actions (a0,…,aT)(a_{0},\ldots,a_{T}) that reaches a goal-consistent terminal state.
+At each time step tt, the agent receives partial observations ot∈𝒪o_{t}\in\mathcal{O}. Based on the observation oto_{t}, the agent chooses an action to take at∈𝒜a_{t}\in\mathcal{A}, such as click or type. The goal of the agent is to maximize the reward, i.e. fulfilling task qq.
+
+### 3.2 Architecture Overview
+
+WebATLAS comprises four modules operating in an inference-time actor–critic loop with action simulation in conceptual space, shown in Figure 1 (a):
+
+- (1) 
+
+Planner produces a high-level plan with subtasks, with the ability to replan;
+
+- (2) 
+
+Actor proposes a small set of next-step candidates CtC_{t};
+
+- (3) 
+
+Critic performs outcome-aware simulation of each candidate and selects the safest, goal-advancing action;
+
+- (4) 
+
+Multi-layered memory supplies working context, a cognitive map of state transitions, and world knowledge about the environment; it is queried online and updated as needed.
+
+#### Planner
+
+The planner analyzes and decomposes the natural language task qq into a structured plan with subtasks to finish. Given the initial observation o0o_{0}, the planner produces an initial plan P0P_{0}; at step tt, it dynamically decides if the plan needs to be updated (replanning) given new evidence
+
+P0=Planner⁡(q,o0),Pt=Planner⁡(q,ot,st,M).P_{0}=\mathrm{Planner}(q,o_{0}),\qquad P_{t}=\mathrm{Planner}(q,o_{t},s_{t},M).
+
+(1)
+
+Plans are concise lists of sub-goals with success predicates (e.g., “Reports →\rightarrow Sales →\rightarrow Set dates →\rightarrow Read table”). Planner outputs are included in the context for the actor and critic. Our planner is implemented in the style of (Chae et al., 2025) and extended and described in 3.5.
+
+#### Actor-Critic interplay with look-ahead
+
+In our framework, at each step tt, the actor proposes NN executable candidates with reasoning, and the critic evaluates it based on a value function V⁡(a)V(a).
+
+Ct=Actor⁡(q,Pt,ot,st,M),|Ct|=N.C_{t}=\mathrm{Actor}(q,P_{t},o_{t},s_{t},M),\qquad|C_{t}|=N.
+
+(2)
+
+The critic evaluates each candidate action ati∈Cta^{i}_{t}\in C_{t} and selects the best next action
+
+at=arg⁡maxa∈Ct⁡V⁡(a∣q,Pt,ot,st,M).a_{t}=\arg\max_{a\in C_{t}}V\!\left(a\mid q,P_{t},o_{t},s_{t},M\right).
+
+(3)
+
+The utility estimate V⁡(a)V(a) is derived via LLM-based assessment that incorporates goal alignment, state viability (recoverability), action coherence, plan consistency, and outcome risk (e.g., destructive or dead-end transitions). Unlike previous efforts that attempt to learn implicit world-model 
+of the environment by fine-tuning a neural network model, such as Chae (2024), we leverage the cognitive map to retrieve action outcomes of each action candidate (Section 3.3). This gives the agent system the ability to look ahead of the current step. We later extend this standard behavior with simu
+lated tree search to further enhance exploratory ability in Section 3.4.
+
+Figure 1: Architecture of WebATLAS.
+(a) Overall flow of WebATLAS: The raw observation oto_{t} is summarized to lower cognitive load. Then the planner makes a plan PtP_{t} based on the summarized observation ot′o^{\prime}_{t}. The actor proposes NN possible candidate actions for next step. The critic provides judgment of action candida
+tes and finalizes the best action ata_{t} to take by considering action outcomes obtained from the cognitive map.
+(b) Memory construction with curiosity-driven exploration: We build cognitive map by employing exploratory lightweight agents to interact with the environment.
+(c) Look-ahead Action Simulation (LAS): At each step, WebATLAS simulates all candidate actions with the observation from the cognitive map, providing ability to look-ahead. We employ the memory agent to learn from LAS trajectories to make a better plan and update memory if necessary.
+
+#### Multi-layered memory
+
+We use three complementary memories:
+
+- • 
+
+Working Memory: A task-specific memory wherein facts and observations are optionally stored into the LLM context for use during a particular episode.
+
+- • 
+
+Cognitive Map: A graph of transitions M={(o,a,o′)}M=\{(o,a,o^{\prime})\} with agentic summaries that store deltas and new affordances (e.g., “click Reports reveals {Sales, Products,…}”) rather than raw HTML. The map supports retrieval o^t+1=M⁡(ot,a)\hat{o}_{t+1}=M(o_{t},a) for simulation and planning (Section 3.3).
+
+- • 
+
+Semantic Memory (World Knowledge): Learned environment dynamics (e.g., date/format rules, non-recoverable states), used to penalize risky actions and inform simulation (Section 3.3).
+
+### 3.3 Memory construction via Curiosity-Driven Exploration
+
+#### Motivation
+
+Existing agents may fail because they are 1) not aware of the potential action outcomes, such as placing an order on a shopping website likely to lead to difficulty of canceling and refunding, and, 2) not familiar with environment-specific requirements, such as date format and search format (e.g. Ag
+entOccam-Judge on WebArena-Lite Task 0) (Yang et al., 2024). This is a major gap between LLM agents and human intelligence, since humans can easily predict the outcome of an action with our world knowledge. Encouraging agents to explore the environment and store the findings in memory can effectivel
+y avoid actions leading to undesirable outcomes.
+
+#### Memory construction
+
+Prior work on artificial curiosity Pathak et al. (2017) has demonstrated the ability of neural networks operating in an agentic context to frame curiosity as a self-supervised learning task. Inspired by this insight, we augmented our agent with an artificial curiosity module to initialize the agent.
+ Before evaluation, we perform a curiosity-driven exploration of the web environment to seed the cognitive map and world knowledge of the agent.
+
+The memory construction process consists of the following steps:
+
+- • 
+
+Exploration policies: We first launch a series of lightweight explorer subagents with diverse LLM generation temperatures and exploration policies. We embed coverage incentives into the prompt of the explorer agents. No task-completion reward is used, in order to avoid information leakage from the t
+est set. We balance breadth, depth, and entropy, limiting the explorers to visit the most promising states within a fixed memory budget.
+
+- • 
+
+LLM based trajectory-mining: Given the exploration trajectories, we employ an LLM to convert the trajectories to agentic summaries of the environmental transitions, and store it as a cognitive map. Additionally, we employ an LLM to produce agentic summaries of site-specific rules, constraints, and hazards in semantic memory.
+
+#### Memory layer 1: Cognitive Map
+
+The cognitive map encodes structured knowledge about the environment’s dynamics, including state transitions and causal relationships. Conceptually, it is akin to a learned world model or transition model in reinforcement learning, capturing how actions alter observations. For example, “clicking Add
+ to Cart on a product page” results in a cart update notification, while “entering text in the search bar” leads to a results page. Formally, the cognitive map is represented by tuples (ot,at,ot+1)(o_{t},a_{t},o_{t+1}), where oto_{t} and ot+1o_{t+1} denote observations (e.g., HTML content or URLs in
+ text-based web environments) at steps tt and t+1t+1, and ata_{t} is the action executed at step tt.
+
+At each step of exploration, we document the current observation oto_{t}, the executed action ata_{t}, and the subsequent observation ot+1o_{t+1}. To enhance interpretability and lower cognitive load of the agent, we adopt an agentic memory strategy, where an LLM agent curates what is written into m
+emory. Specifically, the memory agent produces concise summaries emphasizing (in addition to the raw observations):
+
+- • 
+
+Differences between successive observations (ot,ot+1)(o_{t},o_{t+1});
+
+- • 
+
+Newly available actions in ot+1o_{t+1} after executing ata_{t}.
+
+For retrieval, the cognitive map is queried with (ot,at)(o_{t},a_{t}), returning the next raw observation ot+1o_{t+1}, as well as LLM summaries. This design balances fidelity (retaining raw states) with abstraction (summarized transitions), enabling efficient reasoning over complex, text-based envir
+onments. When the retrieval hits an unexplored node in the cognitive map, a generic-placeholder observation is returned.
+
+#### Memory layer 2: Semantic Memory (World Knowledge)
+
+This memory captures environment-specific knowledge, such as constraints, formats, and idiosyncratic behaviors unique to each website. For instance, it encodes facts like “the date picker only accepts input in MM/DD/YYYY format” or “the admin portal does not support exporting tables into CSV files”.
+ By recording these particulars from prior explorations, semantic memory serves as a bridge between specific past experiences and working memory, which maintains awareness of the immediate environmental context. This integration enables agents to adapt more effectively to recurring interface pattern
+s and site-specific limitations. The cognitive map and semantic memory are also optionally updated online when execution encounters unseen transitions or world dynamics.
+
+### 3.4 Look-ahead Action Simulation (LAS)
+
+The standard actor-critic interplay (Section 3.2) is a good baseline but may suffer from insufficient exploration and lack of foresight. To mitigate this issue, we propose Look-ahead Action Simulation (LAS).
+
+At step tt, the actor first generates the action candidates CtC_{t} as described in Equation 2. For each action candidate ati∈Cta^{i}_{t}\in C_{t}, the critic hypothetically selects atia^{i}_{t} as the final action to execute and provides criticism. The resulting change of observation is retrieved from the cognitive map
+
+o^t+1i=M⁡(ot,ati),\hat{o}^{i}_{t+1}=M(o_{t},a^{i}_{t}),
+
+(4)
+
+where ii is the index of the action candidate at step tt.
+
+We repeat this for DD times, resulting in a set of rolled-out trajectories of length DD.
+Let τ^\hat{\tau} denote a simulated trajectory (length DD) with value V⁡(τ^)V(\hat{\tau}). We apply confidence weighting based on transition uncertainty U⁡(s,a)U(s,a):
+
+V~​(τ^)=V⁡(τ^)⋅∏(s,a)∈τ^(1−U⁡(s,a)).\tilde{V}(\hat{\tau})=V(\hat{\tau})\cdot\prod_{(s,a)\in\hat{\tau}}\bigl(1-U(s,a)\bigr).
+
+(5)
+
+The best trajectory determines the real action ata_{t}.
+
+#### Comparison to prior work
+
+Existing agents perform tree search with LLMs as a reward function or a world model and measures the quality of each possible action candidate with a numerical score. Then the agent only executes actions whose scores are above a certain threshold. Our simulated tree search has three advantages compared to prior methods:
+
+- 1. 
+
+Trustworthiness: Prior works rely on LLM to envision outcomes of actions. Since LLMs are not explicitly trained to be a world model, this behavior is prone to hallucination and is not robust enough. In contrast, our method leverages real observations that are much more trustworthy.
+
+- 2. 
+
+Comprehensiveness: Prior works essentially conducts a greedy search (one-step), with low-scoring branches directly pruned without further consideration. Some actions may not be good at the immediate step tt but useful at the next step t+1t+1. Such actions may be overlooked in existing agent systems.
+ While our method is similar to beam search (multi-step), considering the joint outcome of a sequence of actions.
+
+- 3. 
+
+Efficiency: Our exploration is a simulation in conceptual space, which is much more efficient than actually executing the actions. It also avoids stateful actions that cannot be recovered, since no action is executed.
+
+### 3.5 Look-ahead Action Simulation-backed Dynamic Replanning and Memory Update
+
+#### Replanning
+
+We dynamically trigger replanning when observations diverge from expectations:
+
+replan=𝟙[∥otobs−o^texp∥>ε].\mathrm{replan}=\mathbbm{1}\left[\ \lVert o^{\mathrm{obs}}_{t}-\hat{o}^{\mathrm{exp}}_{t}\rVert>\varepsilon\right].
+
+(6)
+
+A task-relevant plan requires a high-level view of the environment and the ability to foresee what would happen in future steps. We attempt to distill the foresight enabled by simulated tree search (Section 3.4), by using the result of the search to update our planner.
+
+As Figure 1 (c) illustrates, the planner integrates a brief exploration digest (what worked/failed, newly exposed affordances, uncovered prerequisites) distilled by the memory writer, then updates PtP_{t}. This can be viewed as a highly simplified implementation of a basic causal learning module tha
+t attempts to update our causal model of the world - a highly simplified version of the conceptual flow introduced by Sontakke et al. (2021). This mechanism also prevents catastrophic forgetting of important context, which can happen if the replanner is run with every execution step.
+
+#### Memory Update
+
+In addition to replanning, the agent must also be capable of updating its memory during action simulation. This process applies to both the cognitive map and episodic memory, ensuring that newly encountered patterns, constraints, or dynamics are incorporated into long-term knowledge. Crucially, deci
+sions about what to retain, update, or forget are delegated to the memory agent, which curates information based on task relevance and environmental novelty. Such selective updating is particularly important during curiosity-driven exploration, where novel experiences can refine the agent’s represen
+tation of the environment while preventing memory overload with redundant or irrelevant details.
+
+## 4 Experimental Setup
+
+WebArena (Zhou et al., 2024) presents a realistic simulation environment comprising a broad array of web navigation tasks such as content retrieval, task execution, and form completion. Tasks vary in complexity, ensuring that the agent’s capabilities are thoroughly tested in realistic scenarios - ranging from purchasing items for eCommerce shopping to updating GitLab code repositories.
+
+The original WebArena consists of 811 tasks, however many of these cannot be performed - humans could only perform 78% of the WebArena. WebArena-Lite is a quality-controlled smaller subset of WebArena consisting of 165 tasks introduced by (Liu et al., 2024a) and has been adapted by prior work in the
+ web agent space such as WebRL (Qi et al., 2024) and Plan-and-Act (Erdogan et al., 2025) as a higher quality and more scalable benchmark for evaluating web agents in the most realistic setting possible - incorporating realistic scenarios such as unexpected environment failures.
+
+## 5 Results
+
+### 5.1 Comparison with Other Baselines
+
+In this section, we compare our model to other published results on the WebArena-Lite dataset. These are WebPilot (Zhang et al., 2025), Agent Workflow Memory (AWM) (Wang et al., 2024a), WebRL Qi et al. (2024), and Plan-and-Act (Erdogan et al., 2025). Our own work builds on top of AgentOccam (Yang et
+ al., 2024) - we rerun our results on AgentOccam using the state-of-the-art LLM available to us for experimentation at scale, Claude-4 Sonnet.
+
+Table 1: Evaluation Results for WebATLAS versus other methods reported on WebArena-Lite. Best performance is in bold
+
+Agent
+
+Avg w/
+
+Multi-site
+
+Avg w/o
+
+Multi-site
+
+Gitlab
+Reddit
+Shopping
+
+Shopping
+
+Admin
+
+Maps
+
+Multi-
+
+Site
+
+WebPilot + GPT-4o
+-
+35.3
+39.4
+65.1
+36.9
+24.7
+33.9
+–
+
+AWM + GPT-4-0613
+-
+33.0
+31.8
+50.9
+30.8
+29.1
+43.3
+–
+
+WebRL
+-
+48.1
+50.0
+78.9
+44.4
+54.3
+40.0
+–
+
+Plan-and-Act
+53.9
+57.5
+53.3
+84.2
+55.6
+48.6
+46.6
+30.0
+
+AgentOccam
+
+(Claude-4-Sonnet)
+
+47.9
+51.0
+66.7
+63.2
+40.0
+54.3
+23.1
+40.0
+
+WebATLAS (Ours)
+63.0
+67.1
+73.3
+84.2
+53.3
+77.1
+42.3
+40.0
+
+### 5.2 Ablation Study
+
+In this section we conduct an ablation study where we study the effects of the different components of the system. Starting with AgentOccam as our base agent, we demonstrate that augmenting the agent with the direct HTML cognitive map (Base + CM-Raw) initially reduced performance but led to a dramatic improvement in performance after we enabled agentic summarization (Base + CM).
+
+In addition, integrating a high-level planner (Base + HL) in the style of Chae et al. (2025) also improves performance on top of the base agent.
+
+Finally, we construct the final WebATLAS agent by integrating both the cognitive map and high-level planner and further extend the system to include replanning via look-ahead search (Base + CM + HL + LA) in order to condition the planner on the cognitive map, we see that the two systems demonstrate 
+complementary performance to produce superior performance in conjunction - achieving state of the art results on WebArena-Lite.
+
+Table 2: Ablation Study Results for Individual Components of WebATLAS.
+
+Agent
+
+Avg w/
+
+Multi-site
+
+Avg w/o
+
+Multi-site
+
+Gitlab
+Reddit
+Shopping
+
+Shopping
+
+Admin
+
+Maps
+
+Multi-
+
+site
+
+Plan-and-Act
+53.9
+57.5
+53.3
+84.2
+55.6
+48.6
+46.6
+30
+
+AgentOccam (Base)
+
+47.9
+46.7
+66.7
+68.4
+40
+42.9
+30.8
+30
+
+Cognitive Map
+
+Base + CM-Raw
+
+44.8
+47.1
+70
+68.4
+35.6
+51.4
+19.2
+0
+
+Base + CM
+
+57.4
+55.8
+76.7
+78.9
+46.7
+71.4
+19.2
+30
+
+Planning
+
+Base + HL
+
+50.9
+54.2
+63.3
+78.9
+53.3
+57.1
+15.4
+20
+
+WebATLAS
+
+Base+CM+HL+LA
+63.0
+67.1
+73.3
+84.2
+53.3
+77.1
+42.3
+40.0
+
+## 6 Conclusion
+
+This work presented WebATLAS, a web navigation agent that couples explicit, structured memory with hierarchical planning to turn open-ended browsing into a sequence of verifiable, low-entropy decisions. By leveraging contemporary large language models within a modular control loop, the agent maintai
+ns situational awareness across pages, decomposes goals into intermediate subgoals, and adapts its strategies as the interface or task constraints evolve. The result is a system that is not only more sample-efficient and time-efficient during exploration, but also more interpretable: intermediate me
+mories, subplans, and decision rationales expose where and why the agent changes course.
+
+#### Future Work
+
+Looking forward, we hope to see a research agenda that emphasizes principled generalization of this work rather than tuning performance on a single-benchmark.
+
+- • 
+
+First, our world-model representation of the web is still in its infancy. We hope to see others develop web-native world models that abstract repeated patterns (e.g., filters, tables, forms) into sub-programs and support counterfactual “what-if” reasoning, not merely retrieval.
+
+- • 
+
+Second, next-generation planning should be budget-aware and safety-aware by design, trading off success, latency, and risk through calibrated uncertainty and constraint handling.
+
+- • 
+
+Third, system robustness needs to be measured—not assumed—via stress tests that include UI drift, authentication flows, stochastic failures, and long-horizon, multi-session tasks.
+
+- • 
+
+Finally, as agentic systems start to close the gap with human performance, evaluation looking forward must move beyond pass/fail to incorporate cost of computation, side-effect penalties, reproducibility across seeds, and transparency of the intermediate state.
+
+Taken together, these directions aim at agents that learn enduring abstractions of the web, plan under explicit budgets and constraints, and expose interpretable interfaces for verification and collaboration. We view this separation of concerns—memory, planning, and control—as a durable scaffold for
+ the next generation of reliable, adaptable web agents which are certain to become ubiquitous and invaluable tools in the years to come.
+
+## References
+
+- Browne et al. (2012)
+C. B. Browne et al.
+
+A survey of monte carlo tree search methods.
+
+IEEE Transactions on Computational Intelligence and AI in games 4 (1), pp. 1–43.
+
+Cited by: §2.
+
+- Chae (2024)
+H. e. al. Chae
+
+Web agents with world models“: learning and leveraging environment dynamics in web navigation.
+
+arXiv preprint arXiv:2410.13232.
+
+Cited by: §3.2.
+
+- Chae et al. (2025)
+H. Chae, S. Kim, J. Cho, S. Kim, S. Moon, G. Hwangbo, D. Lim, M. Kim, Y. Hwang, M. Gwak, et al.
+
+Web-shepherd: advancing prms for reinforcing web agents.
+
+arXiv preprint arXiv:2505.15277.
+
+Cited by: §3.2,
+§5.2.
+
+- Erdogan et al. (2025)
+L. E. Erdogan, H. Furuta, S. Kim, N. Lee, S. Moon, G. Anumanchipalli, K. Keutzer, and A. Gholami
+
+Plan-and-act: improving planning of agents for long-horizon tasks.
+
+In Forty-second International Conference on Machine Learning,
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§4,
+§5.1.
+
+- Ha and Schmidhuber (2018)
+D. Ha and J. Schmidhuber
+
+World models.
+
+arXiv preprint arXiv:1803.10122.
+
+Cited by: §2.
+
+- Koh et al. (2024)
+J. Y. Koh, S. McAleer, D. Fried, and R. Salakhutdinov
+
+Tree search for language model agents.
+
+arXiv preprint arXiv:2407.01476.
+
+Cited by: §1.
+
+- Liu et al. (2024a)
+X. Liu, T. Zhang, Y. Gu, I. L. Iong, Y. Xu, X. Song, S. Zhang, H. Lai, X. Liu, H. Zhao, et al.
+
+VisualAgentBench: towards large multimodal models as visual foundation agents.
+
+arXiv preprint arXiv:2408.06327.
+
+Cited by: §4.
+
+- Liu et al. (2024b)
+X. Liu, T. Zhang, Y. Gu, I. L. Iong, Y. Xu, X. Song, S. Zhang, H. Lai, X. Liu, H. Zhao, J. Sun, X. Yang, Y. Yang, Z. Qi, S. Yao, X. Sun, S. Cheng, Q. Zheng, H. Yu, H. Zhang, W. Hong, M. Ding, L. Pan, X. Gu, A. Zeng, Z. Du, C. H. Song, Y. Su, Y. Dong, and J. Tang
+
+VisualAgentBench: towards large multimodal models as visual foundation agents.
+
+External Links: 2408.06327,
+Link
+
+Cited by: §2.
+
+- Liu et al. (2018)
+Z. Liu et al.
+
+Reinforcement learning for web information extraction.
+
+arXiv preprint arXiv:1801.07579.
+
+Cited by: §2.
+
+- Micheli et al. (2022)
+V. Micheli et al.
+
+Transformers are sample efficient world models.
+
+arXiv preprint arXiv:2209.00588.
+
+Cited by: §2.
+
+- Mu et al. (2024)
+Y. Mu et al.
+
+EmbodiedGPT: vision-language pre-training via embodied chain of thought.
+
+Conference on Neural Information Processing Systems.
+
+Cited by: §2.
+
+- Park et al. (2023)
+J. S. Park et al.
+
+Generative agents: interactive simulacra of human behavior.
+
+Proceedings of the 36th Annual ACM Symposium on User Interface Software and Technology.
+
+Cited by: §2.
+
+- Pathak et al. (2017)
+D. Pathak, P. Agrawal, A. A. Efros, and T. Darrell
+
+Curiosity-driven exploration by self-supervised prediction.
+
+In International conference on machine learning,
+
+pp. 2778–2787.
+
+Cited by: §2,
+§3.3.
+
+- Qi et al. (2024)
+Z. Qi, X. Liu, I. L. Iong, H. Lai, X. Sun, W. Zhao, Y. Yang, X. Yang, J. Sun, S. Yao, et al.
+
+WebRL: training llm web agents via self-evolving online curriculum reinforcement learning.
+
+arXiv preprint arXiv:2411.02337.
+
+Cited by: §2,
+§4,
+§5.1.
+
+- Shinn et al. (2024)
+N. Shinn et al.
+
+Reflexion: language agents with verbal reinforcement learning.
+
+Conference on Neural Information Processing Systems.
+
+Cited by: §2.
+
+- Silver et al. (2016)
+D. Silver et al.
+
+Mastering the game of go with deep neural networks and tree search.
+
+Nature 529 (7587), pp. 484–489.
+
+Cited by: §2.
+
+- Sodhi (2023)
+V. e. al. Sodhi
+
+STeP: generalized planning for text-based tasks.
+
+arXiv preprint arXiv:2307.00000.
+
+Cited by: §1.
+
+- Sontakke et al. (2021)
+S. A. Sontakke, A. Mehrjou, L. Itti, and B. Schölkopf
+
+Causal curiosity: rl agents discovering self-supervised experiments for causal representation learning.
+
+In International conference on machine learning,
+
+pp. 9848–9858.
+
+Cited by: §3.5.
+
+- Sutton and Barto (2018)
+R. S. Sutton and A. G. Barto
+
+Reinforcement learning: an introduction.
+
+ MIT press.
+
+Cited by: §2.
+
+- Tolman (1948)
+E. C. Tolman
+
+Cognitive maps in rats and men.
+
+Psychological review 55 (4), pp. 189.
+
+Cited by: §2.
+
+- Wang et al. (2024a)
+Z. Z. Wang, J. Mao, D. Fried, and G. Neubig
+
+Agent workflow memory.
+
+arXiv preprint arXiv:2409.07429.
+
+Cited by: §5.1.
+
+- Wang et al. (2024b)
+Z. Z. Wang, J. Mao, D. Fried, and G. Neubig
+
+Agent workflow memory.
+
+External Links: 2409.07429,
+Link
+
+Cited by: §2.
+
+- Wayne et al. (2018)
+G. Wayne et al.
+
+Unsupervised predictive memory in a goal-directed agent.
+
+arXiv preprint arXiv:1803.10760.
+
+Cited by: §2.
+
+- Weston et al. (2014)
+J. Weston, S. Chopra, and A. Bordes
+
+Memory networks.
+
+arXiv preprint arXiv:1410.3916.
+
+Cited by: §2.
+
+- Yang et al. (2024)
+K. Yang, Y. Liu, S. Chaudhary, R. Fakoor, P. Chaudhari, G. Karypis, and H. Rangwala
+
+Agentoccam: a simple yet strong baseline for llm-based web agents.
+
+arXiv preprint arXiv:2410.13825.
+
+Cited by: §2,
+§3.3,
+§5.1.
+
+- Yao et al. (2022)
+S. Yao, H. Chen, J. Yang, and K. Narasimhan
+
+WebShop: towards scalable real-world web interaction with grounded language agents.
+
+In Advances in Neural Information Processing Systems, S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.),
+
+Vol. 35, pp. 20744–20757.
+
+External Links: Link
+
+Cited by: §1.
+
+- Yao et al. (2023)
+S. Yao et al.
+
+ReAct: synergizing reasoning and acting in language models.
+
+International Conference on Learning Representations.
+
+Cited by: §2.
+
+- Yao et al. (2024)
+S. Yao et al.
+
+Tree of thoughts: deliberate problem solving with large language models.
+
+Conference on Neural Information Processing Systems.
+
+Cited by: §2.
+
+- Zhang et al. (2025)
+Y. Zhang, Z. Ma, Y. Ma, Z. Han, Y. Wu, and V. Tresp
+
+Webpilot: a versatile and autonomous multi-agent system for web task execution with strategic exploration.
+
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+
+Vol. 39, pp. 23378–23386.
+
+Cited by: §2,
+§5.1.
+
+- Zhong et al. (2023)
+W. Zhong, L. Guo, Q. Gao, H. Ye, and Y. Wang
+
+Enhancing large language models with long-term memory.
+
+External Links: 2305.10250,
+Link
+
+Cited by: §2.
+
+- Zhou et al. (2024)
+S. Zhou A. Neelakantan et al.
+
+WebArena: a realistic web environment for building autonomous agents.
+
+In Proceedings of ICLR,
+
+Cited by: §1,
+§2,
+§4.
+
+ 
+ Experimental support, please
+ view the build logs
+ for errors. Generated by
+ 
+ 
+ L
+ A
+ T
+ E
+ 
+ xml
+ 
+ .
+ 
+
+ 
+ 
+
+## Instructions for reporting errors
+
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+
+ 
+ 
+- Click the "Report Issue" (
+ 
+ ) button, located in the page header.
+
+ 
+ Tip: You can select the relevant text first, to include it in your report.
+
+ Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+ 
+
+ 
+ 
+ 
+ We gratefully acknowledge support from
+ our major funders,
+ member institutions, ,
+ and all contributors.
+ 
+
+ 
+ About
+ &middot;
+ Help
+ &middot;
+ Contact
+ &middot;
+ Subscribe
+ &middot;
+ Copyright
+ &middot;
+ Privacy
+ &middot;
+ Accessibility
+ &middot;
+ Operational Status (opens in new tab)
+ 
+ 
+
+ 
+ Major funding support from

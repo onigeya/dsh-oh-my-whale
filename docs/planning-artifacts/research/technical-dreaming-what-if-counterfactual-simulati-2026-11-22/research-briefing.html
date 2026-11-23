@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dreaming 阶段的批量 What-If 反事实推演 · 研究报告</title>
+<style>
+:root{--bg:#fbfbf9;--fg:#1a1a18;--muted:#6b6b63;--line:#e2e0da;--card:#fff;--accent:#2f5d50;--warn:#8a4b00;--bad:#8c2f1f}
+@media (prefers-color-scheme:dark){:root{--bg:#14150f;--fg:#e8e6df;--muted:#9a978c;--line:#2c2e26;--card:#1b1d16;--accent:#8fc4b0;--warn:#e0a45c;--bad:#e08a7a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"Segoe UI","Noto Sans SC",system-ui,sans-serif}
+header{padding:48px 24px 28px;border-bottom:1px solid var(--line)}
+.wrap{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:250px 1fr;gap:40px}
+@media(max-width:900px){.wrap{grid-template-columns:1fr}nav.toc{position:static;max-height:none}}
+h1{font-size:30px;line-height:1.3;margin:0 0 12px}
+.meta{color:var(--muted);font-size:14px}
+.meta span{margin-right:14px;white-space:nowrap}
+nav.toc{position:sticky;top:24px;align-self:start;max-height:calc(100vh - 48px);overflow:auto;font-size:14px;padding:20px 0}
+nav.toc a{display:block;color:var(--muted);text-decoration:none;padding:5px 10px;border-left:2px solid transparent}
+nav.toc a:hover{color:var(--accent);border-left-color:var(--accent)}
+section{scroll-margin-top:20px;padding-bottom:10px}
+main > section:nth-of-type(1){background:var(--card);border:1px solid var(--line);border-radius:10px;padding:22px 26px;margin-bottom:26px}
+h2{font-size:21px;margin:34px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+h3{font-size:16px;margin:22px 0 8px;color:var(--accent)}
+p{margin:10px 0}
+p.note{background:var(--card);border-left:3px solid var(--accent);padding:10px 14px;color:var(--muted);font-size:14px}
+ul{margin:10px 0 10px 20px;padding:0}
+li{margin:5px 0}
+table{border-collapse:collapse;width:100%;margin:16px 0;font-size:14px;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:color-mix(in srgb,var(--accent) 8%,transparent);font-weight:600;white-space:nowrap}
+a{color:var(--accent)}
+.cit{text-decoration:none;font-size:12px;padding:0 2px;border-bottom:1px dotted var(--accent)}
+.badge{display:inline-block;font-size:11px;line-height:1.2;padding:1px 6px;border-radius:9px;border:1px solid;vertical-align:1px}
+.b-ok{color:var(--accent);border-color:var(--accent)}
+.b-med{color:var(--warn);border-color:var(--warn)}
+.b-low,.b-unv{color:var(--bad);border-color:var(--bad);background:color-mix(in srgb,var(--bad) 10%,transparent)}
+footer{max-width:1180px;margin:40px auto;padding:20px 24px;color:var(--muted);font-size:13px;border-top:1px solid var(--line)}
+</style></head><body>
+<header><div style="max-width:1180px;margin:0 auto">
+<h1>Dreaming 阶段的批量 What-If 反事实推演</h1>
+<div class="meta"><span>类型 technical</span><span>决策：Dreaming 是否/如何加入批量反事实推演</span><span>2026-11-22</span><span>preset standard · validation normal</span><span>claims 8 verified / 2 unverified</span></div>
+</div></header>
+<div class="wrap"><nav class="toc"><a href="#s0">执行摘要</a>
+<a href="#s1">维度一：模拟器骨架——四个实现，一套骨架，两种"模拟"</a>
+<a href="#s2">维度二：算力经济学——没有"值不值得模拟"的评估器，只有"先模拟完再打分"</a>
+<a href="#s3">维度三：模拟 ↔ 记忆的闭环——三篇里没有一篇把假想写回记忆</a>
+<a href="#s4">维度四：可靠性边界——LLM 世界模型什么时候不可信</a>
+<a href="#s5">维度五：落地映射——What-If 挂进 Dreaming 五阶段的哪一格</a>
+<a href="#s6">维度六：近邻方法——Dreamer 系列的边界，以及能借的三件事</a>
+<a href="#s7">交叉洞察</a>
+<a href="#s8">反向证据（证伪记录）</a>
+<a href="#s9">建议</a>
+<a href="#s10">开放问题</a>
+<a href="#s11">来源表</a>
+<a href="#s12">失效地图</a>
+<a href="#s13">附录：研究对象与取证方法</a></nav>
+<main><section id="s0"></section><p># technical research: Dreaming 阶段的批量 What-If 反事实推演</p>
+<p><strong>Decision this research serves:</strong> Dreaming 阶段是否以及如何加入批量 What-If 反事实推演，作为持续学习/自我演化的一环</p>
+</section>
+<section id="s0"><h2>执行摘要</h2>
+<p><strong>结论先说：加，但不是加在"在线决策"上，而是加在 Dreaming 的剪枝之前，做成离线批式、深度不超过 2 步、每条推演锚定一条真实记忆记录的"可结算赌注"。七个研究对象里没有一个的完整实现能直接搬——能搬的只有骨架、候选裁剪纪律、离散投票打分与不确定性折扣这四件。</strong></p>
+<p class="note">读前需知的两个词：<strong>Dreaming</strong> 指本插件的离线固化阶段（重放抽样 → 模式提取 → 场景抽象 → 剪枝归档 → 跨主题重组）；<strong>L1</strong> 指一句话事实/偏好/决策 + 类型 + 重要度 + 来源指针（session id + seq 区间）+ 有效期的原子记忆层，L2 是主题场景、L3 是画像。下文不再重复。</p>
+<p><strong>三条驱动结论的发现</strong></p>
+<p>1. <strong>这批系统的"模拟"比宣传的弱得多，而弱的那部分恰好是我们需要的。</strong> WebDreamer 不是 MCTS——全文 "MCTS" 精确命中 0 次，代码是"每候选 3 条轨迹 × 深度 1 × 每条 10 次投票"的蒙特卡洛平均 <a class="cit" href="#src-1">[1]</a><a class="cit" href="#src-2">[2]</a>；WebDreamer 与 ITP 的想象都是<strong>单链</strong>（ITP 甚至 do_sample=False，同一输入永远同一条想象）<a class="cit" href="#src-2">[2]</a><a class="cit" href="#src-4">[4]</a>；WebATLAS 没有模拟器，模拟就是查记忆表 <a class="cit" href="#src-6">[6]</a>。所谓"批量反事实分支"在这些开源实现里并不存在，它是我们必须自己造的部分。</p>
+<p>2. <strong>"假想不入库"是这批系统共同的防污染线，而且没人给出正例。</strong> WebATLAS 只写经 memory agent 策展的转移摘要，Memento 只写真实执行的 (s,a,r)，PGR 的探针从不入库 <a class="cit" href="#src-6">[6]</a><a class="cit" href="#src-7">[7]</a><a class="cit" href="#src-8">[8]</a>。想在记忆库上叠 What-If，第一个要自创的不是推演算法，而是<strong>假想记录的生命周期</strong>：单列存放、带结算字段、永不混入 L1。</p>
+<p>3. <strong>深度加不上去，这是实测而不是理论。</strong> WebDreamer 在 GPT-4o 上实测 H=1 最优，H=2/3 因"模拟内动作提议幻觉"而下降 <a class="cit" href="#src-1">[1]</a>；ITP 固定步长时成功率同样先升后降 <a class="cit" href="#src-3">[3]</a>。<strong>任何"想深一点会更准"的直觉，在这两篇的实验里都是错的。</strong></p>
+<p><strong>最大警示</strong>：七个研究对象里，能读到实现细节的五个（WebDreamer、ITP、Memento、Dreamer 4、Dreamer V3）全部在<strong>有真值、可回放、回合制</strong>的环境里做推演（网页、ALFWorld、HalfCheetah）；另外两个（SimuRA、WebATLAS）只有论文、无仓库可核。没有任何一篇在"个人记忆"这种无环境、无 episode、无即时奖励的场景做过实验。我们不是把他们的结论搬过来，而是把他们的骨架搬过来，然后用两种他们没有的真值填空：<strong>符号一致性检查</strong>（来源指针、冲突计数）与<strong>下次真实对话的回填</strong>。</p>
+<p><strong>给本项目的取舍</strong>：v1 只做 W1（一致性反事实）与 W3（剪枝后悔预演），因为这两类的对错可以完全由符号检查判定，不依赖 LLM 自评；W2（可答性预演）作为检索探针的副产品顺带产出，但要等结算链路建好再谈收益；W4（真值敏感性）留到 v2。<strong>先建结算链路，再扩推演规模——先能证明"猜得准"，再谈"猜得多"。</strong></p>
+</section>
+<section id="s1"><h2>维度一：模拟器骨架——四个实现，一套骨架，两种"模拟"</h2>
+<p><strong>结论先说：这四个项目共享同一副骨架（观测 → 状态摘要 → 候选动作 → 前向模拟 → 打分 → 选一个执行），但"模拟"有两种截然不同的实现：一种让 LLM 预测未来，另一种干脆查表。只有后者能在记忆图谱上成立。</strong></p>
+<p>骨架本身没有分歧，差异全在"转移函数"由谁提供：</p>
+<table><thead><tr><th>维度</th><th>WebDreamer <a class="cit" href="#src-1">[1]</a><a class="cit" href="#src-2">[2]</a></th><th>SimuRA <a class="cit" href="#src-5">[5]</a></th><th>ITP <a class="cit" href="#src-3">[3]</a><a class="cit" href="#src-4">[4]</a></th><th>WebATLAS <a class="cit" href="#src-6">[6]</a></th></tr></thead><tbody>
+<tr><td>状态表示</td><td>截图 + "动作造成的界面变化"自然语言增量</td><td>自然语言摘要序列（token 级分解）</td><td>文本观测 s_t；想象态 ŝ 另立</td><td>原始观测 + 认知地图三元组 (o,a,o') + 站点规则</td></tr>
+<tr><td>模拟器实现</td><td>LLM 预测状态变化</td><td>LLM 预测下一步摘要</td><td>LLM（训练过的 Qwen3-8B）</td><td>记忆检索查表，不生成</td></tr>
+<tr><td>候选来源</td><td>top-k 采样 + LLM 过滤</td><td>policy 采样 20 个抽象意图后聚类</td><td>policy 直接采下一个（单链）</td><td>Actor 产 N 个（正文无值）</td></tr>
+<tr><td>分支 × 深度</td><td>每动作 3 条 × 深度 1（实验固定 H=1）</td><td>20 × 20 采样，深度 1</td><td>1 条 × K_t（≤5）</td><td>N × D 步 beam（无值）</td></tr>
+<tr><td>打分</td><td>LLM 三档 1/0.5/0 + 多层平均</td><td>critic 终端价值 + 折扣回报</td><td>无标量 critic，Reflect 文本反馈</td><td>五维价值 × 转移置信度 ∏(1−U)</td></tr>
+<tr><td>搜索算法</td><td>MPC/argmax，<strong>无树</strong></td><td>声称 DFS/MCTS，实为深度 1 枚举</td><td>无搜索，单链</td><td>beam over 记忆图</td></tr>
+</tbody></table>
+<p><strong>第一处必须纠正的常识：WebDreamer 不是 MCTS。</strong> 全文检索 "MCTS" 精确命中 0 次 <a class="cit" href="#src-1">[1]</a>；它做的是 MPC 式 argmax score(sim(o_t,a))——候选动作先 top-k 采样、再由一次 LLM 调用过滤掉不该模拟的（controller.py:44-136，system prompt 明说"你的角色不是选最佳动作，而是过滤掉明显无关的"）<a class="cit" href="#src-2">[2]</a>，然后对每个候选跑 num_of_sim=3 条独立轨迹、深度 steps=1、每条轨迹内再用 n=10 次 LLM 采样投票（simulation_scoring.py:416-492）<a class="cit" href="#src-2">[2]</a>。所谓"MCTS 式评估"在代码里是<strong>固定小预算的蒙特卡洛投票</strong>：没有树展开、没有回溯、没有价值回传。</p>
+<p><strong>第二处：想象是单链，不是分支。</strong> WebDreamer 的 multiple_step_change_prediction 先预测首步状态变化，再循环 k 次"在想象世界里提一个动作 → 预测该动作的状态变化"，遇 stop 提前 break（world_model.py:193-229）<a class="cit" href="#src-2">[2]</a>。ITP 更彻底：orchestrator 每步只调一次 world_model.imagine(k)，得到<strong>一条</strong>链、一次反思、一个动作（orchestrator.py:27-40）<a class="cit" href="#src-4">[4]</a>；而且那次生成 temperature=0.7 但 do_sample=False（world_model.py:62-68）<a class="cit" href="#src-4">[4]</a>——温度不生效，同一输入永远同一条想象。<strong>"批量反事实分支"在这两个项目里都不存在，它是要我们自己补的东西，不是能照抄的现成件。</strong></p>
+<p><strong>第三处：WebATLAS 的"三环"实际是四模块，Simulator 是记忆检索。</strong> 它没有独立模拟器：模拟即查认知地图 ô=M(o_t,a_t)，未命中返回通用占位观测 <a class="cit" href="#src-6">[6]</a>；打分是五维 LLM 价值（goal alignment、state viability、action coherence、plan consistency、outcome risk）再乘轨迹级不确定性折扣 ∏(1−U(s,a))。这对我们是好消息也是坏消息：好消息是它证明"记忆即世界模型"在结构上可行，转移函数可以是查表而非生成；坏消息是它的三元组来自真实站点探索，覆盖极稀疏，未命中就退化成占位符——而个人记忆库的编辑历史只会更稀疏。</p>
+<p><strong>为什么具体实现搬不过来（三条硬伤）</strong></p>
+<p>1. <strong>没有 o_{t+1} 真值。</strong> 前三个项目都靠"能真的执行、真的回放"来定义状态转移；记忆库里"假设我合并这两条冲突偏好"之后世界变成什么样，既不能截图验证，也没有环境 reward。</p>
+<p>2. <strong>动作空间组合爆炸。</strong> 网页上十几个可点元素；记忆图的编辑操作（插入/合并/改写/失效化 L1、重划 L2、重写 L3）是组合空间，没有廉价沙箱执行。</p>
+<p>3. <strong>没有 episode 目标函数。</strong> 0/0.5/1 表达的是"任务完成进度"；Dreaming 是离线固化，没有 task success，同一段推演对"该不该保留这条记忆"的价值无法用完成度表达。</p>
+<p><strong>能留下来的只有两样：骨架，和可插拔的打分接口。</strong> 转移函数与打分器必须为符号层重写——这不是妥协，这是唯一有证据支持的路径。</p>
+</section>
+<section id="s2"><h2>维度二：算力经济学——没有"值不值得模拟"的评估器，只有"先模拟完再打分"</h2>
+<p><strong>结论先说：四篇里没有一篇实现"模拟收益评估器"。它们都是先模拟、再打分，成本控制靠事后剪枝与固定小预算。想在 Dreaming 里"按需触发推演"，机制得自建，但边界条件论文给得很清楚。</strong></p>
+<p><strong>边界一：深度不能加。</strong> ITP 固定步长时成功率"先升后降"（arxiv-2601.08955:934）<a class="cit" href="#src-3">[3]</a>；WebDreamer 用 GPT-4o 在 horizon 1/2/3 上实测，H=1 最好，H=2、3 开始下降，原因是<strong>模拟内的动作提议幻觉</strong>——模拟里提出的动作在预测出的页面上其实不可用，深度越大，不同候选的轨迹越"看起来都对"、越不可区分 <a class="cit" href="#src-1">[1]</a>。原文："when the planning horizon extends to 2 and 3 steps, the effectiveness begins to diminish"（arxiv-2411.06559:637-640）。实验实际设定是 H=1（:487）。</p>
+<p><strong>边界二：成本随深度单调上升，而且很贵。</strong> WebDreamer 墙钟（Shopping 域）reactive 87.7s、tree search 785.7s、WebDreamer 179.4s——比树搜索省 4–5 倍，但按同表三个域（Classifieds 68.3/183.6、Reddit 83.5/233.7、Shopping 87.7/179.4）算，仍比反应式慢约 2.0–2.8 倍 <a class="cit" href="#src-1">[1]</a>。ITP 部署延迟 p50/p95/p99 = 14.2/31.8/44.7 秒，其中想象占 7.8/18.9/28.5 秒（比策略本身还贵），吞吐 11.8 episodes/hour，VRAM 31.0/38.4 GB <a class="cit" href="#src-3">[3]</a>。</p>
+<p><strong>边界三："模拟导致更差"有原文，但只在特定条件下。</strong> WebDreamer 说"直接模拟所有动作会引入额外噪声、负面影响性能"（:625），但上下文是<strong>去掉 self-refine 候选过滤之后</strong>——即模拟的收益依赖前面的候选裁剪。工程纪律由此而来：<strong>先剪候选，再开模拟；不剪就模拟全部，会亏。</strong></p>
+<p><strong>ITP 的"自适应"到底怎么做的</strong>：不是不确定性驱动，也不是预测误差驱动，而是"朝最终目标的进度估计"。两条路径：ITP_I 让 LLM 读指令+状态直接吐一个整数 K（prompt 就一句"output a single integer K in [0,{kmax}]"）；ITP_R 把 K 变成可学习分布，伪标签是 argmax_k[log p(a*|s,τ̂(k)) − λ_K·k]，在线奖励 r_env − λ_K·K_t − λ_step，用 A2C 联合优化 <a class="cit" href="#src-3">[3]</a>。</p>
+<p><strong>代码里的"自适应"比论文弱得多</strong>：decide_k 是一次 temperature=0.8 的采样取首个整数，解析失败静默回退 K=1，再 clamp 到 [0,max_k]（policy.py:48-69）<a class="cit" href="#src-4">[4]</a>；K_head 只出现在训练脚本（train_adaptive_k.py:224），推理路径根本不用它；K_max 代码写死 5，论文正文只说"见附录 C" <a class="cit" href="#src-4">[4]</a>。<strong>所以"自适应 horizon"在开源实现里约等于"让 LLM 拍一个 0–5 的整数"——它便宜（decide_k 的 max_new_tokens=32，policy.py:58 <a class="cit" href="#src-4">[4]</a>），但不可靠。这正是可以照抄的那一半：成本低、可审计；不值得照抄的是训练 K_head，因为我们没有专家动作可用。</strong></p>
+</section>
+<section id="s3"><h2>维度三：模拟 ↔ 记忆的闭环——三篇里没有一篇把假想写回记忆</h2>
+<p><strong>结论先说：这是本次研究最重要的一条否定性发现。WebATLAS、Memento、PGR 三个"记忆 + 推演"的系统，没有一个把想象产物当事实写回长期记忆。它们都用某种闸门把假想挡在库外。没有任何论文给出"如何区分假想与真实"的正例——只有"干脆不写"的负例。</strong></p>
+<p>三道闸门，三种口径：</p>
+<ul>
+<li><strong>WebATLAS</strong>：模拟期间允许更新记忆，但写入必须过 memory agent 的 retain/update/forget 三选一；真正落库的是<strong>策展过的转移摘要</strong>，不是想象轨迹本身 <a class="cit" href="#src-6">[6]</a>。</li>
+<li><strong>Memento</strong>：只写真实执行的 (s_t,a_t,r_t)，且只把每条轨迹的最终步写库以保持紧凑（Eq.12 是集合并）<a class="cit" href="#src-8">[8]</a>。它的"反事实分支"实际形态是<strong>检索到的成功+失败 case 并列</strong>，不是分支树——用户表格里"自带反事实分支评估"的描述应更正为"案例插值"。</li>
+<li><strong>PGR</strong>：想象出来的未来步骤只当检索探针用，从不入库 <a class="cit" href="#src-7">[7]</a>。</li>
+</ul>
+<p><strong>Memento 还有一个值得单独拎出来的教训</strong>：case bank 只增不删，而论文自己报告 K 增大后性能 plateau 甚至略降，结论是"小而高质量的记忆更优"（:1165-1166）<a class="cit" href="#src-8">[8]</a>。这与本项目 brief 里"只增不减是九家共性缺陷"互为印证——<strong>在一个已经会膨胀的记忆库上再叠加"批量假想轨迹"，如果不设淘汰，就是二次膨胀。</strong></p>
+<p><strong>唯一可直接借用的数学形式：不确定性折扣。</strong> WebATLAS 用 Ṽ(τ̂)=V(τ̂)·∏(1−U(s,a)) 给想象轨迹打折，并在 ‖o_obs−ô_exp‖&gt;ε 时触发重规划 <a class="cit" href="#src-6">[6]</a>。U(s,a) 的具体定义正文没给（<span class="badge b-unv">未找到证据</span>），这反而留出空间——在符号层，U 可以由<strong>已有的治理信号</strong>合成：无来源指针、来源陈旧、处于 disputed 状态、与既有断言冲突数。<strong>我们不需要 LLM 自信度，我们有比它更硬的东西。</strong></p>
+<p><strong>代码与论文不一致（Memento）</strong>：论文说 parametric 版在 Write 时"further online updates a Q-function"，Read 由学到的 Q 驱动（:512-513）<a class="cit" href="#src-8">[8]</a>；代码里是<strong>离线训练好的成对分类器</strong>，加载权重后对 (query, case) 打分取 softmax[:,1]，case bank 里没有任何 Q 字段（memory/parametric_memory.py:10-45）<a class="cit" href="#src-9">[9]</a>。代价从"库内元数据"变成"一个需要 GPU 推理的外挂模型"。<strong>任何把"价值分数"塞进记忆库的设计，都要先问：它是字段，还是要一个模型？</strong></p>
+</section>
+<section id="s4"><h2>维度四：可靠性边界——LLM 世界模型什么时候不可信</h2>
+<p><strong>结论先说：唯一做了显式校准的是 WebATLAS，而它校准的方式是"别让 LLM 预测，去查真实观测"。其余三篇承认幻觉，但没有给出可操作的止损信号。</strong></p>
+<p>三篇的自我诊断（细节见维度二"边界一"与维度一"三处纠正"）：WebATLAS 直言 LLM 未被训练成世界模型、凭想象预测"prone to hallucination"，因此改用真实观测查表 <a class="cit" href="#src-6">[6]</a>；WebDreamer 把 horizon 增益消失归为"模拟内的动作提议幻觉" <a class="cit" href="#src-1">[1]</a>；ITP 在动机段就写"过度 rollout 会放大模型误差并浪费算力" <a class="cit" href="#src-3">[3]</a>。<strong>共同点是：诊断清楚，但都没有给出运行时可用的止损信号</strong>——没有"这条想象不可信，丢弃"的判定器。</p>
+<p><strong>对 Dreaming 的直接推论（推断，非论文实测，必须标明）</strong>：没有任何论文在"陪伴/个人助理"场景做过反事实推演实验。但从上面三条能推出一条硬边界——<strong>有 ground truth 可校验的推演可以做，无真值的自由多步生成不要做</strong>。前者如"若把两条冲突偏好按方案 A 合并，哪些既有记忆会失去来源支撑"，答案可以用符号检查验证；后者如"用户下周情绪会怎样"，既无真值也无止损信号，正是 WebDreamer 报告失效的区间。</p>
+</section>
+<section id="s5"><h2>维度五：落地映射——What-If 挂进 Dreaming 五阶段的哪一格</h2>
+<p>这一维没有对应论文，是把前四维的证据压到本项目结构上的设计推导。<strong>每条都标证据来源，推断的都写明是推断。</strong></p>
+<p><strong>先定性：Dreaming 里的 What-If 不是"下一步做什么"，而是"这批记忆换个处置会怎样"。</strong> 前四个项目的推演服务于在线决策（选哪个动作），我们的推演服务于离线固化（选哪种理解/处置）——这是根本差异，也是打分器必须换的原因。</p>
+<p><strong>四类可校验的 What-If（按可验证性排序）</strong></p>
+<table><thead><tr><th>类型</th><th>问法</th><th>谁来判对错</th><th>证据支撑</th></tr></thead><tbody>
+<tr><td>W1 一致性反事实</td><td>若按方案 X 合并/改写这两条，库中哪些断言会失去来源支撑或变成矛盾？</td><td>符号检查（来源指针 + 冲突计数），无需 LLM 裁决</td><td>WebDreamer 的状态变化预测骨架 <a class="cit" href="#src-1">[1]</a>；WebATLAS 的 ∏(1−U) <a class="cit" href="#src-6">[6]</a></td></tr>
+<tr><td>W2 可答性预演</td><td>若用户下次问起主题 T，仅凭现有 L1 能答到什么程度？缺口在哪？</td><td>下次真实对话回填（有真值）</td><td>PGR 的想象引导检索 <a class="cit" href="#src-7">[7]</a></td></tr>
+<tr><td>W3 剪枝后悔预演</td><td>若现在归档这批低频记忆，会丢掉哪些"当时没用、将来会问"的东西？</td><td>归档后命中率回填</td><td>Memento 的 K 增大反而变差 <a class="cit" href="#src-8">[8]</a>；Dreamer 4 的"每 context 一条 rollout" <a class="cit" href="#src-10">[10]</a></td></tr>
+<tr><td>W4 真值敏感性</td><td>若这条新事实为假，哪些下游结论会塌？</td><td>后续真实交互证伪</td><td>Memento 的成功/失败 case 并列 <a class="cit" href="#src-8">[8]</a></td></tr>
+</tbody></table>
+<p><strong>挂载点：不新增第六阶段，而是插进第三与第四阶段之间，作为"剪枝归档"的前置校验。</strong> 理由：剪枝是唯一不可逆（虽可回滚）且最容易后悔的动作；而 W1/W3 恰好能用符号检查判对错。放在"场景抽象之后、剪枝之前"，推演产出的就是剪枝决策的证据，而不是又一份没人读的文本。</p>
+<p><strong>七条设计约束，每条对应一条证据</strong></p>
+<p>1. <strong>锚定真实记录，一锚点一分叉。</strong> 每条 What-If 必须挂一条真实 L1/L2 的 id 作起点，不允许凭空起头。依据：Dreamer 4 的想象 rollout 必须从真实数据 context 起步、且一个 context 只开一条 rollout <a class="cit" href="#src-10">[10]</a>；这同时解决"假想无据"与"批量爆炸"。</p>
+<p>2. <strong>深度硬上限 K≤2，默认 K=1。</strong> 依据：WebDreamer H=1 最优、H≥2 因模拟内动作幻觉下降 <a class="cit" href="#src-1">[1]</a>；ITP fixed-k 先升后降 <a class="cit" href="#src-3">[3]</a>。<strong>不要做多步自由生成。</strong></p>
+<p>3. <strong>动作必须在可执行集合内。</strong> 候选编辑操作只能从枚举表里出（insert / merge / rewrite / expire / promote），生成后先校验再模拟，不合法直接丢弃。依据：ITP 的 validate_action 校验动作 ∈ admissible_commands，否则回退（policy.py:13-37）<a class="cit" href="#src-4">[4]</a>。</p>
+<p>4. <strong>先剪候选，再开模拟。</strong> 依据：WebDreamer 去掉 self-refine 后"直接模拟所有动作会引入噪声、负面影响性能"（:625）<a class="cit" href="#src-1">[1]</a>。</p>
+<p>5. <strong>打分用离散档 + 多次投票，不用连续置信。</strong> 依据：WebDreamer 三档 1/0.5/0 + 多层平均 <a class="cit" href="#src-1">[1]</a><a class="cit" href="#src-2">[2]</a>；LLM 自评的连续分数没有校准证据，离散档至少可复现。</p>
+<p>6. <strong>假想记录独立存放，永不进 L1。</strong> 依据：三篇一致把假想挡在库外 <a class="cit" href="#src-6">[6]</a><a class="cit" href="#src-7">[7]</a><a class="cit" href="#src-8">[8]</a>；brief 里 L1 是"一句话事实 + 来源指针"，假想没有来源指针，天然不属于 L1。建议单列 whatif 表（anchor_id、edit_op、predicted_delta、score、predicted_at、verified_at、outcome）。</p>
+<p>7. <strong>预算按 token 计，不按调用数计。</strong> 依据：ITP 的成本口径是 episode token 总和、NB(k) 归一到 [0,1] <a class="cit" href="#src-3">[3]</a>。调用数会掩盖 prompt 长度差异。</p>
+<p><strong>这一维最值得写进设计的一条：把"推演"变成"可结算的赌注"。</strong> 三篇里"想象必须被真实信号校正"在 Dreamer 里是 loss 项 <a class="cit" href="#src-12">[12]</a>，在 WebATLAS 里是 replan 触发器 <a class="cit" href="#src-6">[6]</a>；而在记忆插件里，它可以是<strong>一条在下次真实对话中自动结算的预测记录</strong>：W2 说"用户会问 T、现有记忆答不全"，下次会话真的问了 T 就算命中，没问就算落空。命中率就是模拟器的校准曲线，也是"自我演化"唯一诚实的度量——<strong>不是模型变强了，是它的猜测越来越准，而且你能查账。</strong> 三篇论文都没做这件事（<span class="badge b-unv">未找到证据</span>），这是可以占的位置。</p>
+<p><strong>批量调度（回应用户的"批量"）</strong>：每个 Dreaming 周期固定配额——锚点数 N_a、每锚定编辑数 N_e、总 rollout 数 N_a×N_e 硬上限；按 (anchor_id, edit_op) 哈希去重，已推演且未结算的跳过；dry-run 只跑锚点采样与候选生成（对应 brief 里"只跑选择阶段"）；种子写进产物，事后能回答"为什么挑了这条"。幂等靠周期标记，错过不补做——与 brief 现有约定一致。</p>
+</section>
+<section id="s6"><h2>维度六：近邻方法——Dreamer 系列的边界，以及能借的三件事</h2>
+<p><strong>结论先说：Dreamer 的"想象"之所以有用，是因为想象轨迹能回传梯度去更新 policy/value/世界模型。符号记忆层没有可微潜空间、没有梯度，"在想象中训练"这条路直接封死，只能取"想象用于排序/检索"。</strong></p>
+<p>不可迁移的四件：RSSM 隐状态 {h,z} 与 KL/重建损失、diffusion + shortcut forcing 的连续潜空间、tokenizer 的量化潜变量、value/reward head 的 TD/λ-return 梯度学习 <a class="cit" href="#src-10">[10]</a><a class="cit" href="#src-12">[12]</a>。另一个常见误读要纠正：<strong>Dreamer V3 推理时不做 lookahead</strong>，正文明确"select actions by sampling from the actor network without lookahead planning"（:265）<a class="cit" href="#src-12">[12]</a>——它的想象发生在训练时。所以它对应的只能是"离线 Dreaming"，不是"在线决策"。</p>
+<p>可迁移的三件：</p>
+<p>1. <strong>回放采样策略</strong>：想象 rollout 从真实数据 context 起步，一个 context 只开一条 rollout 以保多样性、省内存 <a class="cit" href="#src-10">[10]</a>；开源实现里这一循环的入口就是 train_agent_in_imagination（train_halfcheetah_imagination_rl.py:746）<a class="cit" href="#src-11">[11]</a>；replay ratio 越高越稳 <a class="cit" href="#src-12">[12]</a>。符号层对应：一锚点一分叉。</p>
+<p>2. <strong>想象的用途</strong>：训练（Dreamer）vs 决策打分（WebDreamer/WebATLAS）。符号层只能取后者。</p>
+<p>3. <strong>真实信号钉住想象</strong>：V3 把 critic loss 同时加在 replay 的真实起点上（β_repval=0.3）<a class="cit" href="#src-12">[12]</a>。符号层的等价物是"每条假想必须挂真实来源指针 + 执行后回填结果"。</p>
+<p><strong>顺带一个交叉印证</strong>：Dreamer 4 的"每 context 一条 rollout"与 Memento 的"每轨迹只存最终步"，是同一种去冗余直觉——可作为 Dreaming 重放抽样的一条硬约束候选。</p>
+</section>
+<section id="s7"><h2>交叉洞察</h2>
+<p><strong>只有把六个维度叠起来才看得见的三件事</strong></p>
+<p>1. <strong>"没有真值"是本项目与它们的分水岭，同时是最大风险与最大机会。</strong> 网页智能体敢多步模拟，是因为模拟完可以真的点一下、看对不对；我们没有"点一下"的沙箱 <a class="cit" href="#src-1">[1]</a><a class="cit" href="#src-6">[6]</a>。但记忆库有两种它们没有的硬真值——<strong>符号自洽</strong>（是否有来源支撑、是否与其它断言矛盾）与<strong>未来对话</strong>（用户下次到底问不问）。前四维所有"不可迁移"判断都指向同一结论：打分器必须换成这两种真值的组合，而不是 LLM 自评。</p>
+<p>2. <strong>三个"记忆 + 推演"系统都用闸门挡住假想，但闸门的方向相反。</strong> WebATLAS 是"策展后写入"（记忆是模拟器的先验，也是产物），Memento 是"只写真实执行"，PGR 是"只读不写"。三者合起来给出一条对本项目最有用的分工：<strong>假想只用于生成检索探针与剪枝证据，不用于生成记忆条目。</strong> 这也解释了为什么"继续学习"在它们那里都停留在案例库层面——一旦允许假想入库，"学到的"就再也分不清真假。</p>
+<p>3. 由此推出规模判断：WebATLAS 的查表模拟在真实站点上可用，靠的是海量探索三元组 <a class="cit" href="#src-6">[6]</a>；记忆库的编辑历史稀疏几个数量级，未命中就退化成占位符。<strong>所以 What-If 只能是"少量、锚定、可结算"，不是"批量、自由、常开"——"批量"应理解为"每个周期一批、每批有配额"。</strong></p>
+</section>
+<section id="s8"><h2>反向证据（证伪记录）</h2>
+<p>按 validation=normal 做了四处抽查，两处证实、两处修正：</p>
+<table><thead><tr><th>待检论断</th><th>抽查结果</th><th>处置</th></tr></thead><tbody>
+<tr><td>WebDreamer 是 MCTS 式评估</td><td><strong>证伪</strong>：全文 "MCTS" 精确命中 0 次；实验设定 H=1（arxiv-2411.06559:487）；代码是每候选 3 条轨迹的投票平均（simulation_scoring.py:443-492）</td><td>正文改写为"MPC 式固定小预算蒙特卡洛投票"</td></tr>
+<tr><td>模拟越深越准</td><td><strong>证伪</strong>：H=2/3 因模拟内动作幻觉下降（:637-640）；且"模拟全部动作会引入噪声"（:625）成立的前提是<strong>已去掉候选过滤</strong></td><td>转为设计约束：K≤2，先剪候选</td></tr>
+<tr><td>Memento 把 Q 值存进记忆库</td><td><strong>修正</strong>：论文说 online 更新 Q（:512-513），代码是离线分类器 softmax[:,1]，case bank 无 Q 字段（parametric_memory.py:10-45）</td><td>正文标注"论文声称 vs 代码实现"不一致</td></tr>
+<tr><td>PGR 的检索增益数字</td><td><strong>证实</strong>：MemoryQuest recall 0.723 vs Mem0 0.256 / GraphRAG 0.160；RecallExact 0.326 vs 0.015；query-only 0.58（arxiv-2605.14177:677-682）<a class="cit" href="#src-7">[7]</a></td><td>原样引用</td></tr>
+</tbody></table>
+<p><strong>未被证伪但需提醒的两条</strong>：SimuRA 论文自称可用 DFS/MCTS，但同段给的配置是 M=N=20、T=t+1（树深 1 层），属论文内部不一致，且无代码可核 <a class="cit" href="#src-5">[5]</a>；WebATLAS 的 N（候选数）、D（深度）、U 的定义与估计方法正文均未给出 <a class="cit" href="#src-6">[6]</a>，任何据此复刻 LAS 的计划都要先补这三项。</p>
+</section>
+<section id="s9"><h2>建议</h2>
+<p><strong>R1｜v1 把 What-If 做成离线批式、插在剪枝之前，不做在线推演。</strong> 置信基础：high（深度证据 <a class="cit" href="#src-1">[1]</a><a class="cit" href="#src-3">[3]</a> + 本项目无沙箱执行的事实）。落点：Dreaming 五阶段的"场景抽象"与"剪枝归档"之间。</p>
+<p><strong>R2｜假想记录单列 whatif 表，带结算字段，永不进 L1。</strong> 置信基础：high（三篇一致的"假想不入库"实践 <a class="cit" href="#src-6">[6]</a><a class="cit" href="#src-7">[7]</a><a class="cit" href="#src-8">[8]</a>）。字段清单见维度五约束 6。落点：治理面的可导出与可审计要求。</p>
+<p><strong>R3｜打分器以符号检查为主，LLM 只补残余判断，且用离散档 + 多次投票。</strong> 置信基础：medium（"符号检查优先"是我们的推断，论文无对应；"离散档 + 投票"有 WebDreamer 代码为证 <a class="cit" href="#src-1">[1]</a><a class="cit" href="#src-2">[2]</a>）。落点：W1/W3 的判定逻辑。</p>
+<p><strong>R4｜不确定性折扣 U 由已有治理信号合成，不用 LLM 自信度。</strong> 置信基础：medium（WebATLAS 提供了 ∏(1−U) 的形式，但 U 的定义缺失 <a class="cit" href="#src-6">[6]</a>，合成方式是推断）。可用信号：无来源指针、来源陈旧、disputed 状态、冲突计数。</p>
+<p><strong>R5｜预算按 token 计、按周期配额、幂等 + dry-run + 种子。</strong> 置信基础：high（ITP 的 token 口径 <a class="cit" href="#src-3">[3]</a> + 本项目既有的幂等与 dry-run 约定）。落点：Dreaming 的预算与可复现性条款。</p>
+<p><strong>R6｜先做结算链路，再扩规模；W2 的检索探针是最先能量化收益的切入点。</strong> 置信基础：medium-high（PGR 证明想象可提升召回 <a class="cit" href="#src-7">[7]</a>，但结算机制无人实现）。落点：v1.5 的评测集。</p>
+</section>
+<section id="s10"><h2>开放问题</h2>
+<p>1. <strong>U(s,a) 怎么定义？</strong> 论文把符号留在正文外（WebATLAS 未给定义）。我们要自定义，但没有证据说哪种合成最好——只能靠结算曲线事后验证。</p>
+<p>2. <strong>没有专家动作，K 怎么选？</strong> ITP 的 K_head 需要专家动作作监督；LLM 提炼式（decide_k）成本低但不可靠。备选是纯启发式（按冲突密度定 K），无证据支持，需实测。</p>
+<p>3. <strong>结算窗口多长？</strong> "下次会话"太短（可能几小时），"30 天"太长（反馈稀疏）。没有任何论文给过这个数——这是纯设计选择。</p>
+<p>4. <strong>whatif 表怎么淘汰？</strong> Memento 的教训是 K 增大反而变差 <a class="cit" href="#src-8">[8]</a>；假想表若只增不删会重演。淘汰策略需与结算率挂钩，但阈值无据。</p>
+<p>5. <strong>符号检查能覆盖多少比例的 What-If？</strong> 若大部分推演的结论无法被符号检查判定，R3 就退化成 LLM 自评，整条设计的基础动摇。这个比例必须先测。</p>
+<p>6. <strong>陪伴场景的真空。</strong> 七个项目无一在个人助理/陪伴场景做过实验；"情绪与人际推演不可做"是我们的推断，不是实测结论。</p>
+</section>
+<section id="s11"><h2>来源表</h2>
+<table><thead><tr><th>#</th><th>支撑的主张</th><th>出版方</th><th>发布日期</th><th>访问日期</th><th>置信度</th></tr></thead><tbody>
+<tr id="src-1"><td><a class="cit" href="#src-1">[1]</a></td><td>WebDreamer：MPC 式模拟、H=1 最优、延迟数据、模拟内动作幻觉</td><td><a href="https://arxiv.org/abs/2411.06559" target="_blank" rel="noopener">arXiv 2411.06559</a></td><td>2024-11-10</td><td>2026-11-22</td><td><span class='badge b-ok'>high</span></td></tr>
+<tr id="src-2"><td><a class="cit" href="#src-2">[2]</a></td><td>WebDreamer 代码：候选过滤、3 轨迹 × 深度 1 × 10 投票、状态变化三格式</td><td><a href="https://github.com/OSU-NLP-Group/WebDreamer" target="_blank" rel="noopener">GitHub OSU-NLP-Group/WebDreamer</a></td><td>2024-11-06 建库 / 2025-10-05 最后推送</td><td>2026-11-22</td><td><span class='badge b-ok'>high</span></td></tr>
+<tr id="src-3"><td><a class="cit" href="#src-3">[3]</a></td><td>ITP：自适应 K、token 预算口径、延迟与吞吐、fixed-k 先升后降</td><td><a href="https://arxiv.org/abs/2601.08955" target="_blank" rel="noopener">arXiv 2601.08955</a></td><td>2026-01-13</td><td>2026-11-22</td><td><span class='badge b-ok'>high</span></td></tr>
+<tr id="src-4"><td><a class="cit" href="#src-4">[4]</a></td><td>ITP 代码：orchestrator 单链想象、decide_k 采样回退、validate_action</td><td><a href="https://github.com/loyiv/ITP" target="_blank" rel="noopener">GitHub loyiv/ITP</a></td><td>2026-01-18 建库 / 2026-10-29 最后推送</td><td>2026-11-22</td><td><span class='badge b-ok'>high</span></td></tr>
+<tr id="src-5"><td><a class="cit" href="#src-5">[5]</a></td><td>SimuRA：自然语言状态、抽象动作 A′、M=N=20 与 T=t+1 的内部不一致</td><td><a href="https://arxiv.org/abs/2507.23773" target="_blank" rel="noopener">arXiv 2507.23773</a></td><td>2025-07-31（v3）</td><td>2026-11-22</td><td><span class='badge b-med'>medium</span></td></tr>
+<tr id="src-6"><td><a class="cit" href="#src-6">[6]</a></td><td>WebATLAS：四模块、认知地图查表、五维 critic、∏(1−U)、重规划触发</td><td><a href="https://arxiv.org/abs/2510.22732" target="_blank" rel="noopener">arXiv 2510.22732</a></td><td>2025-10-26</td><td>2026-11-22</td><td><span class='badge b-med'>medium</span></td></tr>
+<tr id="src-7"><td><a class="cit" href="#src-7">[7]</a></td><td>PGR：想象引导检索、探针不入库、δ=5/I_max=10、召回数字</td><td><a href="https://arxiv.org/abs/2605.14177" target="_blank" rel="noopener">arXiv 2605.14177</a></td><td>2026-05-13</td><td>2026-11-22</td><td><span class='badge b-ok'>high</span></td></tr>
+<tr id="src-8"><td><a class="cit" href="#src-8">[8]</a></td><td>Memento：case=(s,a,r)、只写真实执行、K 增大反噬、Q 为在线更新</td><td><a href="https://arxiv.org/abs/2508.16153" target="_blank" rel="noopener">arXiv 2508.16153</a></td><td>2025-08</td><td>2026-11-22</td><td><span class='badge b-ok'>high</span></td></tr>
+<tr id="src-9"><td><a class="cit" href="#src-9">[9]</a></td><td>Memento 代码：Q 实为离线成对分类器、case bank 无 Q 字段</td><td><a href="https://github.com/Memento-Teams/Memento" target="_blank" rel="noopener">GitHub Memento-Teams/Memento</a></td><td>2025-06-20 建库 / 2025-10-05 最后推送</td><td>2026-11-22</td><td><span class='badge b-ok'>high</span></td></tr>
+<tr id="src-10"><td><a class="cit" href="#src-10">[10]</a></td><td>Dreamer 4：diffusion 潜空间、context 起步、每 context 一条 rollout</td><td><a href="https://arxiv.org/abs/2509.24527" target="_blank" rel="noopener">arXiv 2509.24527</a></td><td>2025-09</td><td>2026-11-22</td><td><span class='badge b-ok'>high</span></td></tr>
+<tr id="src-11"><td><a class="cit" href="#src-11">[11]</a></td><td>dreamer4 代码：想象训练入口 train_agent_in_imagination</td><td><a href="https://github.com/lucidrains/dreamer4" target="_blank" rel="noopener">GitHub lucidrains/dreamer4</a></td><td>2025-09-30 建库 / 2026-11-13 最后推送</td><td>2026-11-22</td><td><span class='badge b-ok'>high</span></td></tr>
+<tr id="src-12"><td><a class="cit" href="#src-12">[12]</a></td><td>Dreamer V3：RSSM、T=16、β_repval=0.3、推理不做 lookahead、replay ratio</td><td><a href="https://arxiv.org/abs/2301.04104" target="_blank" rel="noopener">arXiv 2301.04104</a></td><td>2023-01</td><td>2026-11-22</td><td><span class='badge b-ok'>high</span></td></tr>
+</tbody></table>
+</section>
+<section id="s12"><h2>失效地图</h2>
+<table><thead><tr><th>结论</th><th>来源</th><th>类别</th><th>失效速度</th><th>建议复查</th></tr></thead><tbody>
+<tr><td>论文报告的数字（PGR 0.723/0.256/0.160、ITP 延迟、WebDreamer 墙钟）与 arXiv 版本号</td><td><a class="cit" href="#src-1">[1]</a><a class="cit" href="#src-3">[3]</a><a class="cit" href="#src-7">[7]</a><a class="cit" href="#src-8">[8]</a></td><td>论文数字/版本</td><td>≤1 个月（arXiv 会出新版）</td><td>2026-12-22</td></tr>
+<tr><td>各项目的实现细节（代码行号、默认参数）</td><td><a class="cit" href="#src-2">[2]</a><a class="cit" href="#src-4">[4]</a><a class="cit" href="#src-9">[9]</a><a class="cit" href="#src-11">[11]</a></td><td>版本/兼容</td><td>≤1 个月（代码随时可能变）</td><td>2026-12-22</td></tr>
+<tr><td>仓库活跃度与许可（WebDreamer 无 license、ITP 18★、Memento 2714★）</td><td><a class="cit" href="#src-2">[2]</a><a class="cit" href="#src-4">[4]</a><a class="cit" href="#src-9">[9]</a></td><td>生态信号</td><td>≤6 个月</td><td>2027-05</td></tr>
+<tr><td>"无人实现假想入库的结算闭环"</td><td><a class="cit" href="#src-6">[6]</a><a class="cit" href="#src-7">[7]</a><a class="cit" href="#src-8">[8]</a></td><td>领域格局（AI 相邻）</td><td>≤3 个月</td><td>2027-02-22</td></tr>
+<tr><td>深度上限结论（H=1 最优、K≤2）</td><td><a class="cit" href="#src-1">[1]</a><a class="cit" href="#src-3">[3]</a></td><td>实测结论，随模型换代可能失效</td><td>≤1 年</td><td>2027-11</td></tr>
+<tr><td>骨架与模式（候选裁剪→模拟→打分→选择）</td><td><a class="cit" href="#src-1">[1]</a><a class="cit" href="#src-6">[6]</a></td><td>设计模式</td><td>≤2 年</td><td>2028-11</td></tr>
+</tbody></table>
+</section>
+<section id="s13"><h2>附录：研究对象与取证方法</h2>
+<h3>研究对象与真实身份</h3>
+<table><thead><tr><th>项目</th><th>真实身份（本次核实）</th><th>核心机制（用户原述，未改写）</th><th>用户点名的参考角度</th></tr></thead><tbody>
+<tr><td>WebDreamer</td><td>GitHub OSU-NLP-Group/WebDreamer（107★，TMLR'25）· arXiv 2411.06559</td><td>LLM 作世界模型，动作前先模拟未来状态分支；MCTS 式评估</td><td>符号状态前向模拟框架：状态表示→候选动作采样→多分支 rollout→打分筛选</td></tr>
+<tr><td>ITP（Imagine-then-Plan）</td><td>GitHub loyiv/ITP（18★，MIT，EMNLP'26 main）· arXiv 2601.08955</td><td>POIMDP；自适应想象步长；区分可观测状态与想象隐状态</td><td>自适应 horizon；模拟收益评估器控制算力</td></tr>
+<tr><td>SimuRA</td><td><strong>无公开仓库</strong>（用户链接 404）· 论文 arXiv 2507.23773，v3 已改名 *General Agentic Planning Through Simulative Reasoning with World Models*</td><td>模拟推理架构 + LLM 离散世界模型；模拟轨迹校验计划</td><td>本体 + 模拟联动：图谱状态作初始条件，模拟输出回写</td></tr>
+<tr><td>WebATLAS</td><td><strong>无公开仓库</strong>（用户链接为占位符）· 论文 arXiv 2510.22732 *An LLM Agent with Experience-Driven Memory and Action Simulation*</td><td>Planner–Simulator–Critic 三环；经验记忆作模拟器先验</td><td>模拟器与记忆双向闭环</td></tr>
+<tr><td>PGR</td><td>无仓库 · 论文 arXiv 2605.14177 *Thinking Ahead: Prospection-Guided Retrieval of Memory with Language Models*</td><td>想象引导检索：先展开可能的后续目标，再用其作检索探针</td><td>前向模拟用于构造检索 query</td></tr>
+<tr><td>Memento</td><td>GitHub Memento-Teams/Memento（2714★，MIT）· arXiv 2508.16153</td><td>案例推理（CBR）+ 记忆库 Q 值；不微调 LLM</td><td>基于历史案例插值的轻量模拟</td></tr>
+<tr><td>Dreamer4</td><td>GitHub lucidrains/dreamer4（221★，MIT）；原论文 arXiv 2509.24527</td><td>RSSM 潜空间世界模型、replay、dream 训练</td><td>只借鉴动力学循环/回放/dream 范式，不做语言模拟器</td></tr>
+</tbody></table>
+<p class="note">第三列保留用户原始描述，便于对照——其中两条在本次取证中被修正：WebDreamer 并非 "MCTS 式评估"（全文 MCTS 命中 0），ITP 也没有 "模拟收益评估器"（只有先模拟后打分，见维度二）。</p>
+<h3>取证方法</h3>
+<p>深档取证：论文用 arXiv HTML 全文，代码先 shallow clone、clone 失败改用 codeload zip 解包，结论按 `文件:行号` 引用；SimuRA、WebATLAS、PGR 无公开仓库，其结论只有论文正文依据（来源表已标 medium）。原始材料落 `imports/raw`（论文）与 `imports/repos`（仓库），六份维度 digest 落 `digests/`，claims 账本在 `.memlog.md`。</p>
+</main></div>
+<footer>由 bmad-deep-recon 生成 · 本页与 research.md 同源，引用编号对应其来源表</footer>
+</body></html>

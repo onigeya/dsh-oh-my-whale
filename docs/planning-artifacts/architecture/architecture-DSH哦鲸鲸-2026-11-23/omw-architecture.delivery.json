@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "789875c4-21b2-45d8-a1c7-9f87bbcd8f35",
+  "status": "current",
+  "command": "deliver",
+  "type": "explainer",
+  "input": "D:\\src\\dsh-oh-my-whale\\.archify\\explainer-omw-architecture-20261123-134710\\candidate.archify.md",
+  "output": "D:\\src\\dsh-oh-my-whale\\docs\\planning-artifacts\\architecture\\architecture-DSH哦鲸鲸-2026-11-23\\omw-architecture.html",
+  "specification": {
+    "sha256": "56625829708f569b1efc0cfd0fbe1ebc494052dcb8e1c2e674df2da1bd1ba0f7",
+    "bytes": 10057
+  },
+  "artifact": {
+    "sha256": "284f93e5ea0f9da9acb7c0fb65ff6ad53e25ccf363cdc117ad3dc81fbf703a0f",
+    "bytes": 1317454
+  },
+  "explainer": {
+    "preparedSha256": "31c6b64ad3a99a3d67f4f668461bf905fbb425f66ca774238941cb75b1c4c356",
+    "dependencies": [
+      {
+        "kind": "diagram-spec",
+        "id": "cap-map",
+        "inline": true,
+        "sha256": "fd81a9d402e6d7a7aa5e1f18d296e1432d203c7c0302747eb3542ac6ad937677",
+        "bytes": 1177
+      },
+      {
+        "kind": "diagram-spec",
+        "id": "write-path",
+        "inline": true,
+        "sha256": "efcf8a306e25374d286a119fe170069a161b9e908956103bdbd4709bef476e8f",
+        "bytes": 1317
+      },
+      {
+        "kind": "diagram-spec",
+        "id": "undo-flow",
+        "inline": true,
+        "sha256": "6dd742e6688c8576f39a715e8db0c31648568a059f5548ed183dc1359d97a436",
+        "bytes": 920
+      }
+    ]
+  }
+}

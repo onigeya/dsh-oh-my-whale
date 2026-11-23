@@ -1,0 +1,25 @@
+{
+  "gate": "G0-6",
+  "status": "pass",
+  "timestamp": "2026-11-23T07:30:52.246Z",
+  "baselineRevision": "cf04e95038f7fd6d7be37589f3f3fd03bbdcb9b7",
+  "node": "v24.21.0",
+  "platform": "win32-x64",
+  "checks": [
+    {
+      "name": "tree-clean",
+      "ok": true,
+      "detail": "layers: 21 个源文件，全部规则通过"
+    },
+    {
+      "name": "deliberate-violation-fails",
+      "ok": true,
+      "detail": "layers: src\\core\\violation.ts:1 [core-no-seams] core/ 不能 import seams/（领域规则不得依赖宿主细节）：../seams/dep.ts\nlayers: 1 处违规（2 个源文件）"
+    },
+    {
+      "name": "removal-restores-pass",
+      "ok": true,
+      "detail": "layers: 1 个源文件，全部规则通过"
+    }
+  ]
+}

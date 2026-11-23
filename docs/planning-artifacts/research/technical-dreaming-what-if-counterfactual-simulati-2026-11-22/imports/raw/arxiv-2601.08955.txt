@@ -1,0 +1,2458 @@
+Imagine-then-Plan: Agent Learning from Adaptive Lookahead with World Models
+ 
+
+- 
+ 
+ 
+
+- 
+
+- 
+
+- 
+
+- 
+
+- 
+
+- 
+- 
+ 
+
+ 
+ 
+ 
+
+##### Report GitHub Issue
+
+ ×
+ 
+
+ 
+ Title:
+ 
+
+ Content selection saved. Describe the issue below:
+
+ Description:
+ 
+ 
+
+ 
+ Submit without GitHub
+ Submit in GitHub
+ 
+ 
+
+ 
+ arXiv is now an independent nonprofit!
+ Learn more
+ &times;
+ 
+
+ 
+ 
+ Back to arXiv
+ 
+ 
+
+ 
+ 
+ Why HTML?
+ 
+ 
+ 
+ 
+ Report Issue
+ 
+ 
+ 
+ 
+ 
+ 
+ Back to Abstract
+ 
+ 
+ 
+ 
+ 
+ 
+ Download PDF
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+- Abstract
+
+- 1 Introduction
+
+- 2 Preliminaries
+
+- Problem Formulation.
+
+- LLMs as Textual World Models.
+
+- 3 Method
+
+- 3.1 World Model Training
+
+- 3.2 Lookahead Imagination and POIMDP
+
+- 3.3 Planning with Adaptive Lookahead
+
+- 3.3.1 In-Imagination Learning (ITPI\texttt{ITP}_{\text{I}})
+
+- 3.3.2 Reinforced Training (ITPR\texttt{ITP}_{\text{R}})
+
+- Stage 1: Pseudo-Labeling Lookahead Horizon.
+
+- Stage 2: Warm-Up Training.
+
+- Stage 3: Online Optimization.
+
+- 4 Experiments
+
+- 4.1 Experimental Settings
+
+- Benchmarks.
+
+- Backbone Models.
+
+- Baseline Methods.
+
+- Evaluation Metrics.
+
+- Implementation Details.
+
+- 4.2 Main Results
+
+- How does ITP perform across different benchmarks and backbone models?
+
+- Do ITP ’s performance gains stem from lookahead with world models?
+
+- Ablation Study.
+
+- 4.3 Benefits of Adaptive Lookahead
+
+- Superior performance-efficiency trade-off over Fixed Lookahead.
+
+- Higher success rates with lower cost than Random Lookahead.
+
+- 4.4 Impact of World Models
+
+- Does the choice of world-model backbones affect ultimate performance?
+
+- How reliable is the world model across lookahead horizons?
+
+- 5 Related Work
+
+- LLM-based Agents.
+
+- World Models for Planning.
+
+- 6 Conclusion
+
+- References
+
+- A Datasets and Preprocessing
+
+- A.1 Datasets
+
+- ALFWorld:
+
+- ScienceWorld:
+
+- WebShop:
+
+- StableToolBench:
+
+- A.2 Data Preprocessing
+
+- B Additional Baseline Comparisons
+
+- B.1 Tree Search and RL-from-World-Model Methods
+
+- B.2 Compute-Matched Comparisons with No-World-Model Alternatives
+
+- C Implementation Details
+
+- C.1 World Model Training Details
+
+- C.2 Deployment Profiling
+
+- C.3 ITPR\texttt{ITP}_{\text{R}} Training Algorithm
+
+- C.4 Training Cost of ITPR\texttt{ITP}_{\text{R}}
+
+- C.5 Parameter Settings
+
+- C.6 Comparison with Strong Planning and Search Baselines
+
+- C.7 Prompting Templates
+
+ 
+ License: CC BY 4.0
+ 
+ 
+arXiv:2601.08955v3 [cs.CL] 03 Sep 2026
+
+# Imagine-then-Plan: Agent Learning from Adaptive 
+Lookahead with World Models
+
+Youwei Liu
+††thanks: ˜This work was conducted while Youwei Liu was a remote research assistant at the Hong Kong Polytechnic University.
+Affiliation:  Department of Computing, The Hong Kong Polytechnic University
+
+Affiliation:  Central South University
+
+Email: hanlin-henry.wang@connect.polyu.hk
+
+  
+Jian Wang
+
+Affiliation:  Department of Computing, The Hong Kong Polytechnic University
+
+Email: beichen.guo@connect.polyu.hk
+
+  
+Hanlin Wang
+
+Affiliation:  Department of Computing, The Hong Kong Polytechnic University
+
+Email: cswjli@comp.polyu.edu.hk
+
+  
+Beichen Guo
+
+Affiliation:  Department of Computing, The Hong Kong Polytechnic University
+
+  
+Wenjie Li
+
+Affiliation:  Department of Computing, The Hong Kong Polytechnic University
+
+Affiliation:  College of Computer Science, Sichuan Universityloyiv5477@gmail.com   wangjian51@scu.edu.cn
+
+###### Abstract
+
+ 
+Recent advances in world models have shown promise for modeling future dynamics of environmental states, enabling agents to reason and act without accessing real environments.
+Current methods mainly perform single-step or fixed-horizon rollouts, leaving their potential for complex task planning under-exploited.
+We propose Imagine-then-Plan (ITP), a unified framework for agent learning via lookahead imagination, where an agent’s policy model interacts with the learned world model, yielding multi-step “imagined” trajectories.
+Since the imagination horizon may vary by tasks and stages, we introduce a novel adaptive lookahead mechanism by trading off the ultimate goal and task progress.
+The resulting imagined trajectories provide rich signals about future consequences, such as achieved progress and potential conflicts, which are fused with current observations, formulating a partially observable and imaginable Markov decision process to guide policy learning.
+We instantiate ITP with both training-free and reinforcement-trained variants.
+Extensive experiments across representative agent benchmarks demonstrate that ITP significantly outperforms competitive baselines.
+Further analyses validate that our adaptive lookahead largely enhances agents’ reasoning capability, providing valuable insights into addressing broader, complex tasks. Our code and data are publicly available at: 
+
+ https://github.com/loyiv/ITP.
+
+ 
+
+11footnotetext:  Corresponding author. This work was mainly conducted at PolyU, while the author is now at Sichuan University.
+
+## 1 Introduction
+
+The emergence of Large Language Models (LLMs) has sparked a paradigm shift in autonomous agents, enabling them to reason and interact across a wide range of digital and physical environments (Li et al., 2023; Wang et al., 2024a; Fung et al., 2025).
+LLM-based agents primarily leverage immediate observations and historical interaction traces to facilitate decision-making (Yao et al., 2023b; Shinn et al., 2023).
+Despite the impressive performance achieved, most agents remain constrained by shallow grounding, a state where they perceive the environment but lack a deep, causal understanding of how their current actions will ultimately reshape the environment.
+Without the ability to project into the future, agents are prone to catastrophic failures, discovering erroneous actions or state conflicts only after they have been irreversibly executed.
+
+Figure 1: Comparison between our ITP framework and conventional agent learning frameworks.
+
+To bridge this grounding gap, world models (LeCun, 2022; Hafner et al., 2023) that focus on future state modeling have emerged as a promising solution, enabling agents to simulate environmental dynamics and “rehearse” actions in a mental sandbox (Wang et al., 2025e).
+We focus on textual world models that predict decision-relevant future observations or state consequences, rather than continuous physical dynamics.
+Contemporary methods typically employ world models for single-step verification or with fixed-horizon rollouts Hao et al. (2023); Qiao et al. (2024); Zhang et al. (2026).
+Such rigid strategies are often suboptimal, as they fail to capture long-term dependencies in complex tasks (e.g., household embodied tasks).
+Furthermore, they are prone to suffer from high computational costs with unnecessary deep rollouts for trivial actions.
+A truly intelligent agent should be deliberative, allocating deep foresight adaptively to resolve potential state conflicts and account for long-term dependencies in pivotal, high-stakes decisions.
+
+In this paper, we propose Imagine-then-Plan (ITP), a framework that empowers agents to perform task planning with world model-based foresight.
+The core of ITP is to move beyond passive observation and perform a proactive, deliberative “rehearsal” phase, where decisions are conditioned on both present observations and potential futures.
+This requires the agent to internally imagine multi-step future trajectories by looking ahead.
+Unlike previous rigid approaches, ITP introduces an adaptive lookahead mechanism that dynamically scales the imagination horizon by trading off the ultimate goal and estimated task progress.
+More importantly, this shift necessitates a new conceptualization of the agent’s decision-making process. We move beyond the Partially Observable Markov Decision Process (POMDP) (Åström, 1965; Song et al., 2024; Wang et al., 2025b) toward a Partially Observable and Imaginable MDP (POIMDP).
+As illustrated in Figure 1, the agent’s action policy is optimized over a dual-stream representation:
+the concrete present (observable) and the foresighted future (imaginable).
+These imagined trajectories provide rich signals, such as anticipating goal progress or detecting potential bottlenecks, allowing the agent to close the loop between planning action sequences and estimating their possible consequences.
+This implicit feedback enables the agent to perform self-correction when necessary, significantly reducing the need for expensive interactions with the real environment.
+
+We instantiate ITP in two variants: a training-free (ITPI\texttt{ITP}_{\text{I}}) variant that uses reflection as the adaptive lookahead for plug-and-play enhancement of LLM agents, and a reinforcement-trained (ITPR\texttt{ITP}_{\text{R}}) variant that leverages imagined futures to optimize the agent policy more effectively and more efficiently.
+Extensive experiments demonstrate that both variants significantly improve task success rates.
+Further analyses validate the vital role of our adaptive lookahead mechanism.
+
+Our contributions are summarized as follows:
+1) We conceptualize the partially observable and imaginable Markov decision process (POIMDP), laying a solid foundation for integrating imagined futures and historical interactions into agent decision-making.
+2) We propose Imagine-then-Plan (ITP), a framework that incorporates world model-based imagination with an adaptive lookahead mechanism, which provides deliberative guidance for action policy planning.
+3) We demonstrate through training-free and reinforcement-trained variants that ITP significantly improves the success rates of LLM-based agents, providing valuable insights into addressing complex, long-horizon tasks.
+
+## 2 Preliminaries
+
+##### Problem Formulation.
+
+The reasoning process of LLM agents is often formulated as a Partially Observable Markov Decision Process (POMDP), defined by (𝒮,𝒜,𝒪,𝒯,ℛ)(\mathcal{S},\mathcal{A},\mathcal{O},\mathcal{T},\mathcal{R}).
+Here, 𝒮\mathcal{S} denotes the environment state space, 𝒜\mathcal{A} the action space, and 𝒪\mathcal{O} the observation space. 𝒯:𝒮×𝒜→𝒮\mathcal{T}:\mathcal{S}\times\mathcal{A}\rightarrow\mathcal{S} represents the state transition function, and ℛ:𝒮×𝒜→[0,1]\mathcal{R}:\mathcal{S}\times\mathcal{A}\rightarrow[0,1] denotes the reward function that evaluates task performance.
+At each time step tt, the agent receives an observation ot∈𝒪o_{t}\in\mathcal{O} and selects an action at∼πθ(⋅|ht)a_{t}\sim\pi_{\theta}(\cdot|h_{t}),
+where ht=(o1,a1,…,ot)h_{t}=(o_{1},a_{1},\dots,o_{t}) denotes the interaction history.
+Executing ata_{t} induces a transition to a new latent state st+1∼𝒯⁡(st,at)s_{t+1}\sim\mathcal{T}(s_{t},a_{t}), from which the environment emits the next observation ot+1o_{t+1}.
+The interaction terminates when the agent reaches a terminal state or exceeds a predefined maximum number of steps.
+
+##### LLMs as Textual World Models.
+
+Figure 2: Overview of the proposed Imagine-then-Plan (ITP) framework. It consists of two variants: (a) ITPI\texttt{ITP}_{\text{I}}, which is training-free and enables LLM agents to learn from the imagination at inference time. (b) ITPR\texttt{ITP}_{\text{R}}, which leverages an imagined future to optimize the action policy more effectively and more efficiently.
+
+A world model is a predictive model of environment dynamics that estimates future states conditioned on actions LeCun (2022).
+In text-based environments, the environment state is typically represented as text and observable to the agent.
+We treat textual observations as state representations, denoted as sts_{t} at time step tt.
+Under this formulation, LLMs can be interpreted as world models, as they capture transition regularities by predicting the next state given the current interaction context Zhang et al. (2026); Li et al. (2026).
+Concretely, a textual world model parameterized by an autoregressive LLM defines the conditional distribution pϕ​(st+1|st,at)p_{\phi}(s_{t+1}|s_{t},a_{t}).
+The distribution is factorized at the token level, and the model generates the next state sequentially.
+Such world models serve as powerful proxies for environment dynamics and enable planning in language-based agents.
+
+## 3 Method
+
+We propose Imagine-then-Plan (ITP), a framework that equips LLM-based agents with adaptive lookahead via learned world models.
+As illustrated in Figure 2, ITP enables agents to condition decisions on both the observable present and imagined future trajectories.
+
+### 3.1 World Model Training
+
+As shown in Figure 2, we first fine-tune a base LLM on expert demonstrations 𝒟exp\mathcal{D}_{\mathrm{exp}} to obtain an initial agent policy πθ0\pi_{\theta_{0}}.
+This warm-up establishes basic capability to produce executable actions, serving as the foundation for the agent’s exploration.
+We ask the agent to perform rollouts in the environment, obtaining the rollout trajectories 𝒟roll\mathcal{D}_{\mathrm{roll}}.
+As introduced in § 2, we learn a LLM-based world model ℳϕ\mathcal{M}_{\phi} that approximates the environment dynamics pϕ(s|′s,a)p_{\phi}(s{{}^{\prime}}|s,a),
+where ss and aa denote the current state and action, respectively. s′s{{}^{\prime}} represents the next-step state.
+To ensure the world model is grounded and robust to out-of-distribution actions, we train it on a joint dataset 𝒟WM=𝒟exp∪𝒟roll\mathcal{D_{\mathrm{WM}}}=\mathcal{D}_{\mathrm{exp}}\cup\mathcal{D}_{\mathrm{roll}}.
+
+The world model ℳϕ\mathcal{M}_{\phi} is optimized by minimizing the negative log-likelihood as follows:
+
+ℒWM(ϕ)=−𝔼(s′,s,a)∼𝒟WM[logpϕ(s|′s,a)].\mathcal{L}_{\text{WM}}(\phi)=-\mathbb{E}_{(s{{}^{\prime}},s,a)\sim\mathcal{D_{\mathrm{WM}}}}\bigl[\log p_{\phi}(s{{}^{\prime}}|s,a)\bigr].
+
+(1)
+
+We provide detailed training setup, dataset scale, and computational costs in Appendix C.1.
+
+### 3.2 Lookahead Imagination and POIMDP
+
+To integrate world-model foresight into decision making, we extend the standard POMDP (as introduced in §2) to a Partially Observable and Imaginable Markov Decision Process (POIMDP).
+Under this formulation, the agent is endowed with a lookahead imagination operator induced by the learned world model.
+POIMDP does not replace the underlying POMDP or modify the environment dynamics. Instead, it augments the agent-side information state with an internally imagined trajectory before action execution. When the lookahead horizon is selected as zero, the imagined trajectory is empty, and the decision reduces to the standard POMDP policy.
+
+Formally, given the current observed state sts_{t} and a lookahead horizon Kt∈{0,1,…,Kmax}K_{t}\in\{0,1,\dots,K_{\max}\} at each time step tt, the agent policy πθ\pi_{\theta} and the world model ℳϕ\mathcal{M}_{\phi} interact for KtK_{t} steps within a “mental sandbox”.
+This imagination process is given by:
+
+→πθa^t→ℳϕs^t+1→πθ…→πθa^t+Kt−1→ℳϕs^t+Kt.\xrightarrow{\pi_{\theta}}\hat{a}_{t}\xrightarrow{\mathcal{M}_{\phi}}\hat{s}_{t+1}\xrightarrow{\pi_{\theta}}\dots\xrightarrow{\pi_{\theta}}\hat{a}_{t+K_{t}-1}\xrightarrow{\mathcal{M}_{\phi}}\hat{s}_{t+K_{t}}.
+
+(2)
+
+This yields an imagined future trajectory
+τ^t(Kt)={(a^t+i,s^t+i+1)}i=0Kt−1\hat{\tau}^{(K_{t})}_{t}=\{(\hat{a}_{t+i},\hat{s}_{t+i+1})\}_{i=0}^{K_{t}-1},
+where
+a^t+i∼πθ(⋅|st,τ^t(i))\hat{a}_{t+i}\sim\pi_{\theta}(\cdot|s_{t},\hat{\tau}_{t}^{(i)})
+and
+s^t+i+1∼ℳϕ(⋅|s^t+i,a^t+i)\hat{s}_{t+i+1}\sim\mathcal{M}_{\phi}(\cdot|\hat{s}_{t+i},\hat{a}_{t+i}).
+The objective of the agent policy is to yield an appropriate action ata_{t} conditioned on both the observable state sts_{t} and the imagined future τ^t(Kt)\hat{\tau}^{(K_{t})}_{t}.
+As such, our POIMDP formulates the policy decision as follows:
+
+at∼πθ(⋅∣st,τ^t(Kt)).a_{t}\sim\pi_{\theta}(\cdot\mid s_{t},\hat{\tau}^{(K_{t})}_{t}).
+
+(3)
+
+This allows the agent to anticipate goal progress or detect potential bottlenecks before generating the next action, enabling the agent to perform self-correction when necessary.
+
+### 3.3 Planning with Adaptive Lookahead
+
+For effective task planning, a key challenge is determining how far the agent should imagine.
+Short-horizon imagination may miss long-term dependencies, while excessive rollouts can amplify model errors and incur unnecessary computation.
+To resolve this, we aim to adaptively select the imagination horizon KtK_{t} based on the estimated task progress against the ultimate goal.
+We instantiate ITP via two distinct variants to provide both flexibility and optimization:
+(i) ITPI\texttt{ITP}_{\text{I}}, which is an inference-time method that learns from the imagination, and (ii) ITPR\texttt{ITP}_{\text{R}}, which is a reinforcement-trained method that jointly optimizes the lookahead horizon selection and action policy.
+
+#### 3.3.1 In-Imagination Learning (ITPI\texttt{ITP}_{\text{I}})
+
+ITPI\texttt{ITP}_{\text{I}} is a training-free variant that improves LLM agents at inference time.
+Both the policy and world model remain frozen, and the agent performs deliberative reasoning based on the current state sts_{t}.
+At each step tt, it follows a three-stage “Imagine-then-Plan” procedure:
+1) Adaptive horizon selection: The agent analyzes the instruction and state sts_{t} to choose an imagination horizon Kt∈{0,1,…,Kmax}K_{t}\in\{0,1,\dots,K_{\max}\}, assigning deeper foresight to critical decisions while avoiding unnecessary computation on trivial ones.
+2) World-model imagination: The agent interacts with ℳϕ\mathcal{M}_{\phi} for KtK_{t} steps to obtain a future trajectory τ^t(Kt)\hat{\tau}_{t}^{(K_{t})}.
+3) Reflective policy generation: Instead of directly executing the first imagined action, the agent treats τ^t(Kt)\hat{\tau}_{t}^{(K_{t})} as implicit feedback for self-refinement.
+
+Specifically, the agent reflects on the imagined trajectory to assess progress toward the goal and identify potential conflicts, bottlenecks, or catastrophic failures before acting in the real environment.
+It then refines its reflection and selects the next optimal action ata_{t} as follows:
+
+at∼πθ(⋅∣st,Reflect(τ^t(Kt))).a_{t}\sim\pi_{\theta}(\cdot\mid s_{t},\text{Reflect}(\hat{\tau}_{t}^{(K_{t})})).
+
+(4)
+
+By grounding decisions in the imagined future, ITPI\texttt{ITP}_{\text{I}} turns passive observation into proactive, deliberative learning, improving task success without additional training.
+
+#### 3.3.2 Reinforced Training (ITPR\texttt{ITP}_{\text{R}})
+
+ITPR\texttt{ITP}_{\text{R}} aims to explicitly learn when and how long to imagine.
+We augment the agent with a lightweight KK-head predictor Pθ​(Kt|st)P_{\theta}(K_{t}|s_{t}), which is a linear layer built on top of a backbone LLM that predicts distributions over imagination horizons. The action policy and predictor are optimized jointly with the following three stages.
+
+##### Stage 1: Pseudo-Labeling Lookahead Horizon.
+
+A key obstacle for learning adaptive lookahead is that expert trajectories provide only (st,at∗)(s_{t},a_{t}^{*}) pairs but do not specify the “right” lookahead horizon.
+We therefore construct pseudo labels using the world model ℳϕ\mathcal{M}_{\phi} and the initial agent policy πθ0\pi_{\theta_{0}}.
+Specifically, we use teacher-forced expert actions to rollout on the frozen world model ℳϕ\mathcal{M}_{\phi} by looking ahead one step and obtain future states, from which we derive lookahead-conditioned trajectories {τ^t(k)}k=0Kmax\{\hat{\tau}_{t}^{(k)}\}_{k=0}^{K_{\max}}.
+We then score each candidate step by the log-likelihood of expert actions under πθ0\pi_{\theta_{0}}, and select the optimal lookahead step by:
+
+K~t=arg⁡max0≤k≤Kmax​[log⁡pθ0​(at∗∣st,τ^t(k))−λK​k],\tilde{K}_{t}=\arg\max_{0\leq k\leq K_{\max}}\Big[\log p_{\theta_{0}}(a_{t}^{*}\mid s_{t},\hat{\tau}_{t}^{(k)})-\lambda_{K}\,k\Big],
+
+(5)
+
+where λK\lambda_{K} is a hyperparameter controlling the lookahead penalty.
+Based on the selection criteria in Eq. (5), we obtain a dataset 𝒟K\mathcal{D}_{K} containing the pseudo-labels of the optimal lookahead step for each action in the expert trajectory.
+
+##### Stage 2: Warm-Up Training.
+
+Starting from the initial agent policy πθ0\pi_{\theta_{0}}, we further fine-tune the agent to jointly (i) act under lookahead-conditioned pseudo-trajectories and (ii) predict the required lookahead step.
+Specifically, given labeled tuples {(st,at∗,K~t)}\{(s_{t},a_{t}^{*},\tilde{K}_{t})\}, we condition the agent policy on τ^t(K~t)\hat{\tau}_{t}^{(\tilde{K}_{t})} and train
+πθ​(at|st,τ^t(K~t))\pi_{\theta}(a_{t}|s_{t},\hat{\tau}_{t}^{(\tilde{K}_{t})}) to imitate the expert action at∗a_{t}^{*}, with a standard negative log-likelihood loss ℒπ​(θ)\mathcal{L}_{\pi}(\theta).
+Meanwhile, we train the KK-head predictor to estimate the pseudo label K~t\tilde{K}_{t}, with a similar negative log-likelihood loss ℒK​(θ)\mathcal{L}_{K}(\theta).
+Our warm-up training is given by:
+
+ℒWT​(θ)=ℒπ​(θ)+η​ℒK​(θ).\mathcal{L}_{\mathrm{WT}}(\theta)=\mathcal{L}_{\pi}(\theta)+\eta\,\mathcal{L}_{K}(\theta).
+
+(6)
+
+where η\eta is a weighted coefficient.
+This yields (i) a competent agent policy that can generate reliable actions and (ii) an adaptive lookahead horizon predictor that approximates lookahead steps, providing a stable initialization for the subsequent online reinforcement optimization.
+
+##### Stage 3: Online Optimization.
+
+To balance task performance and imagination cost, we further refine the agent policy through online reinforcement learning.
+At each step tt, the agent samples a lookahead step KtK_{t} from the KK-head predictor, invokes the frozen world model ℳϕ\mathcal{M}_{\phi} to generate a KtK_{t}-step imagined trajectory τ^t(Kt)\hat{\tau}_{t}^{(K_{t})}, and subsequently samples an action at∼πθ(⋅∣st,τ^t(Kt))a_{t}\sim\pi_{\theta}(\cdot\mid s_{t},\hat{\tau}_{t}^{(K_{t})}).
+As illustrated in Figure 2, we employ a reward function that augments the environment reward renvr_{\mathrm{env}} with explicit penalties for computational and interaction overhead, given by:
+
+rt+1=renv−λK​Kt−λstep,r_{t+1}=r_{\mathrm{env}}-\lambda_{K}K_{t}-\lambda_{\mathrm{step}},
+
+(7)
+
+where λK\lambda_{K} is the lookahead penalty coefficient, and λstep\lambda_{\text{step}} is a factor discouraging reasoning redundancy.
+
+Specifically, we utilize the Advantage Actor-Critic (A2C) algorithm Mnih et al. (2016) to jointly optimize the action policy and the KK-head parameters.
+The objective is decomposed into three components:
+(i) an actor term
+ℒact​(θ)≜−𝔼⁡[At​(log⁡pθ​(Kt∣st)+log⁡πθ​(at∣st,τ^t(Kt)))]\mathcal{L}_{\mathrm{act}}(\theta)\triangleq-\mathbb{E}\!\left[A_{t}\left(\log p_{\theta}(K_{t}\mid s_{t})+\log\pi_{\theta}(a_{t}\mid s_{t},\hat{\tau}_{t}^{(K_{t})})\right)\right]
+that jointly updates the lookahead predictor and the agent policy;
+(ii) a Critic regression term
+ℒvalue​(θ)≜𝔼⁡[(Vθ​(st)−V^t)2]\mathcal{L}_{\mathrm{value}}(\theta)\triangleq\mathbb{E}\!\left[(V_{\theta}(s_{t})-\hat{V}_{t})^{2}\right]
+that trains a Value-head to match the TD learning target;
+and (iii) an entropy regularizer
+ℒent​(θ)≜−𝔼⁡[ℋ⁡(pθ​(Kt∣st))]\mathcal{L}_{\mathrm{ent}}(\theta)\triangleq-\;\mathbb{E}\!\left[\mathcal{H}(p_{\theta}(K_{t}\mid s_{t}))\right]
+that encourages sufficient exploration over the lookahead steps to prevent premature convergence to sub-optimal horizons.
+The final training objective is:
+
+ℒA2C​(θ)=ℒact​(θ)+α​ℒvalue​(θ)+β​ℒent​(θ),\mathcal{L}_{\mathrm{A2C}}(\theta)=\mathcal{L}_{\mathrm{act}}(\theta)+\alpha\mathcal{L}_{\mathrm{value}}(\theta)+\beta\mathcal{L}_{\mathrm{ent}}(\theta),
+
+(8)
+
+where α\alpha and β\beta are hyperparameters balancing value estimation and exploration.
+Algorithm 1 shows the pseudocode of ITPR’s training process.
+
+At inference time, ITPR\texttt{ITP}_{\text{R}} utilizes the learned KK-head to perform adaptive lookahead, following a similar deliberative procedure as ITPI\texttt{ITP}_{\text{I}}.
+We provide a stage-wise analysis on the computational cost of ITPR\texttt{ITP}_{\text{R}} in Appendix C.4.
+
+## 4 Experiments
+
+### 4.1 Experimental Settings
+
+##### Benchmarks.
+
+We evaluate ITP on four representative agent benchmarks: ALFWorld (Shridhar et al., 2021) for embodied household tasks, ScienceWorld (Wang et al., 2022) for simulated science experiments, WebShop (Yao et al., 2022) for long-horizon web navigation, and StableToolBench (Guo et al., 2024) for multi-turn tool use.
+Appendix A provides details of these benchmarks.
+
+##### Backbone Models.
+
+For a fair comparison, all methods use the same backbone suite: Qwen2.5-7B (Yang et al., 2024), Qwen3-8B (Yang et al., 2025), and Llama-3.1-8B-Instruct Grattafiori et al. (2024).
+Unless otherwise stated, we use Qwen3-8B to train the world model, and evaluate other world-model backbones in § 4.4.
+All models are prompted using their official chat templates.
+
+Type
+Method
+ALFWorld
+ScienceWorld
+WebShop
+
+PICK
+CLEAN
+HEAT
+COOL
+LOOK
+PICK2
+Overall
+Seen
+Unseen
+Total
+
+Backbone: Qwen2.5-7B 
+
+Prompting
+CoT
+17.14
+18.52
+18.75
+16.00
+15.38
+0.00
+14.29
+3.09
+4.63
+5.10
+
+ReAct
+20.00
+22.22
+18.75
+20.00
+23.08
+0.00
+17.14
+8.24
+9.93
+15.28
+
+RAP
+40.00
+33.33
+6.25
+32.00
+15.38
+20.83
+27.86
+10.30
+16.55
+11.28
+
+ITPI\texttt{ITP}_{\text{I}} (Ours)
+65.71
+25.93
+25.00
+24.00
+30.77
+25.00
+35.71
+16.49
+17.88
+20.10
+
+Training
+SFT
+85.71
+66.67
+56.25
+68.00
+38.46
+66.67
+67.86
+55.67
+49.00
+51.60
+
+WKM
+77.14
+77.78
+75.00
+76.00
+76.92
+75.00
+76.43
+54.12
+56.29
+58.80
+
+IWM
+90.60
+85.20
+88.20
+84.20
+42.90
+76.90
+82.80
+60.82
+57.61
+56.20
+
+ITPR\texttt{ITP}_{\text{R}} (Ours)
+94.29
+88.89
+87.50
+53.84
+76.00
+91.67
+85.07
+62.58
+58.94
+60.20
+
+Backbone: Qwen3-8B 
+
+Prompting
+CoT
+14.29
+14.81
+12.50
+12.00
+15.38
+12.50
+13.57
+2.44
+1.99
+6.32
+
+ReAct
+25.71
+22.22
+12.50
+12.00
+7.69
+25.00
+19.29
+9.79
+8.61
+18.62
+
+RAP
+42.86
+37.04
+37.50
+16.00
+15.38
+4.17
+28.57
+15.46
+27.14
+12.40
+
+ITPI\texttt{ITP}_{\text{I}} (Ours)
+82.86
+25.93
+12.50
+16.00
+23.08
+54.17
+41.43
+20.61
+19.86
+25.25
+
+Training
+SFT
+71.43
+70.37
+68.75
+72.00
+69.23
+70.83
+70.71
+56.70
+49.67
+52.30
+
+WKM
+80.00
+77.78
+81.25
+80.00
+76.92
+79.17
+79.29
+60.31
+47.68
+61.15
+
+IWM
+85.71
+85.19
+87.50
+84.00
+46.15
+87.50
+82.14
+59.27
+54.30
+57.30
+
+ITPR\texttt{ITP}_{\text{R}} (Ours)
+97.14
+88.88
+93.75
+88.00
+76.92
+79.17
+88.57
+61.85
+56.95
+68.10
+
+Backbone: Llama-3.1-8B-Instruct 
+
+Prompting
+CoT
+17.14
+14.81
+18.75
+16.00
+15.38
+8.33
+15.00
+3.09
+3.31
+8.20
+
+ReAct
+22.86
+22.22
+6.25
+24.00
+23.08
+25.00
+21.43
+9.27
+13.24
+19.32
+
+RAP
+25.71
+25.93
+6.25
+32.00
+7.69
+25.00
+22.86
+11.34
+17.21
+16.05
+
+ITPI\texttt{ITP}_{\text{I}} (Ours)
+57.14
+37.04
+31.25
+28.00
+23.08
+33.33
+37.86
+19.58
+19.20
+24.30
+
+Training
+SFT
+85.71
+85.20
+82.40
+89.50
+85.70
+53.80
+79.28
+57.21
+50.33
+47.30
+
+WKM
+85.71
+85.19
+75.00
+80.00
+38.46
+79.17
+77.86
+61.34
+54.96
+65.58
+
+IWM
+87.50
+88.90
+82.40
+94.70
+85.90
+84.60
+85.90
+57.56
+56.29
+58.60
+
+ITPR\texttt{ITP}_{\text{R}} (Ours)
+88.57
+92.59
+93.75
+92.00
+46.15
+91.67
+87.14
+63.91
+57.61
+67.50
+
+Table 1: Evaluation of task success rates (%) across ALFWorld, ScienceWorld, and WebShop benchmarks. Bold and underlined values denote the best and second-best performance within each backbone model group, respectively.
+
+##### Baseline Methods.
+
+We compare ITP against two categories of baselines.
+(1) Prompting-based methods:
+CoT (Wei et al., 2022) elicits reasoning capabilities by prompting the agent with step-by-step rationales.
+ReAct (Yao et al., 2023b) interleaves reasoning and action to solve interactive tasks.
+RAP (Hao et al., 2023) leverages the LLM as both a world model and a policy model, employing Monte Carlo Tree Search to perform planning.
+(2) Training-based methods:
+SFT (Chen et al., 2023) conducts behavioral cloning on expert trajectories.
+WKM (Qiao et al., 2024) trains a parametric world knowledge model that provides global task priors and local dynamic state knowledge to guide planning.
+IWM Zhang et al. (2026) augments imitation learning with an implicit world-modeling objective to encourage the policy to internalize environment dynamics. All baselines are evaluated using the same benchmark splits, executable
+action space, state–action serialization, backbone family, and evaluation
+metric as ITP. We additionally consider stronger search-based,
+world-model-based, and trajectory-optimization methods. Their complete
+results and reproduction details are provided in
+Appendix C.6.
+
+##### Evaluation Metrics.
+
+We adopt success rate (SR) as the evaluation metric, defined as the percentage of episodes that successfully achieve the task goal (Feng et al., 2025; Wang et al., 2025a).
+For ALFWorld, we report SR on each task, as well as the overall SR.
+For ScienceWorld, we report SR on both the seen and unseen test splits.
+Following Guo et al. (2024), we report solvable pass rate (SoPR) and solvable win rate (SoWR) on the solvable subset for StableToolBench, with the detailed definitions provided in Appendix A.
+
+Type
+Method
+SoPR (%)
+SoWR (%)
+
+Prompting
+ReAct
+26
+22
+
+RAP
+28
+26
+
+ITPI\texttt{ITP}_{\text{I}} (Ours)
+35 (+7\scriptscriptstyle+7)
+28 (+2\scriptscriptstyle+2)
+
+Training
+SFT
+42
+36
+
+IWM
+44
+36
+
+ITPR\texttt{ITP}_{\text{R}} (Ours)
+68 (+24\scriptscriptstyle+24)
+54 (+18\scriptscriptstyle+18)
+
+Table 2: Evaluation of solvable pass rate (SoPR) and solvable win rate (SoWR) on StableToolBench using Qwen3-8B  as the backbone model.
+
+Figure 3: Ablation results of ITPR\texttt{ITP}_{\text{R}} on ALFWorld and ScienceWorld benchmarks.
+
+##### Implementation Details.
+
+To ensure a rigorous and fair comparison, we maintain a consistent training protocol across ITP and all baseline methods.
+The maximum lookahead horizon is configured based on task completion steps per benchmark.
+For more details, please refer to Appendix C.
+
+### 4.2 Main Results
+
+##### How does ITP perform across different benchmarks and backbone models?
+
+As shown in Table 1, without any additional training, ITPI\texttt{ITP}_{\text{I}} substantially enhances zero-shot performance compared to strong prompting baselines, such as ReAct and RAP.
+The trained variant ITPR\texttt{ITP}_{\text{R}} consistently surpasses all training-based baselines, achieving the highest success rate in every backbone group (e.g., 88.57% with Qwen3-8B on ALFWorld).
+These results verify that ITP achieves consistent gains across tested benchmarks and backbone models.
+
+(a) Adaptive lookahead vs. fixed-kk lookahead. Left: success rate. Right: normalized budget.
+
+(b) Our ITPI\texttt{ITP}_{\text{I}} vs. ReAct + Random Lookahead
+
+(c) Our ITPR\texttt{ITP}_{\text{R}} vs. SFT + Random Lookahead
+
+Figure 4: Performance-Cost comparison across lookahead strategies. (a): Our adaptive lookahead outperforms fixed lookahead with higher success rates and lower computational cost. (b) and (c): Both ITPI\texttt{ITP}_{\text{I}} and ITPR\texttt{ITP}_{\text{R}} with the adaptive lookahead surpass baselines (ReAct and SFT) with a random lookahead strategy.
+
+##### Do ITP ’s performance gains stem from lookahead with world models?
+
+The effectiveness of our approach is twofold.
+First, ITPI\texttt{ITP}_{\text{I}} uses the same backbone LLM as the prompting baselines, so its gains come solely from conditioning actions on world-model rollouts at inference time, isolating the value of explicit lookahead.
+Second, ITPR\texttt{ITP}_{\text{R}} significantly outperforms training-based alternatives such as IWM and WKM.
+Its strongest results (e.g., 63.91% on ScienceWorld test-seen with Llama3.1-8B) indicate that combining policy learning with selective adaptive lookahead yields benefits beyond static or implicit methods.
+
+##### Ablation Study.
+
+To assess the contribution of ITPR\texttt{ITP}_{\text{R}}, we remove its online reinforced training (w/o RT) for an ablation study.
+In this setting, the model relies solely on initial training and does not learn when to invoke the world model.
+We use Qwen-3-8B for both the agent policy and world model, and evaluate on ALFWorld and ScienceWorld.
+As shown in Figure 3, removing RT substantially degrades performance: ALFWorld drops from 88.57% to 71.42%, and ScienceWorld from 59.70% to 46.00%.
+This confirms that the online reinforced training is a core component rather than a minor training detail.
+The gap further suggests that supervised learning provides only a basic capability, while reinforcement optimization is crucial for learning when to “imagine” and use the world model efficiently on complex tasks.
+
+### 4.3 Benefits of Adaptive Lookahead
+
+##### Superior performance-efficiency trade-off over Fixed Lookahead.
+
+We first compare ITP with fixed-kk lookahead, where the agent always imagines a constant horizon kk.
+We measure computational cost by the total episode tokens
+T=∑t(T(t)​(πθ)+T(t)​(ℳϕ))T=\sum_{t}\bigl(T^{(t)}(\pi_{\theta})+T^{(t)}(\mathcal{M}_{\phi})\bigr),
+and define a Normalized Budget (NB) metric as follows:
+
+NB​(k)=T¯​(k)−T¯​(0)T¯​(Kmax)−T¯​(0),\text{NB}(k)=\frac{\bar{T}(k)-\bar{T}(0)}{\bar{T}(K_{\max})-\bar{T}(0)},
+
+which rescales the average token cost T¯​(k)\bar{T}(k) to [0,1][0,1].
+Appendix C reports the setting of KmaxK_{\max}.
+
+As shown in Figure 4(a), fixed-kk lookahead is brittle: success rate peaks at a moderate kk and then declines, while cost rises sharply with kk.
+In contrast, ITP’s adaptive lookahead achieves higher success rates with a substantially lower budget, avoiding both the need for global horizon tuning and the high cost of large lookahead steps.
+
+##### Higher success rates with lower cost than Random Lookahead.
+
+Beyond fixed-horizon lookahead, we compare ITP with random lookahead, which samples KtK_{t} independently at each step.
+This isolates the effect of adaptive horizon selection from simply using a varying horizon.
+We evaluate the performance-cost trade-off on ALFWorld, using Qwen3-8B as both the policy and world model.
+We run 140 tasks grouped into 14 folds and report fold-averaged SR and NB, where each point in Figure 4(b) and Figure 4(c) corresponds to one fold.
+
+Our adaptive lookahead consistently outperforms the random strategy, achieving higher SR with lower and more stable budgets.
+This shows that the gains come from state-conditioned allocation of lookahead, rather than horizon variability.
+
+### 4.4 Impact of World Models
+
+(a) ITPI\texttt{ITP}_{\text{I}} (Ours)
+
+(b) ITPR\texttt{ITP}_{\text{R}} (Ours)
+
+Figure 5: Impact of different world-model backbones. We report success rates of (a) ITPI\texttt{ITP}_{\text{I}} and (b) ITPR\texttt{ITP}_{\text{R}} across six task types on ALFWorld.
+
+##### Does the choice of world-model backbones affect ultimate performance?
+
+We evaluate the sensitivity of ITP to the underlying world models by varying the world-model backbones among Qwen3-8B, Llama-3.1-8B, and DeepSeek-V3.2 (DeepSeek-AI et al., 2025). We fix the agent policy to Qwen3-8B and evaluate on the ALFWorld benchmark.
+As illustrated in Figure 5, the choice of backbone is most consequential in the training-free (ITP I\textbf{{ITP} }_{\text{I}}) setting.
+Specifically, despite its superior scale, the zero-shot DeepSeek-V3.2 exhibits a noticeable performance deficit, likely due to a lack of domain-specific alignment with ALFWorld’s state-transition dynamics.
+In contrast, Qwen and Llama backbones maintain robust success rates, suggesting better inherent compatibility.
+Crucially, ITP R\textbf{{ITP} }_{\text{R}} substantially narrows this gap. After optimizing the use of the DeepSeek-V3.2 world model, ITP’s performance becomes highly competitive.
+These results demonstrate that ITP is model-agnostic and can effectively distill world-modeling capabilities from various architectures.
+Furthermore, targeted world-modeling training is essential in specific interactive environments.
+
+(a) Fact-F1 of the world model vs. task success rate.
+
+(b) Statistics of average lookahead vs. golden steps.
+
+Figure 6: World model’s reliability and lookahead horizon statistics on ALFWorld with Qwen3-8B . (a) Longer lookahead horizon reduces Fact-F1 of imagined states, while success rate peaks at k=3k{=}3. (b) Longer-horizon tasks induce larger lookahead steps.
+
+##### How reliable is the world model across lookahead horizons?
+
+We evaluate adaptive lookahead from two perspectives: world-model reliability and the selection of the lookahead horizon (kk). We use Fact-F1 as the reliability metric, computed by comparing canonicalized atomic facts extracted from predicted versus ground-truth states.
+As shown in Figure 6(a), Fact-F1 degrades as the horizon increases due to compounding errors. Interestingly, the agent’s success rate follows a bell curve, peaking at k=3k{=}3, which suggests a trade-off between foresight and prediction accuracy.
+Figure 6(b) further demonstrates that ITP’s learned kk distributions adapt to task complexity: longer-horizon environments (e.g., ScienceWorld) favor larger lookahead values.
+These results validate ITP’s core design: effective planning requires dynamically anchoring the lookahead horizon within the world model’s reliable predictive range.
+
+## 5 Related Work
+
+##### LLM-based Agents.
+
+LLM-based agents use language models as policies that map instructions and partial observations to actions.
+A significant line of work formulates agent learning as trajectory- or step-level optimization.
+For example, ETO (Song et al., 2024) frames learning as exploration-based trajectory optimization, while IPR (Xiong et al., 2024) and E2CL (Wang et al., 2024b) refine agent behavior via iterative revision and correction signals.
+More recent post-training methods further improve robustness and generalization through reflective updates, such as Agent-R (Yuan et al., 2025), STeCa (Wang et al., 2025b), and AgentRefine (Fu et al., 2025).
+However, these methods primarily focus on learning from historical traces, often leaving the agent in a state of “shallow grounding” where it lacks active foresight to anticipate future environmental shifts before execution.
+
+##### World Models for Planning.
+
+World models provide a “mental sandbox” for agents, enabling model-based decision-making by predicting environment dynamics (LeCun, 2022; Xiang et al., 2023; Wang et al., 2025e; Liu et al., 2026).
+Recent research has increasingly positioned LLMs as either implicit or explicit world models for task planning.
+For instance, RAP (Hao et al., 2023) treats LLM reasoning as a planning process over an implicit state space, while other works explicitly construct world models to simulate future states and verify plan feasibility (Guan et al., 2023).
+To improve simulation fidelity, methods like WKM (Qiao et al., 2024), DMWM (Wang et al., 2025d), and IWM (Zhang et al., 2026) incorporate world knowledge or historical experience to guide rollouts, while D2PO (Wang et al., 2025e) and internalizing strategies (Chen et al., 2025) align planning behavior with environmental feedback.
+Further specialized work, such as WebEvolver (Fang et al., 2025), explores world model-based imagination in web agents.
+Unlike existing methods constrained by rigid, fixed-horizon planning, our work introduces an adaptive lookahead mechanism that dynamically adjusts the imagination horizon, enabling the agent to optimally navigate the trade-off between foresight reliability and computational overhead.
+
+## 6 Conclusion
+
+In this paper, we propose Imagine-then-Plan (ITP), an agent learning framework that equips LLM-based agents with adaptive lookahead with world models.
+By extending the conventional Partially Observable MDP to a Partially Observable and Imaginable MDP, ITP enables agents to explicitly reason over both the present and foresighted trajectories, addressing the shallow grounding limitation of reactive decision-making.
+We instantiate ITP into both an inference-time variant and a reinforcement-trained variant.
+Extensive experiments demonstrate that our approach significantly improves task success and robustness across domains.
+Further analyses validate the critical role of the adaptive control of the imagination horizon.
+We believe that ITP provides a principled advancement toward more deliberative utilization of world models for autonomous agent learning.
+
+## Limitations
+
+While our approach demonstrates superior performance compared to baseline methods, it is important to acknowledge the limitations as follows:
+(1) Current evaluation primarily focuses on interactive text-based benchmarks. While these environments provide a rigorous test of long-horizon reasoning, they do not fully capture the challenges of multimodal or real-world physical environments.
+The transition from textual state descriptions to visual or sensorimotor observations may introduce additional noise that could affect the stability of the adaptive lookahead mechanism.
+(2) Although our adaptive lookahead mechanism is designed to optimize efficiency by scaling the imagination horizon, the use of world models inherently introduces higher inference-time overhead compared to purely reactive agents.
+While higher success rates in high-stakes tasks often justify this trade-off, further optimization, e.g., via speculative decoding (Xia et al., 2023) or balancing exploration and exploitation (Wei and Yang, 2013), is needed for real-time applications.
+We will leave these directions as our future work.
+
+## Ethics Statement
+
+We strictly follow the protocols governing the academic use of all LLMs. Our study is conducted in simulated, text-based benchmarks and involves no human subjects or personally identifying information. We cite and comply with the licenses of all models, datasets, and software used.
+We acknowledge that world-model-based lookahead may introduce potential risks if transferred beyond our simulated evaluation settings: prediction errors and hallucinated rollouts could lead to unsafe or unintended actions in open-world tool-use systems or robots, and the generation of imagined trajectories increases inference-time computation and energy cost.
+Additionally, while AI assistants (e.g., Cursor and ChatGPT) were partially utilized for coding and linguistic refinement, we affirm that all core content and findings in this paper are the original work of the authors.
+
+## Acknowledgements
+
+This work was supported by the Fundamental Research Funds for the Central Universities (YJ202620 and 2026SCUQJTX022B), the General Research Fund (GRF) of the Research Grants Council of Hong Kong (PolyU 15205325), and was supported in part by the PolyU Postdoc Matching Fund (4-W40Z).
+The authors would like to thank the anonymous reviewers for their valuable feedback and constructive suggestions.
+
+## References
+
+- Åström (1965)
+K. J. Åström
+
+Optimal control of markov processes with incomplete state information I.
+
+Journal of Mathematical Analysis and Applications 10, pp. 174–205.
+
+External Links: Document,
+Link
+
+Cited by: §1.
+
+- Chen et al. (2023)
+B. Chen, C. Shu, E. Shareghi, N. Collier, K. Narasimhan, and S. Yao
+
+FireAct: toward language agent fine-tuning.
+
+arXiv preprint arXiv:2310.05915.
+
+Cited by: §4.1.
+
+- Chen et al. (2025)
+S. Chen, T. Zhu, Z. Wang, J. Zhang, K. Wang, S. Gao, T. Xiao, Y. W. Teh, J. He, and M. Li
+
+Internalizing world models via self-play finetuning for agentic RL.
+
+arXiv preprint arXiv:2510.15047.
+
+Cited by: §5.
+
+- DeepSeek-AI et al. (2025)
+DeepSeek-AI, A. Liu, A. Mei, B. Lin, B. Xue, B. Wang, B. Xu, B. Wu, B. Zhang, C. Lin, C. Dong, et al.
+
+DeepSeek-V3.2: pushing the frontier of open large language models.
+
+arXiv preprint arXiv:2512.02556.
+
+External Links: Document,
+Link
+
+Cited by: §4.4.
+
+- Fang et al. (2025)
+T. Fang, H. Zhang, Z. Zhang, K. Ma, W. Yu, H. Mi, and D. Yu
+
+WebEvolver: enhancing web agent self-improvement with co-evolving world model.
+
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing, C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.),
+
+Suzhou, China, pp. 8959–8975.
+
+External Links: Link,
+Document
+
+Cited by: §5.
+
+- Feng et al. (2025)
+L. Feng, Z. Xue, T. Liu, and B. An
+
+Group-in-group policy optimization for LLM agent training.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 38, pp. 46375–46408.
+
+External Links: Document,
+Link
+
+Cited by: §4.1.
+
+- Fu et al. (2025)
+D. Fu, K. He, Y. Wang, W. Hong, Z. GongQue, W. Zeng, W. Wang, J. Wang, X. Cai, and W. Xu
+
+AgentRefine: enhancing agent generalization through refinement tuning.
+
+In The Thirteenth International Conference on Learning Representations (ICLR),
+
+Cited by: §5.
+
+- Fung et al. (2025)
+P. Fung, Y. Bachrach, A. Celikyilmaz, K. Chaudhuri, D. Chen, W. Chung, E. Dupoux, H. Gong, H. Jégou, A. Lazaric, et al.
+
+Embodied ai agents: modeling the world.
+
+arXiv preprint arXiv:2506.22355.
+
+Cited by: §1.
+
+- Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al.
+
+The Llama 3 herd of models.
+
+arXiv preprint arXiv:2407.21783.
+
+External Links: Document,
+Link
+
+Cited by: Appendix C,
+§4.1.
+
+- Guan et al. (2023)
+L. Guan, K. Valmeekam, S. Sreedharan, and S. Kambhampati
+
+Leveraging pre-trained large language models to construct and utilize world models for model-based task planning.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 36, pp. 79081–79094.
+
+Cited by: §5.
+
+- Guo et al. (2024)
+Z. Guo, S. Cheng, H. Wang, S. Liang, Y. Qin, P. Li, Z. Liu, M. Sun, and Y. Liu
+
+StableToolBench: towards stable large-scale benchmarking on tool learning of large language models.
+
+In Findings of the Association for Computational Linguistics: ACL 2024, L. Ku, A. Martins, and V. Srikumar (Eds.),
+
+Bangkok, Thailand, pp. 11143–11156.
+
+External Links: Link,
+Document
+
+Cited by: §A.1,
+§4.1,
+§4.1.
+
+- Hafner et al. (2023)
+D. Hafner, J. Pasukonis, J. Ba, and T. Lillicrap
+
+Mastering diverse domains through world models.
+
+arXiv preprint arXiv:2301.04104.
+
+Cited by: §1.
+
+- Hao et al. (2023)
+S. Hao, Y. Gu, H. Ma, J. Hong, Z. Wang, D. Wang, and Z. Hu
+
+Reasoning with language model is planning with world model.
+
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, H. Bouamor, J. Pino, and K. Bali (Eds.),
+
+Singapore, pp. 8154–8173.
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§4.1,
+§5.
+
+- Kocsis and Szepesvári (2006)
+L. Kocsis and C. Szepesvári
+
+Bandit based monte-carlo planning.
+
+In Machine Learning: ECML 2006, J. Fürnkranz, T. Scheffer, and M. Spiliopoulou (Eds.),
+
+Lecture Notes in Computer Science, Vol. 4212, pp. 282–293.
+
+External Links: Document
+
+Cited by: §B.1.
+
+- LeCun (2022)
+Y. LeCun
+
+A path towards autonomous machine intelligence.
+
+Note: OpenReviewVersion 0.9.2, 2022-06-27
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§5.
+
+- Li et al. (2023)
+G. Li, H. Hammoud, H. Itani, D. Khizbullin, and B. Ghanem
+
+CAMEL: communicative agents for “mind” exploration of large language model society.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 36, pp. 51991–52008.
+
+External Links: Document,
+Link
+
+Cited by: §1.
+
+- Li et al. (2026)
+Y. Li, H. Wang, J. Qiu, Z. Yin, D. Zhang, C. Qian, Z. Li, X. Ma, G. Chen, and H. Ji
+
+From word to world: can large language models be implicit text-based world models?.
+
+In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), M. Liakata, V. P. Moreira, J. Zhang, and D. Jurgens (Eds.),
+
+San Diego, California, United States, pp. 8084–8111.
+
+External Links: Document,
+Link,
+ISBN 979-8-89176-390-6
+
+Cited by: §2.
+
+- Liu et al. (2026)
+Y. Liu, J. Wang, H. Wang, and W. Li
+
+COMAP: co-evolving world models and agent policies for LLM agents.
+
+arXiv preprint arXiv:2606.02372.
+
+External Links: Document,
+Link
+
+Cited by: §5.
+
+- Mnih et al. (2016)
+V. Mnih, A. P. Badia, M. Mirza, A. Graves, T. Lillicrap, T. Harley, D. Silver, and K. Kavukcuoglu
+
+Asynchronous methods for deep reinforcement learning.
+
+In International conference on machine learning,
+
+Vol. 48, pp. 1928–1937.
+
+External Links: Link
+
+Cited by: §3.3.2.
+
+- Qiao et al. (2024)
+S. Qiao, R. Fang, N. Zhang, Y. Zhu, X. Chen, S. Deng, Y. Jiang, P. Xie, F. Huang, and H. Chen
+
+Agent planning with world knowledge model.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 37, pp. 114843–114871.
+
+Cited by: §1,
+§4.1,
+§5.
+
+- Shinn et al. (2023)
+N. Shinn, F. Cassano, A. Gopinath, K. Narasimhan, and S. Yao
+
+Reflexion: language agents with verbal reinforcement learning.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 36, pp. 8634–8652.
+
+Cited by: §1.
+
+- Shridhar et al. (2021)
+M. Shridhar, X. Yuan, M. Côté, Y. Bisk, A. Trischler, and M. Hausknecht
+
+ALFWorld: aligning text and embodied environments for interactive learning.
+
+In International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §A.1,
+§4.1.
+
+- Song et al. (2024)
+Y. Song, D. Yin, X. Yue, J. Huang, S. Li, and B. Y. Lin
+
+Trial and error: exploration-based trajectory optimization of LLM agents.
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), L. Ku, A. Martins, and V. Srikumar (Eds.),
+
+Bangkok, Thailand, pp. 7584–7600.
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§5.
+
+- Wang et al. (2024a)
+G. Wang, Y. Xie, Y. Jiang, A. Mandlekar, C. Xiao, Y. Zhu, L. Fan, and A. Anandkumar
+
+Voyager: an open-ended embodied agent with large language models.
+
+Transactions on Machine Learning Research.
+
+External Links: Link
+
+Cited by: §1.
+
+- Wang et al. (2024b)
+H. Wang, C. T. Leong, J. Wang, and W. Li
+
+E2{}^{2}CL: exploration-based error correction learning for embodied agents.
+
+In Findings of the Association for Computational Linguistics: EMNLP 2024, Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.),
+
+Miami, Florida, USA, pp. 7626–7639.
+
+External Links: Link,
+Document
+
+Cited by: §5.
+
+- Wang et al. (2025a)
+H. Wang, C. T. Leong, J. Wang, J. Wang, and W. Li
+
+SPA-RL: reinforcing LLM agents via stepwise progress attribution.
+
+arXiv preprint arXiv:2505.20732.
+
+Cited by: §4.1.
+
+- Wang et al. (2025b)
+H. Wang, J. Wang, C. T. Leong, and W. Li
+
+STeCa: step-level trajectory calibration for LLM agent learning.
+
+In Findings of the Association for Computational Linguistics: ACL 2025, W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.),
+
+Vienna, Austria, pp. 11597–11614.
+
+External Links: Link,
+Document
+
+Cited by: §1,
+§5.
+
+- Wang et al. (2025c)
+K. Wang, P. Zhang, Z. Wang, Y. Gao, L. Li, Q. Wang, H. Chen, Y. Lu, Z. Yang, L. Wang, R. Krishna, J. Wu, F. Li, Y. Choi, and M. Li
+
+VAGEN: reinforcing world model reasoning for multi-turn VLM agents.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 38, pp. 172871–172933.
+
+External Links: Document,
+Link
+
+Cited by: §B.1.
+
+- Wang et al. (2025d)
+L. Wang, R. Shelim, W. Saad, and N. Ramakrishnan
+
+DMWM: dual-mind world model with long-term imagination.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 38, pp. 4911–4945.
+
+External Links: Document,
+Link
+
+Cited by: §5.
+
+- Wang et al. (2022)
+R. Wang, P. Jansen, M. Côté, and P. Ammanabrolu
+
+ScienceWorld: is your agent smarter than a 5th grader?.
+
+In Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing,
+
+Abu Dhabi, United Arab Emirates, pp. 11279–11298.
+
+External Links: Document,
+Link
+
+Cited by: §A.1,
+§4.1.
+
+- Wang et al. (2025e)
+S. Wang, Z. Fei, Q. Cheng, S. Zhang, P. Cai, J. Fu, and X. Qiu
+
+World modeling makes a better planner: dual preference optimization for embodied task planning.
+
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.),
+
+Vienna, Austria, pp. 21518–21537.
+
+External Links: Link,
+Document
+
+Cited by: §B.1,
+§1,
+§5.
+
+- Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. H. Chi, Q. V. Le, and D. Zhou
+
+Chain-of-thought prompting elicits reasoning in large language models.
+
+In Advances in Neural Information Processing Systems, S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.),
+
+Vol. 35, pp. 24824–24837.
+
+External Links: Link
+
+Cited by: §4.1.
+
+- Wei and Yang (2013)
+X. Wei and Z. Yang
+
+Coaching the exploration and exploitation in active learning for interactive video retrieval.
+
+IEEE Transactions on Image Processing 22 (3), pp. 955–968.
+
+External Links: Document,
+Link
+
+Cited by: Limitations.
+
+- Xia et al. (2023)
+H. Xia, T. Ge, P. Wang, S. Chen, F. Wei, and Z. Sui
+
+Speculative decoding: exploiting speculative execution for accelerating seq2seq generation.
+
+In Findings of the Association for Computational Linguistics: EMNLP 2023, H. Bouamor, J. Pino, and K. Bali (Eds.),
+
+Singapore, pp. 3909–3925.
+
+External Links: Link,
+Document
+
+Cited by: Limitations.
+
+- Xiang et al. (2023)
+J. Xiang, T. Tao, Y. Gu, T. Shu, Z. Wang, Z. Yang, and Z. Hu
+
+Language models meet world models: embodied experiences enhance language models.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 36, pp. 75392–75412.
+
+External Links: Document,
+Link
+
+Cited by: §5.
+
+- Xiong et al. (2024)
+W. Xiong, Y. Song, X. Zhao, W. Wu, X. Wang, K. Wang, C. Li, W. Peng, and S. Li
+
+Watch every step! LLM agent learning via iterative step-level process refinement.
+
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.),
+
+Miami, Florida, USA, pp. 1556–1572.
+
+External Links: Link,
+Document
+
+Cited by: §5.
+
+- Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zh
+ang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu
+
+Qwen3 technical report.
+
+arXiv preprint arXiv:2505.09388.
+
+Cited by: Appendix C,
+§4.1.
+
+- Yang et al. (2024)
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+
+Qwen2.5 technical report.
+
+arXiv preprint arXiv:2412.15115.
+
+Cited by: Appendix C,
+§4.1.
+
+- Yao et al. (2022)
+S. Yao, H. Chen, J. Yang, and K. Narasimhan
+
+WebShop: towards scalable real-world web interaction with grounded language agents.
+
+In Advances in Neural Information Processing Systems,
+
+Vol. 35, pp. 20744–20757.
+
+Cited by: §A.1,
+§4.1.
+
+- Yao et al. (2023a)
+S. Yao, D. Yu, J. Zhao, I. Shafran, T. L. Griffiths, Y. Cao, and K. Narasimhan
+
+Tree of thoughts: deliberate problem solving with large language models.
+
+In Advances in Neural Information Processing Systems, A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.),
+
+Vol. 36, pp. 11809–11822.
+
+Cited by: §B.1.
+
+- Yao et al. (2023b)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao
+
+ReAct: synergizing reasoning and acting in language models.
+
+In The Eleventh International Conference on Learning Representations,
+
+External Links: Link
+
+Cited by: §1,
+§4.1.
+
+- Yuan et al. (2025)
+S. Yuan, Z. Chen, Z. Xi, J. Ye, Z. Du, and J. Chen
+
+Agent-R: training language model agents to reflect via iterative self-training.
+
+arXiv preprint arXiv:2501.11425.
+
+Cited by: §5.
+
+- Zhang et al. (2026)
+K. Zhang, X. Chen, B. Liu, T. Xue, Z. Liao, Z. Liu, X. Wang, Y. Ning, Z. Chen, X. Fu, J. Xie, Y. Sun, B. Gou, Q. Qi, Z. Meng, J. Yang, N. Zhang, X. Li, A. Shah, D. Huynh, H. Li, Z. Yang, S. Cao, L. Jang, S. Zhou, J. Zhu, H. Sun, J. Weston, Y. Su, and Y. Wu
+
+Agent learning via early experience.
+
+In Proceedings of the 43rd International Conference on Machine Learning,
+
+Proceedings of Machine Learning Research, Vol. 306, Seoul, South Korea.
+
+External Links: Link
+
+Cited by: §1,
+§2,
+§4.1,
+§5.
+
+## Appendix A Datasets and Preprocessing
+
+### A.1 Datasets
+
+We evaluate our method on four representative agent benchmarks:
+ALFWorld11
+ 1
+ 
+ 
+ 
+ https://github.com/alfworld/alfworld (Shridhar et al., 2021),
+ScienceWorld22
+ 2
+ 
+ 
+ 
+ https://github.com/allenai/ScienceWorld (Wang et al., 2022),
+WebShop33
+ 3
+ 
+ 
+ 
+ https://github.com/princeton-nlp/WebShop (Yao et al., 2022),
+and StableToolBench44
+ 4
+ 
+ 
+ 
+ https://github.com/THUDM/StableToolBench (Guo et al., 2024).
+Table 3 presents task descriptions and data statistics.
+
+##### ALFWorld:
+
+ALFWorld is a text-based household embodied benchmark where an agent interacts with a simulated environment via natural-language observations and admissible text actions. Each episode specifies a goal instruction that can be instantiated from compositional templates, and success requires planning over multi-step action sequences under partial observability.
+
+- • 
+
+Pick: to find an object of the desired type, pick it up, navigate to the correct location/receptacle, and place it there.
+
+- • 
+
+Clean: to find the target object, pick it up, go to a sink/basin, wash it by turning on the faucet, then navigate to the target receptacle and place it.
+
+- • 
+
+Heat: to find the target object, pick it up, go to a microwave, heat it by turning on the microwave, then place it at the specified location.
+
+- • 
+
+Cool: to find the target object, pick it up, go to a fridge, cool it by placing it inside the fridge, then return and place it at the specified location.
+
+- • 
+
+Look: to find the target object, locate a light source, turn it on, and examine the object with the light while holding it.
+
+- • 
+
+Pick2: to find the first target object and place it at the destination, then find a second object of the same type, return to the destination, and place it together with the first one.
+
+##### ScienceWorld:
+
+ScienceWorld is a text-based interactive science environment that evaluates an agent’s ability to solve procedural and reasoning-intensive tasks grounded in everyday scientific phenomena. Compared to household tasks, ScienceWorld typically involves longer horizons and requires the agent to combine information gathering, tool use, and multi-step experimentation.
+
+##### WebShop:
+
+WebShop is a text-based web shopping benchmark in which an agent interacts with simulated e-commerce webpages to search for products that satisfy a user instruction. Compared with embodied environments, WebShop requires the agent to reason over longer and noisier textual observations such as search 
+results, product titles, attributes, and descriptions, and to perform multi-step browsing, comparison, and selection before making a final purchase decision.
+
+##### StableToolBench:
+
+StableToolBench is a multi-turn tool-use benchmark that evaluates an agent’s ability to solve tasks by invoking executable tools under realistic interaction constraints. In contrast to text navigation environments, StableToolBench emphasizes the correctness and robustness of tool calling, intermedia
+te execution feedback handling, and solvability-aware evaluation. Although episodes are typically shorter, each decision is more sensitive because an incorrect tool invocation may immediately derail downstream progress.
+
+We employ Qwen3-8B as the backbone model for different methods. Following existing studies, we adopt solvable pass rate (SoPR) and solvable win rate (SoWR) as the evaluation metrics.
+SoPR measures the average task success on the “solvable” subset (i.e., queries that are answerable given the available tools/KB, where each instance is judged as solved/unsolved/uncertain and mapped to 1/0/0.5.
+SoWR is a pairwise metric on the same solvable subset, reporting how often our method wins against a fixed baseline. In particular, SoWR is computed on the solvable subset as the average head-to-head win rate against the baseline set (ReAct, RAP, SFT, and IWM), using the official evaluation prompts and tool API.
+
+Domain
+
+Task Description
+
+Dataset Statistics
+
+ALFWorld
+
+Household, text-based embodied tasks
+
+Six compositional task families: Pick, Clean, Heat, Cool, Look, Pick2.
+
+Training: 3,119
+
+Test: 140
+
+ScienceWorld
+
+Elementary science curriculum in an interactive text environment
+
+30 subtasks with many variations (entities, initial conditions, distractors, room layouts), partitioned following the benchmark protocol.
+
+Training: 1,483
+
+Test-Seen: 194
+
+Test-Unseen: 151
+
+WebShop
+
+Goal-driven web shopping in a text-based browsing environment
+
+Product search, browsing, attribute comparison, and final item selection based on user instructions over noisy webpage observations.
+
+Training: 1,824
+
+Test: 210
+
+StableToolBench
+
+Multi-turn tool-use tasks with executable tool interactions
+
+Tool invocation, intermediate execution feedback handling, and solvability-aware evaluation under realistic function-calling constraints.
+
+Training: 1,972
+
+Test: 169
+
+Table 3: Dataset statistics. We report dataset splits following the standard benchmark protocol.
+
+### A.2 Data Preprocessing
+
+We use the provided expert trajectories as supervision to warm-start the agent policy. For the world model, we repurpose the same expert rollouts into transition-level supervision for a text world model by emitting one record per environment step, containing: (i) a compact state string (goal + curre
+nt observation/page state/tool context + optional inventory or execution feedback), (ii) the executed expert action, and (iii) the next observation, optionally augmented with scalar signals such as reward and done. All records are stored in JSONL format and serialized as dialogue-style causal-LM inp
+ut–output pairs, following standard SFT practice for text-based world models. The state serialization is benchmark-specific but follows a unified transition-level format. For ALFWorld and ScienceWorld, the state mainly consists of the task instruction, current observation, and optional inventory. Fo
+r WebShop, the state additionally includes webpage content, product attributes, and browsing context. For StableToolBench, the state further incorporates tool descriptions, intermediate tool calls, and execution feedback. This unified serialization allows the same world-model training and adaptive-l
+ookahead pipeline to be applied across embodied, web, and tool-use settings.
+
+To annotate the number of lookahead steps (i.e., KK) in ITPR\texttt{ITP}_{\text{R}}, we precompute imagined rollouts using the trained world model for a small discrete set of horizons (k_candidates) at each expert step.
+Each imagined rollout is summarized into a short lookahead text snippet (lookahead_summary). We then compute a per-horizon score that balances improved expert-action likelihood against deeper rollout cost, and store the resulting pseudo label (k_label) along with all scores. This adaptive-horizon an
+notation procedure is applied consistently across all four benchmarks under their respective state/action serialization formats.
+
+## Appendix B Additional Baseline Comparisons
+
+### B.1 Tree Search and RL-from-World-Model Methods
+
+Tree Search-based
+World-model-based Training
+
+Method
+SR (%) ↑\uparrow
+NB ↓\downarrow
+Method
+SR (%) ↑\uparrow
+NB ↓\downarrow
+
+RAP
+28.57
+0.42
+SFT
+70.71
+—
+
+ToT
+16.29
+0.58
+D2PO
+76.28
+0.29
+
+MCTS
+25.00
+0.39
+VaGen
+78.89
+0.18
+
+ITPI\texttt{ITP}_{\text{I}} (Ours)
+41.43
+0.25
+ITPR\texttt{ITP}_{\text{R}} (Ours)
+88.57
+0.21
+
+Table 4: Comparison with additional baselines on ALFWorld. Left: tree-search-based methods under the same backbone/world-model interface. Right: RL-from-world-model baselines adapted to our text-only setting using the same state/action serialization and evaluation protocol. ITP consistently achieves
+ the strongest overall performance, and for prompting-based methods also the best SR–budget trade-off.
+
+Method
+World Model
+Prompting-based SR
+Training-based SR
+
+Self-Refine
+✗
+22.59
+68.89
+
+Multi-Attempt
+✗
+20.48
+59.68
+
+K-candidate Selection
+✗
+36.42
+78.14
+
+ITPI\texttt{ITP}_{\text{I}} (Ours)
+✓
+41.43+5.01\mathbf{41.43}_{{\color[rgb]{0,0.6,0}\scriptscriptstyle+5.01}}
+—
+
+ITPR\texttt{ITP}_{\text{R}} (Ours)
+✓
+—
+88.57+10.43\mathbf{88.57}_{{\color[rgb]{0,0.6,0}\scriptscriptstyle+10.43}}
+
+Table 5: Compute-matched comparison with no-world-model alternatives. Subscripts denote the gain over the strongest no-world-model baseline in each setting.
+
+We additionally compare ITP against two baseline families that represent natural alternatives to our formulation.
+For inference-time planning, we include ToT (Yao et al., 2023a) and MCTS (Kocsis and Szepesvári, 2006), implemented under the same backbone/world-model interface and evaluated on ALFWorld with Success Rate (SR) and Normalized Budget (NB).
+For training-based comparison, we include D2PO (Wang et al., 2025e) and VaGen (Wang et al., 2025c).
+Since D2PO and VaGen were originally developed for VLM settings, we adapt their training objectives to our text-only environment using the same state/action serialization, benchmark interface, and evaluation protocol as our method.
+All methods use the same executable action space and are compared under matched backbone and benchmark settings.
+
+Table 4 reports the results.
+We obtain the following findings:
+(1) Tree search alone is insufficient. Both ToT and MCTS underperform ITPI\texttt{ITP}_{\text{I}} and are less budget-efficient, while ITPI\texttt{ITP}_{\text{I}} achieves the best trade-off (41.43 SR / 0.25 NB versus RAP at 28.57 / 0.42).
+(2) RL-from-world-model training is helpful but not sufficient. D2PO and VaGen consistently improve over Base SFT (70.71 →\rightarrow 76.28/78.89), but ITPR\texttt{ITP}_{\text{R}} further advances the frontier to 88.57 SR with only a modest NB increase (0.21).
+Taken together, these results suggest that the key benefit of our framework lies not in search or world-model usage alone, but in integrating world-model-based learning with adaptive lookahead as an explicit budget/error control mechanism.
+
+### B.2 Compute-Matched Comparisons with No-World-Model Alternatives
+
+To test whether ITP gains are merely due to extra compute, we compare against compute-matched no-world-model baselines: Self-Refine, Multi-Attempt, and K-candidate Selection. These methods spend a similar budget on repeated direct action generation or refinement, but do not perform future-state imagination.
+
+Table 5 shows that no-world-model alternatives still lag behind ITP under matched compute. ITPI\texttt{ITP}_{\text{I}} improves over the strongest prompting-based baseline by 5.01 points, and ITPR\texttt{ITP}_{\text{R}} improves over the strongest training-based baseline by 10.43 points. This sugges
+ts that the gains come not from extra compute alone, but from allocating it to state-conditioned adaptive lookahead over imagined future states.
+
+## Appendix C Implementation Details
+
+For fine-tuning, we employed several open-source models, including
+Qwen3-8B (Yang et al., 2025)55
+ 5
+ 
+ 
+ 
+ https://huggingface.co/Qwen/Qwen3-8B/blob/main/LICENSE,
+Qwen2.5-7B (Yang et al., 2024)66
+ 6
+ 
+ 
+ 
+ https://huggingface.co/Qwen/Qwen2.5-7B-Instruct/blob/main/LICENSE,
+and Llama3.1-8B (Grattafiori et al., 2024)77
+ 7
+ 
+ 
+ 
+ https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct/blob/main/LICENSE.
+All experiments were conducted on a computational cluster equipped with 2×\times NVIDIA A100 80GB GPUs.
+We report additional implementation details for reproducibility, including world-model training details, deployment profiling, stage-wise training cost of ITPR\texttt{ITP}_{\text{R}}, and the prompting templates.
+
+### C.1 World Model Training Details
+
+Our text world model is trained to predict the next textual observation conditioned on the current textual state and executed action, i.e., to model pϕ​(st+1∣st,at)p_{\phi}(s_{t+1}\mid s_{t},a_{t}). Following the transition serialization described in Appendix A, each training instance is formatted a
+s a dialogue-style causal-LM example, where the input contains the task instruction, current observation, optional inventory or tool feedback, and action, and the target is the next observation.
+
+We further construct adaptive-horizon supervision by scoring imagined rollouts over a small discrete set of horizon candidates at each expert step, producing one KK-label record per step. Figure 7 visualizes the resulting data scale across benchmarks, while Table 6 reports the optimization setup and convergence diagnostics for representative world-model training runs.
+
+Figure 7: Visualization of world-model training data scale across benchmarks. For each benchmark, we show the number of expert episodes (DexpD_{\text{exp}}) and rollout episodes (DrollD_{\text{roll}}) used for training data construction.
+
+Item
+
+Value
+
+Objective
+
+NLL / CE on pϕ​(st+1∣st,at)p_{\phi}(s_{t+1}\mid s_{t},a_{t})
+
+Training epochs / steps
+
+3 epochs / 3,450 steps
+
+Wall-clock time
+
+8.69 h
+
+Throughput
+
+0.11 steps/s ; 1.764 samples/s
+
+Held-out validation split
+
+5% of DWMD_{\text{WM}}, fixed seed
+
+Best / final validation loss
+
+0.052 / 0.055
+
+Effective batch size (incl. accum.)
+
+16
+
+Max sequence length / truncation
+
+2048
+
+Optimizer + LR schedule
+
+AdamW + cosine decay with warmup
+
+Precision + hardware
+
+bf16 on 2×\times NVIDIA A100 GPUs
+
+Rollout collection cost
+
+9.5 GPU-hours on 1×\times A100 GPU
+
+Table 6: World-model training diagnostics for Qwen3-8B as the backbone. We report optimization settings, convergence indicators, and rollout collection cost.
+
+### C.2 Deployment Profiling
+
+Normalized Budget (NB) captures algorithmic token efficiency, but does not directly reflect deployment-facing runtime characteristics. We therefore additionally profile interactive inference and report wall-clock latency, throughput, and GPU memory usage under representative deployment settings.
+
+Metric
+p50
+p95
+p99
+
+Decision latency per step (s)
+14.2
+31.8
+44.7
+
+Policy time per step (s)
+5.1
+11.6
+17.4
+
+Imagination time per step (s)
+7.8
+18.9
+28.5
+
+Tokens / second
+43.5
+31.2
+24.0
+
+Episodes / hour: 11.8
+
+Peak allocated / reserved VRAM (policy GPU): 31.0 / 38.4 GB
+
+Peak allocated / reserved VRAM (WM GPU): 28.7 / 35.9 GB
+
+Table 7: Deployment-oriented profiling of ITPR\texttt{ITP}_{\text{R}}. We report interactive latency, throughput, and peak GPU memory usage.
+
+### C.3 ITPR\texttt{ITP}_{\text{R}} Training Algorithm
+
+Algorithm 1 presents the full training procedure of ITPR\texttt{ITP}_{\text{R}}, including pseudo-label generation for adaptive horizon supervision, warm-up training with lookahead labels, and online actor–critic optimization.
+
+Algorithm 1 ITPR\texttt{ITP}_{\text{R}}: Reinforced Training with Adaptive Lookahead
+
+ 1:
+ 
+ 
+ Dataset 𝒟={(st,at∗)}\mathcal{D}=\{(s_{t},a_{t}^{*})\}; Agent policy πθ0\pi_{\theta_{0}}; World model ℳϕ\mathcal{M}_{\phi}; Parameters KmaxK_{\max}, λK\lambda_{K}, η\eta, α\alpha, β\beta.
+
+ 2:
+ 
+ 
+ Agent policy πθ\pi_{\theta}; Lookahead predictor PθP_{\theta}.
+
+ 3:
+ 
+ 
+ // Stage 1: Pseudo-Labeling Lookahead Horizon
+
+ 4:
+ 
+ 
+ for each episode in 𝒟\mathcal{D} do
+
+ 5:
+ 
+ 
+   Cache {τ^t(k)}k=0Kmax\{\hat{\tau}_{t}^{(k)}\}_{k=0}^{K_{\max}} via ℳϕ\mathcal{M}_{\phi} & teacher-forced at∗a_{t}^{*}.
+
+ 6:
+ 
+ 
+   for each step tt do
+
+ 7:
+ 
+ 
+    St​(k)≜log⁡pθ0​(at∗∣st,τ^t(k))S_{t}(k)\triangleq\log p_{\theta_{0}}(a_{t}^{*}\mid s_{t},\hat{\tau}_{t}^{(k)}).
+
+ 8:
+ 
+ 
+    K~t←arg⁡max⁡[St​(k)−λK​k]\tilde{K}_{t}\leftarrow\arg\max\big[S_{t}(k)-\lambda_{K}k\big].
+
+ 9:
+ 
+ 
+    Store (st,at∗,K~t)(s_{t},a_{t}^{*},\tilde{K}_{t}) in 𝒟K\mathcal{D}_{K}.
+
+ 10:
+ 
+ 
+   end for
+
+ 11:
+ 
+ 
+ end for
+
+ 12:
+ 
+ 
+ // Stage 2: Warm-Up Training with Lookahead
+
+ 13:
+ 
+ 
+ for each episode in 𝒟K\mathcal{D}_{K} do
+
+ 14:
+ 
+ 
+   Sample (st,at∗,K~t)∼𝒟K(s_{t},a_{t}^{*},\tilde{K}_{t})\!\sim\!\mathcal{D}_{K}.
+
+ 15:
+ 
+ 
+   Update θ\theta via Eq. (6).
+
+ 16:
+ 
+ 
+ end for
+
+ 17:
+ 
+ 
+ // Stage 3: Online Actor–Critic Optimization
+
+ 18:
+ 
+ 
+ for each episode in 𝒟\mathcal{D} do
+
+ 19:
+ 
+ 
+   Sample Kt∼Pθ​(K∣st)K_{t}\!\sim\!P_{\theta}(K\!\mid\!s_{t}), query ℳϕ\mathcal{M}_{\phi} for τ^t(Kt)\hat{\tau}_{t}^{(K_{t})}.
+
+ 20:
+ 
+ 
+   Update θ\theta via Eq. (8).
+
+ 21:
+ 
+ 
+ end for
+
+ 22:
+ 
+ 
+ return πθ\pi_{\theta} and PθP_{\theta}.
+
+### C.4 Training Cost of ITPR\texttt{ITP}_{\text{R}}
+
+To improve training-cost transparency, we report the stage-wise runtime of ITPR\texttt{ITP}_{\text{R}}. The training pipeline consists of three stages: (i) pseudo-label generation for adaptive horizon supervision, (ii) supervised warm-up of the policy and KK-head, and (iii) online actor–critic optimization.
+
+Stage
+Wall-clock
+GPU-hours
+
+I: Lookahead Pseudo-Labeling
+6.63 h
+13.27
+
+II: Warm-Up Training
+6.38 h
+12.77
+
+III: Online Optimization
+4.78 h
+9.57
+
+Total
+17.80 h
+35.60
+
+Table 8: Stage-wise training cost of ITPR\texttt{ITP}_{\text{R}}. Stage I corresponds to pseudo-label generation, Stage II to warm-up supervised training, and Stage III to online actor–critic optimization.
+
+### C.5 Parameter Settings
+
+Name
+Value
+
+Warm-Up Training
+
+cutoff_len
+2048
+
+epochs
+3
+
+per_device_train_batch_size
+1
+
+gradient_accumulation_steps
+16
+
+learning_rate
+2×10−52\times 10^{-5}
+
+warmup_ratio
+0.03
+
+lr_scheduler
+cosine
+
+fp16 / bf16
+False / Ture
+
+gradient_checkpointing
+False
+
+lora_r
+8
+
+lora_alpha
+16
+
+lora_dropout
+0.05
+
+merge_lora
+True
+
+Online A2C Optimization
+
+γ\gamma (discount)
+0.99
+
+rl_learning_rate
+5×10−65\times 10^{-6}
+
+λK\lambda_{K} (lookahead penalty)
+0.2
+
+λstep\lambda_{\text{step}} (step cost)
+0.01
+
+success_bonus
+0.01
+
+invalid_action_penalty
+-0.1
+
+η\eta
+0.5
+
+α\alpha
+1.0
+
+β\beta
+0.01
+
+max_grad_norm
+1.0
+
+Inference Stage
+
+do_sample (exploration)
+True
+
+temperature (exploration)
+0.7
+
+top_p (exploration)
+0.9
+
+action_max_new_tokens
+16
+
+imagine_action_max_new_tokens
+12
+
+wm_max_new_tokens
+192
+
+KmaxK_{\max} (ALFWorld)
+5
+
+KmaxK_{\max} (ScienceWorld)
+8
+
+KmaxK_{\max} (WebShop)
+7
+
+KmaxK_{\max} (StableToolBench)
+3
+
+Table 9: Hyperparameter setup.
+
+Table 9 summarizes the hyperparameters used for training and inference. Unless otherwise specified, we apply the same configuration across different backbone models.
+During exploration, the agent samples actions with temperature 0.70.7.
+Due to the difference in task trajectory lengths and planning horizons across benchmarks (e.g., ALFWorld has an average of 8 steps, ScienceWorld 15, WebShop 11, and StableToolBench 4), during ITPR\texttt{ITP}_{\text{R}} training, we set KmaxK_{\max} to 5 for ALFWorld, 8 for ScienceWorld, 7 for WebShop, and 3 for StableToolBench.
+
+### C.6 Comparison with Strong Planning and Search Baselines
+
+We further compare ITP with recent search-based, world-model-based, and
+trajectory-optimization methods on ALFWorld. All methods use the same
+benchmark split, executable action space, backbone family, and success-rate
+metric as ITP.
+
+Method
+ALFWorld SR (%) ↑\uparrow
+
+CoT
+13.57
+
+ReAct
+19.29
+
+ToT
+16.29
+
+MCTS
+25.00
+
+RAP
+28.57
+
+ITPI
+41.43
+
+Table 10: Comparison with training-free planning and search methods on
+ALFWorld.
+
+Method
+ALFWorld SR (%) ↑\uparrow
+
+SFT
+70.71
+
+ETO
+70.50
+
+D2PO
+76.28
+
+VAGEN
+78.89
+
+WKM
+79.29
+
+QLASS
+80.35
+
+IWM
+82.14
+
+ITPR
+88.57
+
+Table 11: Comparison with training-based planning methods on ALFWorld.
+
+ITPI outperforms RAP, the strongest training-free baseline, by
+12.86 percentage points. ITPR improves over IWM, the strongest
+training-based baseline, by 6.43 points. These results show that the advantage
+of ITP cannot be explained solely by search, additional rollout computation,
+or world-model-based policy training. Instead, ITP benefits from adaptively
+determining when imagination should be invoked and how deeply the model
+should look ahead.
+
+### C.7 Prompting Templates
+
+We provide the prompt templates for the agent policy and for the adaptive KK-step lookahead inference procedure of ITPI\texttt{ITP}_{\text{I}}.
+Figure 8 shows the prompting template for the ReAct baseline.
+Figure 9 illustrates the adaptive horizon selector, where the policy model maps the task instruction and the current textual state sts_{t} to a single discrete lookahead depth K∈[0,Kmax]K\in[0,K_{\max}].
+Figure 10 presents the world-model foresight generator, which conditions only on sts_{t} and produces a concise KK-step imagined trajectory enclosed by <Foresight>...</Foresight>.
+Figure 11 depicts the foresight-conditioned agent prompt, where the policy model consumes the task, the current state sts_{t}, and the generated foresight to produce a ReAct-style response, and outputs an admissible environment action via exact copying.
+
+Prompt Template for Base Agent Policy
+
+Interact with a household to solve a task. You are an intelligent agent in a household environment.
+Your goal is to perform valid actions to complete the task goal.
+At each step tt, you will be given the task goal, the current state (observation and optional inventory),
+and the previous step context (the previous action and its resulting environment feedback/observation).
+You must follow the ReAct paradigm: Reason →\rightarrow Thought →\rightarrow Action.
+You need to process the information in a specific order:
+
+1. 
+
+Reason: Briefly interpret the current state and the latest environment feedback. Identify what has been achieved and what remains.
+
+2. 
+
+Thought: Plan the next few steps to make progress toward the task goal based on the reasoning.
+
+3. 
+
+Action: Output exactly one next action that is valid in environment.
+
+After each turn, the environment will provide immediate feedback (a new observation, and optionally inventory updates).
+If the environment outputs “Nothing happened”, the previous action is invalid; revise your plan and try a different valid action.
+Your response must use the following format:
+
+Reason: <brief interpretation of state/feedback>
+Thought: <short plan for next steps>
+Action: <EXACTLY ONE valid action line>
+
+Inputs at step tt:
+
+Task goal:
+{task_goal}
+Current state (observation + optional inventory):
+{state}
+Previous action (optional):
+{prev_action}
+Latest environment feedback / observation:
+{feedback}
+
+Figure 8: Prompt template used for base agent policy on ALFWorld and ScienceWorld benchmarks.
+
+Adaptive Selection of KK (PolicyModel.decide_k)
+
+System prompt:
+You are a planning assistant. Your job is to decide how many steps of look-ahead are needed right now. Given a task instruction and the dialogue/action history, output a single integer KK in the range [0, KmaxK_{\max}]
+Task instruction:
+task
+History trajectory (thoughts, actions, observations so far):
+history
+Question: Output a single integer KK in [0, KmaxK_{\max}].
+Your response should be:\iow_now:Ne¨\iow_now:Ne¨K\iow_now:Ne¨ 
+
+Figure 9: Prompt used to adaptively select the lookahead horizon KK from the task instruction and trajectory history. The output must be a single integer within the range [0,Kmax][0,K_{\max}].
+
+KK-Step Foresight Generation (WorldModel.imagine)
+
+System prompt:
+You are a world model for the ALFWorld environment. Given an action/observation history, imagine the next few steps, describing likely observations and key objects.
+User prompt:
+Predict the next k step(s). Return a concise plan inside <Foresight>…</Foresight> with numbered steps.
+User prompt:
+History so far: <history>
+Your response should be:\iow_now:Ne¨\iow_now:Ne¨Foresight state: <Foresight>…</Foresight>\iow_now:Ne¨ 
+
+Figure 10: Prompt used by the world model to generate a KK-step foresight trajectory.
+
+Foresight-Conditioned Action (PolicyModel.reflect_and_act)
+
+You are an agent that first imagines and then acts .
+At each step, you will be given the task instruction, the current state, and a KK-step foresight
+trajectory imagined by a world model. Use the foresight to reflect on progress and bottlenecks, then decide
+the next admissible action.
+You will be given:
+
+1. 
+
+Task instruction ({task})
+
+2. 
+
+Current state ({state})
+
+3. 
+
+KK-step foresight trajectory from the world model ({foresight})
+
+4. 
+
+Admissible actions (instance-level) ({admissible_actions_joined_by_newlines})
+
+After each turn, the environment will give you immediate feedback based on which you plan your next few steps.
+If the environment output “Nothing happened”, that means the previous action is invalid and you should try more options.
+You must follow this order:
+
+1. 
+
+Reflection: Briefly assess whether the foresight indicates progress, contradictions, or missing subgoals.
+
+2. 
+
+Thought: Provide a short plan for the next few steps based on the current state and foresight.
+
+3. 
+
+Action: Output exactly one admissible action by exact copying.
+
+Hard constraint on the action:
+You MUST choose the Action by copying EXACTLY one line from the provided admissible actions list.
+Do NOT paraphrase. Do NOT add extra tokens.
+User prompt:
+
+Task instruction:
+{task}
+Current state:
+{state}
+KK-step foresight trajectory from the world model:
+{foresight}
+Admissible actions (copy exactly one line for Action):
+{admissible_actions_joined_by_newlines}
+
+Your response should use the following format:
+
+Reflection: <Reflection> ... </Reflection>
+Thought: <Thought> ... </Thought>
+Action: <Action> ... </Action>
+
+Figure 11: Prompt used to generate a ITP-style response action conditioned on world-model foresight on ALFWorld and ScienceWorld benchmarks.
+
+ 
+ Experimental support, please
+ view the build logs
+ for errors. Generated by
+ 
+ 
+ L
+ A
+ T
+ E
+ 
+ xml
+ 
+ .
+ 
+
+ 
+ 
+
+## Instructions for reporting errors
+
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+
+ 
+ 
+- Click the "Report Issue" (
+ 
+ ) button, located in the page header.
+
+ 
+ Tip: You can select the relevant text first, to include it in your report.
+
+ Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+ 
+
+ 
+ 
+ 
+ We gratefully acknowledge support from
+ our major funders,
+ member institutions, ,
+ and all contributors.
+ 
+
+ 
+ About
+ &middot;
+ Help
+ &middot;
+ Contact
+ &middot;
+ Subscribe
+ &middot;
+ Copyright
+ &middot;
+ Privacy
+ &middot;
+ Accessibility
+ &middot;
+ Operational Status (opens in new tab)
+ 
+ 
+
+ 
+ Major funding support from

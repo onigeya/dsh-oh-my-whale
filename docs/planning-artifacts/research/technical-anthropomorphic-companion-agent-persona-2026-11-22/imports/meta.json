@@ -1,0 +1,90 @@
+{
+ "meta": {
+  "title": "technical research: 拟人化与宜人化参考项目（10 个项目拆解）",
+  "type": "technical",
+  "topic": "拟人化/宜人化的 Agent 人设·状态·画像参考项目",
+  "decision": "哦鲸鲸拟人化（稳定人格/情绪关系状态/表达一致性）与宜人化（主动关怀/互动节奏/亲密感）功能的设计取舍与参考优先级",
+  "source": "user-provided list of 10 candidate projects (2026-11-22)",
+  "preset": "standard",
+  "validation": "normal",
+  "created": "2026-11-22",
+  "updated": "2026-11-22"
+ },
+ "toc": [
+  {
+   "id": "sec-1",
+   "title": "研究对象与地址核实（2026-11-22，gh API 实测）",
+   "level": 2
+  },
+  {
+   "id": "sec-2",
+   "title": "方法",
+   "level": 2
+  },
+  {
+   "id": "sec-3",
+   "title": "执行摘要",
+   "level": 2
+  },
+  {
+   "id": "sec-4",
+   "title": "维度 0 · 宿主落点与硬约束（本机 dsh 0.2.2-rc.5 文档实测）",
+   "level": 2
+  },
+  {
+   "id": "sec-5",
+   "title": "维度 1 · 人设定义层：把「人格」从一段 prompt 变成可校验的资产（SoulSpec、OpenPersona）",
+   "level": 2
+  },
+  {
+   "id": "sec-6",
+   "title": "维度 2 · 状态层：情绪、需求、关系如何变成运行时对象（agethos、ai-character-engine）",
+   "level": 2
+  },
+  {
+   "id": "sec-7",
+   "title": "维度 3 · 用户画像层：从「记住事实」到「有证据的心智模型」（Distilly、MemoryOS）",
+   "level": 2
+  },
+  {
+   "id": "sec-8",
+   "title": "维度 4 · 表达与陪伴范式：宜人化真正落地的地方（OpenCharacters、HerAndHim）",
+   "level": 2
+  },
+  {
+   "id": "sec-9",
+   "title": "维度 5 · 人格参数化与一致性校验（TinyTroupe、CharacterGPT、学术基准）",
+   "level": 2
+  },
+  {
+   "id": "sec-10",
+   "title": "交叉洞察：跨维度的六条判断",
+   "level": 2
+  },
+  {
+   "id": "sec-11",
+   "title": "建议：三层采纳路线与优先级",
+   "level": 2
+  },
+  {
+   "id": "sec-12",
+   "title": "反证清单：表格里哪些「宣称」在代码/证据前不成立",
+   "level": 2
+  },
+  {
+   "id": "sec-13",
+   "title": "开放问题（需要产品决策，不是研究能定的）",
+   "level": 2
+  },
+  {
+   "id": "sec-14",
+   "title": "来源附录",
+   "level": 2
+  },
+  {
+   "id": "sec-15",
+   "title": "时效性地图（staleness map）",
+   "level": 2
+  }
+ ]
+}

@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>输出端人性化与反八股 · 技术研究简报</title>
+<meta name="description" content="技术研究简报：AI 数字助理输出端的人性化 / 反八股风格层，架构位置、机制与实现。">
+<style>:root{
+  --bg:#f5f5f2; --surface:#ffffff; --surface-2:#fbfbf9;
+  --ink:#1e2328; --muted:#5d6771; --line:#e3e3dd; --line-strong:#cfd0c8;
+  --accent:#1f6f78; --accent-ink:#175a61; --accent-soft:#e7f1f1;
+  --code-bg:#f4f4ef; --thead-bg:#f6f6f1; --row-hover:#fafaf6;
+  --ok:#12704a; --ok-bg:#e7f4ec; --ok-bd:#8fc7a8;
+  --warn:#8a5a00; --warn-bg:#fbf2dd; --warn-bd:#dcc188;
+  --low:#4d5e6d; --low-bg:transparent; --low-bd:#a9b6c1;
+  --alert:#b3340b; --alert-bg:#fdeee6; --alert-halo:rgba(179,52,11,.18);
+  --dispute:#a10f4a; --dispute-bg:#fdebf2; --dispute-halo:rgba(161,15,74,.18);
+  --shadow:0 1px 2px rgba(20,25,30,.04), 0 8px 24px rgba(20,25,30,.05);
+  --radius:16px;
+  --mono:ui-monospace,SFMono-Regular,"Cascadia Code","Cascadia Mono",Consolas,"Liberation Mono",Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Source Han Sans SC",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#12161a; --surface:#191e23; --surface-2:#1c2227;
+    --ink:#e6e9ea; --muted:#9aa6b0; --line:#2b333a; --line-strong:#3a444c;
+    --accent:#6cb8bd; --accent-ink:#8fd0d4; --accent-soft:#1d3236;
+    --code-bg:#151b20; --thead-bg:#1d242a; --row-hover:#1f262c;
+    --ok:#79dda6; --ok-bg:rgba(121,221,166,.10); --ok-bd:#2f6a4c;
+    --warn:#f0c274; --warn-bg:rgba(240,194,116,.10); --warn-bd:#6b5326;
+    --low:#b3c1cc; --low-bg:transparent; --low-bd:#4a5865;
+    --alert:#ff9d78; --alert-bg:rgba(255,157,120,.12); --alert-halo:rgba(255,157,120,.22);
+    --dispute:#ff8fb4; --dispute-bg:rgba(255,143,180,.12); --dispute-halo:rgba(255,143,180,.22);
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.25);
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto} *{animation:none!important;transition:none!important} }
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.78 var(--sans);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.wrap{max-width:1180px;margin:0 auto;padding:0 26px}
+a{color:var(--accent-ink)}
+.skip{position:absolute;left:-9999px}
+.skip:focus{left:16px;top:16px;z-index:99;background:var(--surface);padding:8px 12px;border-radius:8px}
+.progress{position:fixed;top:0;left:0;height:3px;width:0;background:var(--accent);z-index:50}
+.masthead{background:var(--surface);border-bottom:1px solid var(--line);padding:44px 0 26px}
+.eyebrow{margin:0 0 14px;font:600 11.5px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+.masthead h1{margin:0;font-size:clamp(28px,4.2vw,44px);line-height:1.2;letter-spacing:-.015em;font-weight:700}
+.subtitle{margin:12px 0 0;font-size:clamp(15px,1.6vw,18px);line-height:1.7;color:var(--muted);max-width:62ch}
+.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px 28px;margin:26px 0 0;padding:20px 0 0;border-top:1px solid var(--line)}
+.meta dt{font:600 10.5px/1 var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
+.meta dd{margin:6px 0 0;font-size:14.5px;line-height:1.62}
+.meta dd.narrow{max-width:52ch}
+.vitals{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0 0}
+.vital{font-size:12.5px;line-height:1.4;border:1px solid var(--line);border-radius:999px;padding:5px 11px;color:var(--muted);background:var(--bg)}
+.vital b{color:var(--ink);font-weight:650}
+.layout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:34px;align-items:start;padding-top:34px;padding-bottom:70px}
+@media (max-width:980px){ .layout{grid-template-columns:1fr;gap:18px} }
+.toc{position:sticky;top:16px;max-height:calc(100vh - 32px);overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px 12px 14px;font-size:13.5px;box-shadow:var(--shadow)}
+@media (max-width:980px){ .toc{position:static;max-height:none} }
+.toc-title{margin:0 0 10px;padding:0 8px;font:600 10.5px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.toc .grp{margin:14px 0 4px;padding:0 8px;font:600 10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);opacity:.8}
+.toc ol{list-style:none;margin:0;padding:0}
+.toc a{display:block;padding:5px 9px;border-radius:7px;border-left:2px solid transparent;color:var(--ink);text-decoration:none;line-height:1.45}
+.toc a:hover{background:var(--surface-2)}
+.toc a.active{background:var(--accent-soft);border-left-color:var(--accent);color:var(--accent-ink);font-weight:650}
+.card,.exec{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:28px 30px;margin:0 0 22px}
+@media (max-width:640px){ .card,.exec{padding:20px 17px;border-radius:12px;margin-bottom:16px} .wrap{padding:0 16px} .masthead{padding:30px 0 20px} }
+.exec{border-top:3px solid var(--accent);padding:32px 32px 24px}
+.exec h2{margin:0 0 18px}
+.exec-lead{font-size:clamp(16.5px,2vw,19px);line-height:1.8}
+.claims{list-style:none;counter-reset:c;margin:8px 0 20px;padding:0;display:grid;gap:12px}
+.claims li{counter-increment:c;position:relative;margin:0;padding:16px 18px 16px 54px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;font-size:15px;line-height:1.78}
+.claims li::before{content:counter(c);position:absolute;left:16px;top:15px;width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--surface);font:700 12px/24px var(--mono);text-align:center}
+.claims li .badge{margin-bottom:6px}
+.sec-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-bottom:13px;margin-bottom:20px;border-bottom:1px solid var(--line)}
+.kicker{flex:none;font:600 10.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--accent);background:var(--accent-soft);padding:6px 9px;border-radius:6px}
+h2{margin:0;font-size:clamp(20px,2.5vw,26px);line-height:1.32;letter-spacing:-.01em}
+h3{margin:28px 0 12px;font-size:16.5px;line-height:1.45}
+h3:first-child{margin-top:0}
+p{margin:0 0 15px}
+p:last-child{margin-bottom:0}
+ul,ol{margin:0 0 16px;padding-left:1.45em}
+li{margin:0 0 10px}
+li:last-child{margin-bottom:0}
+ul li::marker{color:var(--line-strong)}
+strong{font-weight:650}
+code{font:.87em/1.5 var(--mono);background:var(--code-bg);border:1px solid var(--line);border-radius:5px;padding:.1em .36em;word-break:break-word}
+pre{margin:0 0 18px;padding:15px 17px;background:var(--code-bg);border:1px solid var(--line);border-radius:10px;overflow:auto}
+pre code{background:none;border:0;padding:0;font-size:12.8px;line-height:1.7}
+pre[data-lang]::before{content:attr(data-lang);display:block;margin:-4px 0 8px;font:600 10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.cite{font:600 11px/1 var(--mono);color:var(--accent-ink);text-decoration:none;border-bottom:1px dotted var(--accent);padding:0 1px;margin:0 1px;white-space:nowrap}
+.cite:hover{background:var(--accent-soft);border-bottom-style:solid}
+.badge{display:inline-flex;align-items:center;gap:6px;font:700 10.5px/1 var(--mono);letter-spacing:.07em;text-transform:uppercase;padding:3px 8px;border-radius:5px;border:1px solid;vertical-align:1px;white-space:nowrap;margin-right:8px}
+.badge .bz{font:600 10.5px/1 var(--sans);letter-spacing:0;text-transform:none;opacity:.9}
+.b-verified{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
+.b-medium{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-bd)}
+.b-low{color:var(--low);background:var(--low-bg);border-color:var(--low-bd);border-style:dashed}
+.b-unverified,.b-disputed{font-size:11.5px;font-weight:800;padding:5px 10px;border-width:2px;letter-spacing:.09em;box-shadow:0 0 0 3px var(--alert-halo)}
+.b-unverified{color:var(--alert);background:var(--alert-bg);border-color:var(--alert)}
+.b-disputed{color:var(--dispute);background:var(--dispute-bg);border-color:var(--dispute);box-shadow:0 0 0 3px var(--dispute-halo)}
+.b-unverified .bw::before,.b-disputed .bw::before{content:"!";display:inline-grid;place-items:center;width:13px;height:13px;margin-right:5px;border-radius:50%;background:currentColor;color:var(--surface);font:800 9px/1 var(--mono)}
+.b-disputed .bw::before{content:"≠";font-size:10px}
+.b-design,.b-plan,.b-infer{color:var(--muted);background:transparent;border:1px dashed var(--line-strong);font-weight:650;text-transform:none;letter-spacing:0;font-family:var(--sans)}
+.b-design .bw,.b-plan .bw,.b-infer .bw{display:none}
+.b-design .bz,.b-plan .bz,.b-infer .bz{opacity:1}
+.callout{margin:0 0 18px;padding:16px 18px;border-radius:0 12px 12px 0;border-left:4px solid var(--accent);background:var(--surface-2)}
+.callout.unverified{border-left-color:var(--alert);background:var(--alert-bg)}
+.callout .callout-head{margin-bottom:8px}
+.callout p{margin:0}
+.callout .badge{margin-right:0}
+.lead-in{color:var(--muted);font-size:14.5px;margin-bottom:10px}
+.table-block{margin:0 0 20px}
+.table-note{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-bottom:9px}
+.table-note .badge{margin-right:6px}
+.table-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.6px;line-height:1.62}
+th{position:sticky;top:0;background:var(--thead-bg);text-align:left;font-weight:650;font-size:11.5px;letter-spacing:.06em;padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap;color:var(--muted)}
+td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--row-hover)}
+td.verdict.pos{color:var(--ok);font-weight:650}
+td.verdict.neg{color:var(--alert);font-weight:650}
+td.verdict.cond{color:var(--warn);font-weight:650}
+.objection{margin:0 0 14px;padding:16px 18px;border:1px solid var(--line);border-left:3px solid var(--dispute);border-radius:0 12px 12px 0;background:var(--surface-2)}
+.objection p{margin:0}
+.objection .badge{margin-bottom:8px}
+.open-q li{padding:12px 14px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px}
+.doc-links li{margin-bottom:10px}
+.legend-list{list-style:none;padding:0;margin:0 0 18px;display:grid;gap:8px}
+.legend-list li{display:flex;align-items:baseline;gap:2px;flex-wrap:wrap;font-size:14px}
+.legend-list .badge{margin-right:10px}
+.chart{margin:6px 0 22px;padding:16px 16px 8px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)}
+.chart figcaption{font-size:12.5px;color:var(--muted);margin-bottom:6px}
+.timeline{width:100%;height:auto;display:block;overflow:visible}
+.timeline .grid{stroke:var(--line);stroke-width:1;stroke-dasharray:3 4}
+.timeline .axis{stroke:var(--line-strong);stroke-width:1.5}
+.timeline .tickmark{stroke:var(--line-strong);stroke-width:1}
+.timeline .tick{fill:var(--muted);font:11px var(--mono)}
+.timeline .axis-title{fill:var(--muted);font:11.5px var(--sans)}
+.timeline .bar{fill:var(--accent);opacity:.82}
+.timeline .bar:hover{opacity:1}
+.timeline .vlabel{fill:var(--ink);font:700 12px var(--mono)}
+.timeline .cat{fill:var(--muted);font:10.5px var(--sans)}
+.appendix{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);margin:0 0 22px;overflow:hidden}
+.appendix>summary{display:flex;align-items:center;gap:12px;flex-wrap:wrap;cursor:pointer;padding:20px 24px;list-style:none}
+.appendix>summary::-webkit-details-marker{display:none}
+.appendix>summary .summary-chevron{margin-left:auto;font:600 11px var(--mono);color:var(--muted)}
+.appendix[open]>summary{border-bottom:1px solid var(--line)}
+.appendix-body{padding:16px 20px 6px}
+.sources{font-size:13px}
+.sources td:first-child{font:650 12px var(--mono);color:var(--accent-ink);white-space:nowrap;width:52px}
+.sources td:nth-child(3){min-width:200px}
+.sources a{color:var(--accent-ink);text-decoration:none;border-bottom:1px solid var(--accent-soft);word-break:break-word}
+.sources a:hover{border-bottom-color:var(--accent)}
+.sources tr[id^="src-"]{scroll-margin-top:18px}
+.sources tr:target td{background:var(--accent-soft);animation:flash 1.4s ease-out}
+@keyframes flash{0%{background:var(--accent)}100%{background:var(--accent-soft)}}
+.appendix-note{font-size:12.5px;color:var(--muted);margin:14px 4px 4px}
+details.appendix>summary h2{display:inline;font-size:20px}
+.footer{border-top:1px solid var(--line);padding:24px 0 46px;color:var(--muted);font-size:12.5px;line-height:1.7}
+.footer p{margin:0 0 6px}
+.footer code{font-size:11.5px}
+.totop{position:fixed;right:20px;bottom:20px;z-index:40;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:9px 14px;font:600 12px var(--sans);cursor:pointer;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s}
+.totop.show{opacity:1;pointer-events:auto}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+@media print{
+  .toc,.progress,.totop{display:none!important}
+  body{background:#fff}
+  .card,.exec,.appendix{box-shadow:none;break-inside:avoid}
+  .appendix{display:block}
+  a{color:inherit}
+}
+
+html,body{overflow-x:hidden}
+p,li,td,th,dd{overflow-wrap:anywhere}
+td code{white-space:nowrap}
+table{min-width:560px}
+.sources{min-width:780px}
+.sources td:nth-child(4),.sources td:nth-child(5),.sources td:nth-child(6){white-space:nowrap}
+.dates td:first-child{white-space:nowrap}
+.timeline{overflow:hidden}
+
+.subhead{margin:24px 0 10px;font-size:15.5px;font-weight:650;color:var(--ink)}
+.subhead:first-child{margin-top:0}
+.reading-guide{margin:22px 0 0;padding-top:14px;border-top:1px dashed var(--line);font-size:13.5px;color:var(--muted)}
+.reading-guide strong{color:var(--ink)}
+.scoring li{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;list-style-position:inside}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<div class="progress" id="progress"></div>
+<header class="masthead"><div class="wrap"><p class="eyebrow">Technical research briefing · 研究简报</p><h1>输出端人性化与反八股（风格层落点与实现）</h1><p class="subtitle">AI 数字助理输出端的人性化 / 反八股风格层：架构位置、机制与实现</p><dl class="meta"><div><dt>Topic</dt><dd>AI 数字助理输出端的人性化 / 反八股风格层：架构位置、机制与实现</dd></div><div><dt>Type</dt><dd>technical</dd></div><div><dt>Decision</dt><dd class="narrow">哦鲸鲸的输出风格层放在哪一层；v1 用什么机制（生成前约束 / 生成后审计 / 离线评审）实现；如何与记忆库、知识库、世界模型、持续学习对接</dd></div><div><dt>Date</dt><dd>2026-11-22（updated 2026-11-22）</dd></div><div><dt>Depth</dt><dd>preset standard+</dd></div><div><dt>Verification</dt><dd>normal · memlog 46 条（claim 32 / decision 8 / assumption 2 / event 3 / question 1），tally 计 31 条 verified、0 条 unverified 或 disputed；40 条引用经独立子代理语义核对，无结论被证伪，5 处定位瑕疵已修；structure+prose 两轮编辑评审已应用；dangling 0 / orphaned 0</dd></div></dl><div class="vitals"><span class="vital"><b>44</b> 条来源</span><span class="vital"><b>20</b> 条承重结论</span><span class="vital"><b>0</b> 条过期</span><span class="vital">最早重查 <b>2027-02-22</b></span><span class="vital">source: user 9-project list · DSH 0.2.2-rc.5 docs · arXiv/Patterns</span></div></div></header>
+<main id="main">
+<div class="wrap">
+<section class="exec" id="exec">
+<div class="sec-head"><span class="kicker">摘要</span><h2>Executive summary · 执行摘要</h2></div>
+<p class="claim"><span class="badge b-design" title="架构建议，非实证主张"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>建议：新增 L4「Voice 层」——即决策里的「输出风格层」。它不是第五个存储层，而是架在 L0–L3 之上的一层「投影 + 契约」：从记忆读出表达状态，向宿主写出一段字节稳定的风格契约，在生成之后只记分、不改写。</strong> 依赖方向单向（Voice 读记忆，记忆不读 Voice），因此它必须排在记忆层之后建，不能与之并行开工。</p>
+<p>支撑这个建议的三条判断，以及各自最硬的那一份证据：</p>
+<ol>
+<li><span class="badge b-verified" title="宿主文档一手"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>宿主把「改文本」这条路封死了，只剩下「生成前约束 + 生成后记账」。</strong> assistant 消息是 append-only 日志里的不可变值，<code>agent/turn-stopping</code> 只能 <code>steer</code> 追加一步而不能否决，<code>llm/stream</code> 被文档要求「只读不改写」，Web 插槽组件拿不到 ctx、没有文本后处理管道 <a class="cite" href="#src-30" title="跳到来源 [30]">[30]</a><a class="cite" href="#src-31" title="跳到来源 [31]">[31]</a><a class="cite" href="#src-32" title="跳到来源 [32]">[32]</a><a class="cite" href="#src-33" title="跳到来源 [33]">[33]</a><a class="cite" href="#src-34" title="跳到来源 [34]">[34]</a><a class="cite" href="#src-39" title="跳到来源 [39]">[39]</a>。唯一能真正拦住文案的是我们自己产出的卡片/通知——<code>tools/post-execute</code> 可以替换 content <a class="cite" href="#src-35" title="跳到来源 [35]">[35]</a>。这条判断决定了整条设计：<strong>约束在源头，评分在事后，改写只作为限流的显式补救</strong>。</li>
+<li><span class="badge b-verified" title="宿主文档一手"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>没有任何一个参考项目有可复现的「人性化得分」，而评委本身也不可靠。</strong> 四个规则/改写类仓库全是提示词，可用的分数只有模型自评（Stop Slop 的 5 维 1–10、&lt;35/50 重写）<a class="cite" href="#src-1" title="跳到来源 [1]">[1]</a>；Humanizer 连自评都没有 <a class="cite" href="#src-4" title="跳到来源 [4]">[4]</a>。实证上，单评委的位置偏差、冗长偏差、自我偏好有量化证据 <a class="cite" href="#src-24" title="跳到来源 [24]">[24]</a>，谄媚普遍存在 <a class="cite" href="#src-25" title="跳到来源 [25]">[25]</a>，而多评委共识在单个评委系统性偏差下<strong>偏差无界</strong>，必须换成稳健均值 <a class="cite" href="#src-27" title="跳到来源 [27]">[27]</a>。所以分数只能当「信号」，不能当「门」。</li>
+<li><span class="badge b-verified" title="宿主文档一手"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>「八股」在中文里没有语言学依据，词表命中率不能当质量门禁。</strong> 目前只有一项系统研究，是 2025-09 的 slop 分类学，作者自己说二元判断偏主观、全自动测量仍开放 <a class="cite" href="#src-20" title="跳到来源 [20]">[20]</a>；arXiv 全文检索「八股」零命中（本次实查）。中文参考版本反倒明确写着「模式清单是检查线索，不是词语黑名单」<a class="cite" href="#src-6" title="跳到来源 [6]">[6]</a>。这直接把「规则库 + 黑名单」的默认方案否掉了。</li>
+</ol>
+<div class="callout unverified"><div class="callout-head"><span class="badge b-unverified" title="报告自述：本次没有实测"><span class="bw">unverified</span><span class="bz">未验证</span></span></div><p><strong>最大的 caveat：</strong> 风格状态到底能不能从记忆里「算」出来，本次没有实测。我们只证明了接口可行（L1 有类型化事实、世界模型有时序实体），没有证明「familiarity 分档 → 语域」的映射在真实对话里稳定。这一条进 staleness map，也进 v1.5 的验收。</p></div>
+<p class="reading-guide"><strong>怎么读</strong>：D1 拆参考项目 → D2 看实证边界 → D3 查宿主能力 → D4 讲合流后的设计（L4 Voice 层）→ D5 给路线与验收。只想做决定，读 Executive summary 与 Recommendations 两节即可。</p>
+</section></div>
+<div class="wrap layout">
+<aside class="toc" id="toc"><nav aria-label="目录"><p class="toc-title">目录 · Contents</p><p class="grp">概览</p><ol><li><a href="#exec">执行摘要</a></li><li><a href="#scope">决策与已确认的约束</a></li><li><a href="#relations">与现有文档的关系</a></li></ol><p class="grp">维度</p><ol><li><a href="#d1">D1 参考项目</a></li><li><a href="#d2">D2 实证证据</a></li><li><a href="#d3">D3 宿主落点</a></li><li><a href="#d4">D4 架构合流</a></li><li><a href="#d5">D5 实施路线</a></li></ol><p class="grp">判断</p><ol><li><a href="#insights">跨维度洞见</a></li><li><a href="#contrary">反证</a></li><li><a href="#recs">建议</a></li><li><a href="#open">未决问题</a></li></ol><p class="grp">附录</p><ol><li><a href="#appendix">来源附录 44 条</a></li><li><a href="#staleness">陈旧度地图</a></li></ol></nav></aside>
+<div class="content">
+<section class="card" id="scope">
+<div class="sec-head"><span class="kicker">范围</span><h2>决策与已确认的约束</h2></div>
+<p><strong>Decision this research serves:</strong> 哦鲸鲸的输出风格层放在哪一层；v1 用什么机制（生成前约束 / 生成后审计 / 离线评审）实现；如何与记忆库、知识库、世界模型、持续学习对接。</p>
+<p class="subhead"><strong>已确认的范围约束（用户 2026-11-22 决策）</strong></p>
+<ul>
+<li>风格不是静态黑名单，而是记忆图谱/关系状态驱动的状态变量；关系越近客套越少。</li>
+<li>JitRL 与 TriviumDB 处于「规划中，尚未实现」→ 设计给建议接口并标注待实现。</li>
+<li>风格层覆盖对话正文 + 卡片/通知文案。</li>
+<li>v1 中文优先，英文后续。</li>
+</ul>
+</section>
+<section class="card" id="relations">
+<div class="sec-head"><span class="kicker">关系</span><h2>与项目现有文档的关系</h2></div>
+<ul>
+<li><span class="badge b-verified" title="引用本项目一手文档 [41]–[44]"><span class="bw">verified</span><span class="bz">已核实</span></span>本报告不重述记忆层设计，只引用：L0–L3 分层、dream 五阶段、治理三件套（版本链 / Flag / 软删除）、有界检索 <a class="cite" href="#src-41" title="跳到来源 [41]">[41]</a>。</li>
+<li><span class="badge b-verified" title="引用本项目一手文档 [41]–[44]"><span class="bw">verified</span><span class="bz">已核实</span></span>与第 2 线（人设）的分工：那边解决「稳定人设放哪、怎么不漂」，本报告解决「输出形状怎么不八股、怎么评分」。两者的注入位置相同（PromptSection + PromptContext），但对象不同——人设是内容，风格是形状 <a class="cite" href="#src-42" title="跳到来源 [42]">[42]</a>。</li>
+<li><span class="badge b-verified" title="引用本项目一手文档 [41]–[44]"><span class="bw">verified</span><span class="bz">已核实</span></span>与第 4 线（JitRL）的关系：那边证明宿主没有 logprobs/logit_bias，reward 只能走「案例库 + 上下文注入 + A/B」<a class="cite" href="#src-43" title="跳到来源 [43]">[43]</a>。本报告的打分因此被设计成<strong>离线 reward sink</strong>，不假装能调制 logits。</li>
+<li><span class="badge b-verified" title="引用本项目一手文档 [41]–[44]"><span class="bw">verified</span><span class="bz">已核实</span></span>与第 5 线（世界模型）的关系：禁忌话题、称呼、语域都要挂时序字段（<code>valid_from</code> / <code>superseded_at</code>），直接复用那边的「可回溯事实状态图」降级方案 <a class="cite" href="#src-44" title="跳到来源 [44]">[44]</a>。</li>
+</ul>
+</section>
+<section class="card" id="d1">
+<div class="sec-head"><span class="kicker">D1</span><h2>D1 参考项目：代码级拆解</h2></div>
+<h3>D1.0 先说清单本身的偏差（三处，已核实）</h3>
+<p class="claim"><span class="badge b-verified" title="GitHub API 实查：2 个仓库 404"><span class="bw">verified</span><span class="bz">已核实</span></span>用户给的 9 个项目里，<strong>2 个仓库不存在</strong>（<code>peter-yang/no-ai-slop</code>、<code>sickn33/unslop-file</code>，GitHub API 均 404），已从证据链剔除，不再作为设计依据。另外两处描述与代码不符，按代码为准：</p>
+<ul>
+<li><span class="badge b-verified" title="按仓库代码核实"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>Humanizer 不是「5 大类」</strong>，是 <strong>26 条 / A–F 六组</strong>；「five」来自 README 的「五个最强信号」，被误读成分类数 <a class="cite" href="#src-3" title="跳到来源 [3]">[3]</a><a class="cite" href="#src-4" title="跳到来源 [4]">[4]</a>。</li>
+<li><span class="badge b-verified" title="按仓库代码核实"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>SoulSpec 没有「禁止句式区块」</strong>。它的硬约束是 <code>RULES.md</code> 的 Must always / Must never（行为边界），仓库里没有 JSON Schema、没有校验器源码，也没有词表字段 <a class="cite" href="#src-14" title="跳到来源 [14]">[14]</a><a class="cite" href="#src-15" title="跳到来源 [15]">[15]</a>。它解决的是「人设可移植 + 防漂移/供应链安全」，与「防八股」是两个问题——社区叙事把两者混谈了。</li>
+</ul>
+<p class="claim"><span class="badge b-design" title="设计后果推论"><span class="bw">design</span><span class="bz">设计取舍</span></span>这两处纠正有实际后果：如果照抄「SoulSpec 自带反八股区块」，会在架构里留一个不存在的插槽。</p>
+<h3>D1.1 四个规则/改写项目：本体形态与失败模式</h3>
+<div class="table-block"><div class="table-note"><span class="badge b-verified" title="逐条对应来源 [1]–[10]"><span class="bw">verified</span><span class="bz">已核实</span></span><span>逐条对应来源 <a class="cite" href="#src-1" title="跳到来源 [1]">[1]</a>–<a class="cite" href="#src-10" title="跳到来源 [10]">[10]</a></span></div><div class="table-scroll"><table><thead><tr><th>项目</th><th>本体</th><th>有没有真检测</th><th>生成前/后</th><th>失败模式</th></tr></thead><tbody><tr><td>Stop Slop</td><td>1 个 <code>SKILL.md</code> + 3 个 references（8 类词表、11 类结构清单），全仓库 7 个文件、零脚本零测试 <a class="cite" href="#src-1" title="跳到来源 [1]">[1]</a><a class="cite" href="#src-2" title="跳到来源 [2]">[2]</a></td><td>没有。5 维 1–10 由模型自答，&lt;35/50 重写，无公式无样例 <a class="cite" href="#src-1" title="跳到来源 [1]">[1]</a></td><td>生成前注入 + 生成后自评</td><td>词表式过度删除；自评不可复现；仓库 2026-03 后停更</td></tr>
+<tr><td>Humanizer</td><td>26 条 / 6 组，33 KB 提示词 <a class="cite" href="#src-3" title="跳到来源 [3]">[3]</a></td><td>没有。只有「前五条一见即改、weak alone 需共现」的分诊 <a class="cite" href="#src-4" title="跳到来源 [4]">[4]</a></td><td>生成后重写</td><td>重写幅度大；<code>:37</code> 指示「补一个你知道为真的细节」——对记忆型助理是编造入口 <a class="cite" href="#src-4" title="跳到来源 [4]">[4]</a></td></tr>
+<tr><td>Humanizer-zh</td><td>31 条 / 6 组，F 组为中文特有 <a class="cite" href="#src-6" title="跳到来源 [6]">[6]</a></td><td>有一个真会跑的脚本，但只判「受保护片段是否逐字未变」<a class="cite" href="#src-7" title="跳到来源 [7]">[7]</a></td><td>生成后重写 + 结构 diff</td><td>语义层仍靠人工；自述无跨模型、无稳定通过率</td></tr>
+<tr><td>Caveman</td><td>1 个 <code>SKILL.md</code> + 9 条规则 <a class="cite" href="#src-9" title="跳到来源 [9]">[9]</a></td><td>有 eval 脚本，但 <code>HONEST-NUMBERS</code> 承认没有可复核的保真快照 <a class="cite" href="#src-8" title="跳到来源 [8]">[8]</a></td><td>生成前输出约束 + 可逆压缩</td><td>方向相反：电报体、20 词上限，与「人味」冲突 <a class="cite" href="#src-9" title="跳到来源 [9]">[9]</a><a class="cite" href="#src-10" title="跳到来源 [10]">[10]</a></td></tr></tbody></table></div></div>
+<p>从这张表能抽出三条可直接用的工程纪律：</p>
+<ol>
+<li><span class="badge b-verified" title="四仓库代码级核实 [1]–[10]"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>守门只判机器能判的事。</strong> Humanizer-zh 的 <code>check_structure.py</code> 用正则在改写前后各抽 8 类受保护片段（frontmatter、围栏代码、行内代码、标题、链接目标、表格行、有序步骤、显式 id），全等才 exit 0 <a class="cite" href="#src-7" title="跳到来源 [7]">[7]</a>。它不假装能判「像不像人」，这是四个项目里唯一诚实的设计。</li>
+<li><span class="badge b-verified" title="四仓库代码级核实 [1]–[10]"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>规则要分诊，不要一刀切。</strong> 「一见即改」与「需共现」两级，比任何单一阈值都更能压误伤 <a class="cite" href="#src-4" title="跳到来源 [4]">[4]</a>。</li>
+<li><span class="badge b-verified" title="四仓库代码级核实 [1]–[10]"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>改写要报告覆盖范围。</strong> 「审了哪些节、哪些没覆盖」是可验证的交付契约，比「已人性化」有用 <a class="cite" href="#src-4" title="跳到来源 [4]">[4]</a><a class="cite" href="#src-6" title="跳到来源 [6]">[6]</a>。</li>
+</ol>
+<p class="claim"><span class="badge b-medium" title="基于校验脚本覆盖范围的判断"><span class="bw">medium</span><span class="bz">中等</span></span>还要记住一条边界：Humanizer 的 CI 只校验包结构（编号连续、README 表名对齐、SKILL.md ≤5500 词），不查任何文风 <a class="cite" href="#src-5" title="跳到来源 [5]">[5]</a>——「有 CI」不等于「有质量门」。</p>
+<p class="claim"><span class="badge b-verified" title="按代码核实 [1][4]"><span class="bw">verified</span><span class="bz">已核实</span></span>不能抄的两条：Stop Slop 的 35/50 自评分（无 rubric 锚点，不可复现）<a class="cite" href="#src-1" title="跳到来源 [1]">[1]</a>；Humanizer 的「补细节」（编造入口）<a class="cite" href="#src-4" title="跳到来源 [4]">[4]</a>。</p>
+<h3>D1.2 三个结构化/状态类项目：能不能抄</h3>
+<p class="claim"><span class="badge b-verified" title="代码 + 自报成熟度 [11][12][13]"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>Empanel（多评委）</strong> — 抄结构，不抄文案。它的「独立」不是多模型，而是同一个 LLM 网关 + 不同 lens + 每次调用 <code>history=&quot;&quot;</code> <a class="cite" href="#src-11" title="跳到来源 [11]">[11]</a><a class="cite" href="#src-13" title="跳到来源 [13]">[13]</a>。三段式 Assess → Weigh → Reduce，其中 Reduce 必须是纯代码（加权平均 + 可 snap 到 Fibonacci 刻度）<a class="cite" href="#src-11" title="跳到来源 [11]">[11]</a>。代码评审路径的聚合更值得抄：指纹归并、HIGH/MAJORITY/UNIQUE 分级、弃权 lens 不计入分母、严重度取 max 不取平均 <a class="cite" href="#src-12" title="跳到来源 [12]">[12]</a>。权重闸门 0.3 是条反直觉规则：低质评委的内容剔除，票数保留作反对票。它还自己承认一种失效：<strong>权重 stdev&lt;0.05 即「加权退化成均值」</strong>，显式告警 <a class="cite" href="#src-11" title="跳到来源 [11]">[11]</a>。成本是 2N 次调用。成熟度必须说清：0★、无外部使用者、141 tests 是自报、无校准数据。</p>
+<p class="claim"><span class="badge b-verified" title="代码/文档核实 [14][15]"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>SoulSpec（人设防漂移）</strong> — 抄职责切分与版本协议（<code>specVersion</code>、deprecated/supersededBy）<a class="cite" href="#src-14" title="跳到来源 [14]">[14]</a>，不抄「反八股」。校验靠仓库外的 npm CLI <a class="cite" href="#src-15" title="跳到来源 [15]">[15]</a>，引用「通过校验」会引入外部依赖。</p>
+<p class="claim"><span class="badge b-verified" title="代码核实 [16]–[19]；阈值为他域语境"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>HerAndHim（关系→正式度）</strong> — 这是用户清单里最贴合「风格是状态变量」的一个，而且<strong>真的写进了 prompt</strong>：<code>closeness=(intimacy+trust)/2</code>，&lt;45 客气、&lt;70 去客套+昵称+玩笑、≥70 零表演 <a class="cite" href="#src-16" title="跳到来源 [16]">[16]</a>，三档各配一段自然语言指令，并注入认识天数；代码注释直说把 0–100 的数字直接塞进 prompt 会让「month-3 和 day-1 听起来一样」。稳定人设（SOUL.md）与易变状态（<code>affect/relationship.json</code>）分仓 <a class="cite" href="#src-18" title="跳到来源 [18]">[18]</a>，SOUL.md 里还有「绝对禁止：太工整/太对称/书面语/列清单/排比」<a class="cite" href="#src-17" title="跳到来源 [17]">[17]</a>。两个不能抄：<strong>AGPL-3.0</strong>（只借设计，不抄代码/文本）；阈值 45/70 是虚拟女友语境，语义要重定义。还有一条容易漏的：它存了 4 个关系维度，正式度只用了 2 个——<strong>状态维度与表达维度不是一一映射</strong>，别假设全维映射。</p>
+<p class="claim"><span class="badge b-verified" title="代码核实 [19]"><span class="bw">verified</span><span class="bz">已核实</span></span>它的「人性化」还有一半在投递层（延迟抖动、1–3 条气泡、选择性 emoji <a class="cite" href="#src-19" title="跳到来源 [19]">[19]</a>），那是反「机器人节奏」，不是反「八股文风」。DSH 里我们没有这条通道，别把这部分算进 v1。</p>
+</section>
+<section class="card" id="d2">
+<div class="sec-head"><span class="kicker">D2</span><h2>D2 实证证据：能支撑什么、不能支撑什么</h2></div>
+<h3>能支撑的三件事</h3>
+<ol>
+<li><span class="badge b-verified" title="实证文献 [20][24]–[28]"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>slop 是可解释维度，不是一个可判定的标签。</strong> 2509.19163 用专家访谈 + span 标注建了分类学，结论是二元判断「有些主观」，但与 coherence/relevance 这类潜在维度相关 <a class="cite" href="#src-20" title="跳到来源 [20]">[20]</a>。→ 打分应该输出<strong>分项 + 理由</strong>，不是单一布尔或单一总分。</li>
+<li><span class="badge b-verified" title="实证文献 [20][24]–[28]"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>评委偏差是结构性的，不是调 prompt 能解决的。</strong> 位置/冗长/自我偏好有量化证据、人类一致率 &gt;80% <a class="cite" href="#src-24" title="跳到来源 [24]">[24]</a>；谄媚普遍且人类偏好数据本身偏谄媚 <a class="cite" href="#src-25" title="跳到来源 [25]">[25]</a>；PoLL 便宜 7×、降 intra-model bias <a class="cite" href="#src-26" title="跳到来源 [26]">[26]</a>；但 RoPoLL 证明：单个评委以 LLM 的典型方式产生偏差（mode collapse / 谄媚 / 拒答）时，<strong>任何规模的小组共识偏差都无界</strong>，解法是稳健均值（几何中位数一类）<a class="cite" href="#src-27" title="跳到来源 [27]">[27]</a>。→ 多评委只能降方差，不能消偏差；必须配稳健聚合 + 人工抽检。</li>
+<li><span class="badge b-verified" title="实证文献 [20][24]–[28]"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>过优化会把分数和质量拆开。</strong> 2210.10760 在合成设定里测出 gold 分先升后降 <a class="cite" href="#src-28" title="跳到来源 [28]">[28]</a>。→ 分数必须设 cap、必须 held-out、必须有「分数涨了但人觉得更差」的退出条件。</li>
+</ol>
+<h3>不能支撑的两件事（重要）</h3>
+<ul>
+<li><span class="badge b-verified" title="实证文献 [21][23]"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>检测器不可靠且不公平</strong>：2304.02819 显示常用检测器把非母语英语写作稳定误判为 AI，简单 prompt 可绕过 <a class="cite" href="#src-21" title="跳到来源 [21]">[21]</a>；中文侧 C-ReD 说明「域内可靠 + 跨模型泛化」需要专门基准 <a class="cite" href="#src-22" title="跳到来源 [22]">[22]</a>。→ 不能拿 AI 检测器当风格 judge。</li>
+<li><span class="badge b-verified" title="实证文献 [21][23]"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>改写会破坏检测与水印</strong>：DIPPER 让 watermark/GPTZero/DetectGPT 失效 <a class="cite" href="#src-23" title="跳到来源 [23]">[23]</a>。该论文标题的后半句——「但检索是有效的防御」——意味着改写不是无成本的隐身术，它留下的是<strong>可追溯性损失</strong>。对我们更要紧的是：改写会让持久证据与 provider 实际输出不一致，这与 brief 的「可审计」直接冲突。</li>
+</ul>
+<h3>没有证据的地方：按「待验证假设」处理</h3>
+<div class="callout unverified"><div class="callout-head"><span class="badge b-unverified" title="报告列为待验证假设"><span class="bw">unverified</span><span class="bz">未验证</span></span></div><p>以下几项都还没有证据，不写成结论：句长/连接词密度/排比/hedging/套话的独立效度检验；改写对事实/数字/引用/代码的量化影响；语域与信任/满意度的因果或中文证据；八股词表的语言学依据。「没有找到」不等于「不存在」，但它足以否掉「拿词表命中率当门禁」这个默认设计。</p></div>
+</section>
+<section class="card" id="d3">
+<div class="sec-head"><span class="kicker">D3</span><h2>D3 宿主落点：能力边界与代价</h2></div>
+<div class="table-block"><div class="table-note"><span class="badge b-verified" title="逐条对应一手宿主文档 [30]–[39]"><span class="bw">verified</span><span class="bz">已核实</span></span><span>逐条对应一手宿主文档 <a class="cite" href="#src-30" title="跳到来源 [30]">[30]</a>–<a class="cite" href="#src-39" title="跳到来源 [39]">[39]</a></span></div><div class="table-scroll"><table><thead><tr><th>能力</th><th>判定</th><th>代价与边界</th></tr></thead><tbody><tr><td>稳定风格契约注入（静态 PromptSection，字节稳定）</td><td class="verdict pos">可行</td><td>文本一变即 system/message 原地替换 → 整段前缀缓存作废；<code>interpolate:false</code> 锁字面量 <a class="cite" href="#src-30" title="跳到来源 [30]">[30]</a></td></tr>
+<tr><td>逐轮状态注入（PromptContext）</td><td class="verdict pos">可行，有代价</td><td>只在变化或 compaction 移除后追加，追加即永久占历史 <a class="cite" href="#src-30" title="跳到来源 [30]">[30]</a></td></tr>
+<tr><td>覆盖/替换整段系统提示</td><td class="verdict neg">不可行</td><td>注册了 <code>complete</code> 段后，assemble 监听者无法增删替换 <a class="cite" href="#src-30" title="跳到来源 [30]">[30]</a></td></tr>
+<tr><td>turn 结束拿到完整正文 + 工具摘要</td><td class="verdict pos">可行</td><td><code>session/event</code> 有 <code>assistant/message</code>（含 compact 流）与 <code>tool/*</code> <a class="cite" href="#src-31" title="跳到来源 [31]">[31]</a><a class="cite" href="#src-32" title="跳到来源 [32]">[32]</a><a class="cite" href="#src-34" title="跳到来源 [34]">[34]</a></td></tr>
+<tr><td>否决/阻塞一个 turn</td><td class="verdict neg">不可行</td><td>turn-stopping 只有 <code>steer</code> 语义；抛错是否阻断未记载 <a class="cite" href="#src-31" title="跳到来源 [31]">[31]</a><a class="cite" href="#src-32" title="跳到来源 [32]">[32]</a></td></tr>
+<tr><td>改写已生成的 assistant 文本</td><td class="verdict neg">不可行</td><td>append-only + 不可变 Message；<code>assistant/message</code> 禁 <code>sourceEventSeqs</code>，surface 替换覆盖 node 0 会被拒 <a class="cite" href="#src-32" title="跳到来源 [32]">[32]</a><a class="cite" href="#src-34" title="跳到来源 [34]">[34]</a></td></tr>
+<tr><td>通过 <code>llm/stream</code> 变换输出</td><td>技术上可能，架构上违规</td><td>可 yield 自己的 chunk，但文档要求「read it, never rewrite it」，且破坏证据一致性 <a class="cite" href="#src-33" title="跳到来源 [33]">[33]</a></td></tr>
+<tr><td>Web 渲染前拦截文案</td><td class="verdict neg">不可行</td><td>插槽组件无 ctx、无文本后处理管道 <a class="cite" href="#src-39" title="跳到来源 [39]">[39]</a></td></tr>
+<tr><td>自有卡片/通知文案风格化</td><td class="verdict pos">可行</td><td>仅限自己产出的 payload；<code>tools/post-execute</code> 可 accept/block/replace/add <a class="cite" href="#src-35" title="跳到来源 [35]">[35]</a></td></tr>
+<tr><td>turn 后异步审计（jobs）</td><td class="verdict pos">可行</td><td><code>job/settled</code> 可晚于 turn/end；输出环形缓冲有界、会 lossy <a class="cite" href="#src-37" title="跳到来源 [37]">[37]</a></td></tr>
+<tr><td>夜间批量评审（schedule）</td><td class="verdict pos">可行，有代价</td><td>每任务 ≥60s、Host 必须常驻、宕机只补最近一次 <a class="cite" href="#src-38" title="跳到来源 [38]">[38]</a></td></tr>
+<tr><td>评分/状态存储（domain KV）</td><td class="verdict pos">可行</td><td>单域单写链、<code>update</code> 原子；无跨进程推送 <a class="cite" href="#src-36" title="跳到来源 [36]">[36]</a></td></tr>
+<tr><td>与 mnemon 共存</td><td class="verdict cond">需定序</td><td>mnemon 每轮注入 USER.md/MEMORY.md 并 pin 唯一 View <a class="cite" href="#src-40" title="跳到来源 [40]">[40]</a>；风格层若也写 per-turn context，会争同一 history 位置</td></tr></tbody></table></div></div>
+<p class="claim"><span class="badge b-verified" title="宿主能力边界"><span class="bw">verified</span><span class="bz">已核实</span></span>这张表里有一条容易被忽略的结论：<strong>「卡片/通知」是唯一能做硬门禁的出口</strong>。对话正文只能「生成前影响 + 生成后评分」，而卡片文案可以在工具执行链上同步拒绝或替换。所以 v1 的现实收益，一半在正文的源头约束，一半在卡片的硬门禁。</p>
+</section>
+<section class="card" id="d4">
+<div class="sec-head"><span class="kicker">D4</span><h2>D4 架构合流：L4 Voice 层</h2></div>
+<h3>4.1 为什么是 L4，而不是塞进 L3 画像</h3>
+<p>四条判据，逐条对上一个约束：</p>
+<ol>
+<li><span class="badge b-design" title="架构判据"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>可治理性</strong>（治理三件套）：契约必须能 diff、能回滚、能回答「哪一版、依据什么、什么时候换的」。画像段落做不到——L3 是整篇重写 <a class="cite" href="#src-41" title="跳到来源 [41]">[41]</a>。</li>
+<li><span class="badge b-design" title="架构判据"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>缓存</strong>（宿主）：契约必须是常量文本 + 稳定 order，任何逐轮变化都要剥离出去 <a class="cite" href="#src-30" title="跳到来源 [30]">[30]</a>。这排除了「每轮把状态拼进系统提示」。</li>
+<li><span class="badge b-design" title="架构判据"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>证据</strong>（用户约束）：状态必须能回答「哪条记忆让它变成这样」。所以状态是 L1 的<strong>派生视图</strong>，不是另存一份会漂移的数字。</li>
+<li><span class="badge b-design" title="架构判据"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>依赖方向</strong>：Voice 读记忆，记忆不读 Voice。违反这条就会循环依赖，也会让记忆层的正确性被风格需求污染。</li>
+</ol>
+<p class="claim"><span class="badge b-design" title="架构形态"><span class="bw">design</span><span class="bz">设计取舍</span></span>L4 的形态因此是「投影 + 契约」，不是存储：<strong>读</strong> L1/L2/L3 与世界模型，<strong>写</strong>一段契约文本、一段状态快照、一批审计记录。</p>
+<h3>4.2 三个对象</h3>
+<div class="table-block"><div class="table-note"><span class="badge b-design" title="对象设计"><span class="bw">design</span><span class="bz">设计取舍</span></span><span>对象设计</span></div><div class="table-scroll"><table><thead><tr><th>对象</th><th>形态</th><th>存放</th><th>生命周期</th><th>谁写</th></tr></thead><tbody><tr><td><code>VoiceContract</code></td><td>markdown + 结构化头（<code>version</code> / <code>supersedes</code> / <code>evidence[]</code> / <code>probes[]</code> / <code>budget</code>）</td><td>插件自有目录 <code>voice/contract/&lt;version&gt;.md</code>，纯文本可导出</td><td>只由 dream 或人工升版；旧版不删</td><td>dream / 人工</td></tr>
+<tr><td><code>VoiceState</code></td><td>JSON，≤120 token</td><td>内存缓存 + domain KV 快照</td><td>每次装配重算（纯函数），带滞回；变化才进 PromptContext</td><td>派生器</td></tr>
+<tr><td><code>VoiceAudit</code></td><td>事件记录</td><td>L1 事件流（类型 <code>voice_audit</code>）+ domain KV 索引</td><td>append-only；可被治理三件套管理</td><td>审计器</td></tr></tbody></table></div></div>
+<p><code>VoiceState</code> 的字段（v1 中文）：</p>
+<pre><code>register:    formal | neutral | casual | intimate
+familiarity: 0–100（由 L1 交互事实算出，不是手填）
+brevity:     terse | normal | expansive
+humor:       off | dry | warm
+directness:  blunt | plain | cushioned
+address_form: 你 | 您 | 昵称 | 名字
+taboo:       string[]（来自世界模型，带 valid_from）
+lang_mix:    zh | zh-en-mixed</code></pre>
+<p class="claim"><span class="badge b-design" title="状态设计"><span class="bw">design</span><span class="bz">设计取舍</span></span><code>register</code> 由 <code>familiarity</code> 分档驱动（关系越近客套越少），档位带滞回：<code>&lt;40 formal</code>、<code>40–55 neutral</code>、<code>55–70 casual</code>、<code>≥70 intimate</code>，边界 ±5 内不切换。滞回不是审美，是<strong>缓存纪律</strong>：状态每变一次就多一段 PromptContext，永久占历史。</p>
+<p><code>VoiceContract</code> 的内容骨架（不是词表，是形状）：</p>
+<ul>
+<li><span class="badge b-design" title="契约骨架"><span class="bw">design</span><span class="bz">设计取舍</span></span>语气基线一句、句长纪律（每段 10–50 字、最多 2–3 段）。</li>
+<li><span class="badge b-design" title="契约骨架"><span class="bw">design</span><span class="bz">设计取舍</span></span>允许/禁止的<strong>结构</strong>：不写总结套话收尾、不写三连排比、不用「首先/其次/最后」模板、不复述用户问题、不预告「我接下来要…」。</li>
+<li><span class="badge b-design" title="契约骨架"><span class="bw">design</span><span class="bz">设计取舍</span></span>正/反例对照（每类 1 组，比形容词有效）。</li>
+<li><span class="badge b-design" title="契约骨架"><span class="bw">design</span><span class="bz">设计取舍</span></span>称呼与自称规则、代码与术语的保留规则。</li>
+<li><span class="badge b-design" title="契约骨架"><span class="bw">design</span><span class="bz">设计取舍</span></span>明确的「何时破例」：遇到安全警告、不可逆操作或会被持久化的产物（代码/注释/文档）时，改用完整句 <a class="cite" href="#src-9" title="跳到来源 [9]">[9]</a>。</li>
+<li><span class="badge b-design" title="契约骨架"><span class="bw">design</span><span class="bz">设计取舍</span></span>预算：≤400 token；条数上限（防 Humanizer 33 KB 式的膨胀 <a class="cite" href="#src-3" title="跳到来源 [3]">[3]</a>）。</li>
+</ul>
+<h3>4.3 四个接口（与记忆库 / 知识库 / 世界模型 / 持续学习）</h3>
+<p class="claim"><span class="badge b-design" title="接口设计"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>记忆库</strong>：读 <code>style_preference</code>（称呼、语言、幽默容忍、正式度偏好）与 <code>interaction</code>（轮次、用户改写行为），算 <code>VoiceState</code>；写 <code>VoiceAudit</code> 为 L1 事件，带 evidence 指针（session id + seq 区间）。审计因此天然可治理：能查「这条 62 分为何而来、当时哪版契约」。</p>
+<p class="claim"><span class="badge b-design" title="接口设计"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>知识库</strong>：术语表同时喂两个地方——<code>protected_terms[]</code>（受保护片段的来源，防把项目黑话当八股删掉）与 judge 的领域提示（哪些词是行话，不是套话）。这是「不要删掉正当术语」的唯一结构性保障，词表做不到。</p>
+<p class="claim"><span class="badge b-design" title="接口设计"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>世界模型</strong>：<code>taboo</code>（禁忌话题）、<code>relationship_entity</code>（用户/项目/角色）、<code>address_form</code> 的变更都挂 <code>valid_from</code> / <code>recorded_at</code> / <code>superseded_at</code>，默认查询只返回 <code>superseded_at IS NULL</code> <a class="cite" href="#src-44" title="跳到来源 [44]">[44]</a>。风格状态是图谱上的<strong>时序实体</strong>，不是浮点分数。</p>
+<p class="claim"><span class="badge b-design" title="接口设计"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>持续学习</strong>：dream 增第 6 阶段 <code>voice_review</code>（可选、幂等、可断点续跑，沿用 brief 的 dream 纪律 <a class="cite" href="#src-41" title="跳到来源 [41]">[41]</a>）：抽样近 N 轮 → 多 lens 隔离评审 → 产出契约 diff 候选 → A/B 闸门（新旧契约各跑一批 probe）→ 胜出才升版。分数通过 <code>VoiceRewardSink</code> 外发：</p>
+<pre data-lang="ts"><code>interface VoiceRewardSink {
+  emit(rec: {
+    turn_id: string
+    contract_version: string
+    parts: { structure: number; register: number; fidelity: number; slop: number }
+    verdict: 'pass' | 'warn' | 'fail'
+    confidence: number      // 0–1，低置信不进训练
+    evidence: { sessionId: string; seqRange: [number, number] }
+  }): Promise&lt;void&gt;
+}</code></pre>
+<p class="claim"><span class="badge b-design" title="适配器策略"><span class="bw">design</span><span class="bz">设计取舍</span></span>TriviumDB 适配器标注 <code>planned</code>（用户已确认其未实现）。在 TriviumDB 落地前，实现一个 <code>JsonlSink</code> 写到插件目录，保证数据不丢、可回放。</p>
+<h3>4.4 四个闸门</h3>
+<div class="table-block"><div class="table-note"><span class="badge b-design" title="G1–G4 编排"><span class="bw">design</span><span class="bz">设计取舍</span></span><span>G1–G4 编排</span></div><div class="table-scroll"><table><thead><tr><th>闸门</th><th>时机</th><th>机制</th><th>能阻断吗</th><th>成本</th></tr></thead><tbody><tr><td>G1 契约注入</td><td>pre-step</td><td>PromptSection，<code>interpolate:false</code>，稳定 order/name</td><td>不能阻断，但内容不可变</td><td>常驻 ≤400 token，缓存命中后边际近零</td></tr>
+<tr><td>G2 状态注入</td><td>pre-step</td><td>PromptContext，变化才写，≤120 token</td><td>同上</td><td>每次变化约 120 token，永久占历史</td></tr>
+<tr><td>G3 卡片/通知门禁</td><td>工具执行链</td><td><code>tools/post-execute</code> 校验长度/结构/称呼/套话，可 replace content 或 block</td><td><strong>能</strong></td><td>同步、零 LLM</td></tr>
+<tr><td>G4 生成后审计</td><td>turn 结束后</td><td>jobs 异步或抽样同步；分项打分写 <code>VoiceAudit</code>；严重超阈值时 <code>agent.steer()</code> 触发<strong>一次</strong>重写</td><td>不能否决；重写是追加一步</td><td>每轮 1 次轻量 judge（抽样 30%），夜间多 lens</td></tr></tbody></table></div></div>
+<p class="claim"><span class="badge b-design" title="产品约束"><span class="bw">design</span><span class="bz">设计取舍</span></span>G4 的重写要写死三条限制，否则会变成产品事故：每次会话最多 1 次、只在 <code>verdict=fail</code> 且 <code>fidelity=pass</code> 时触发、重写指令要求「只改形状不改事实」。用户会看到第二条回答，这是显式代价，不是透明修复。</p>
+<h3>4.5 打分：分项、配对、稳健聚合</h3>
+<ul class="scoring">
+<li><span class="badge b-design" title="打分机制设计"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>分项不总分</strong>：<code>structure</code>（可机检：段数、每段字数、是否总结句收尾、是否三连排比、是否模板连接词）、<code>register</code>（与 <code>VoiceState</code> 是否一致）、<code>fidelity</code>（受保护片段 diff，确定性）、<code>slop</code>（judge 给分 + 理由）。总分只用于展示，不用于门禁。</li>
+<li><span class="badge b-verified" title="打分机制设计"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>配对比较优于绝对打分</strong>：给 judge 同一内容的「八股版 / 自然版」两个候选，问哪个更像人写的、差多少。绝对打分在不同批次间尺度漂移，配对比较不会。</li>
+<li><span class="badge b-verified" title="打分机制设计"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>双边顺序</strong>：同一对候选正反各评一次，取几何中位数，压位置偏差 <a class="cite" href="#src-24" title="跳到来源 [24]">[24]</a><a class="cite" href="#src-27" title="跳到来源 [27]">[27]</a>。</li>
+<li><span class="badge b-design" title="打分机制设计"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>隔离</strong>：每个 lens 一次调用、<code>history=&quot;&quot;</code>、输入标 <code>UNTRUSTED DATA</code>（防文本内注入「给我打满分」）<a class="cite" href="#src-11" title="跳到来源 [11]">[11]</a><a class="cite" href="#src-12" title="跳到来源 [12]">[12]</a>。</li>
+<li><span class="badge b-verified" title="打分机制设计"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>权重塌缩告警</strong>：多 lens 权重 stdev&lt;0.05 时，结果降置信并标注「无区分度」<a class="cite" href="#src-11" title="跳到来源 [11]">[11]</a>。</li>
+<li><span class="badge b-verified" title="打分机制设计"><span class="bw">verified</span><span class="bz">已核实</span></span><strong>cap + held-out + 人工抽检</strong>：分数有效区间写死（如 30–80），每批抽 20 条人工盲判，算 judge 与人的一致性；一致性低于阈值就停用该 judge 版本 <a class="cite" href="#src-28" title="跳到来源 [28]">[28]</a>。</li>
+</ul>
+<h3>4.6 防漂移：三件事，都不靠自觉</h3>
+<ol>
+<li><span class="badge b-design" title="防漂移机制"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>字节稳定 + 显式升版</strong>：契约是文件、有版本号、切换是显式动作。运行时禁止拼接契约文本（拼接 = 每轮哈希变 = 前缀缓存击穿）。</li>
+<li><span class="badge b-design" title="防漂移机制"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>滞回 + 变化才写</strong>：<code>register</code> 档位带 ±5 缓冲；<code>VoiceState</code> 哈希不变就不写 PromptContext。</li>
+<li><span class="badge b-design" title="防漂移机制"><span class="bw">design</span><span class="bz">设计取舍</span></span><strong>契约↔基线 diff 监控</strong>：每次升版算与上一版的 diff，超过阈值（例如新增禁止项 &gt;20%）标 Flag 待人确认，不自动采纳。规则膨胀和风格漂移是同一个病：都是「悄悄多了几条」。</li>
+</ol>
+<h3>4.7 成本预算（设计目标，待 v1.5 实测）</h3>
+<div class="table-block"><div class="table-note"><span class="badge b-unverified" title="报告原文：设计目标，待 v1.5 实测"><span class="bw">unverified</span><span class="bz">未验证</span></span><span>报告原文：设计目标，待 v1.5 实测</span></div><div class="table-scroll"><table><thead><tr><th>场景</th><th>常驻注入</th><th>追加</th><th>生成后</th><th>备注</th></tr></thead><tbody><tr><td>稳定态（阶段不变）</td><td>契约 ≤400 token</td><td>0</td><td>抽样 30% × 1 次轻量 judge</td><td>前缀缓存应完全命中</td></tr>
+<tr><td>变化态（阶段切换）</td><td>契约 + 120 token/次</td><td>≤10 次/天</td><td>同上</td><td>每次切换永久占历史</td></tr>
+<tr><td>夜间 dream</td><td>—</td><td>—</td><td>多 lens × N 样本</td><td>受 schedule ≥60s 与预算上限约束 <a class="cite" href="#src-38" title="跳到来源 [38]">[38]</a></td></tr></tbody></table></div></div>
+<p class="claim"><span class="badge b-verified" title="复用 brief 监控 [41]"><span class="bw">verified</span><span class="bz">已核实</span></span>brief 的成功标准 4 已经要求为「常驻注入 token 与缓存命中率」建监控 <a class="cite" href="#src-41" title="跳到来源 [41]">[41]</a>，本层直接复用那套监控，不另建。</p>
+</section>
+<section class="card" id="d5">
+<div class="sec-head"><span class="kicker">D5</span><h2>D5 实施路线</h2></div>
+<h3>v1（与记忆层同期，只搭底座，不做自动改写）</h3>
+<ol>
+<li><span class="badge b-plan" title="v1 计划"><span class="bw">plan</span><span class="bz">待实施</span></span>L1 增 <code>style_preference</code> 类型；<code>deriveVoiceState()</code> 纯函数 + 单测（滞回、字段缺失、冲突事实）。</li>
+<li><span class="badge b-plan" title="v1 计划"><span class="bw">plan</span><span class="bz">待实施</span></span><code>VoiceContract</code> v0（中文基线，≤400 token，字节稳定）；PromptSection 注册（<code>interpolate:false</code>，固定 order/name）。</li>
+<li><span class="badge b-plan" title="v1 计划"><span class="bw">plan</span><span class="bz">待实施</span></span>卡片/通知 <code>tools/post-execute</code> 门禁：结构检查 + 受保护片段 diff，可 replace/block。</li>
+<li><span class="badge b-plan" title="v1 计划"><span class="bw">plan</span><span class="bz">待实施</span></span><code>VoiceAudit</code> 只记不判：先存原文哈希 + 元数据 + 契约版本，judge 离线补。</li>
+</ol>
+<h3>v1.5（可评分）</h3>
+<ol start="5">
+<li><span class="badge b-plan" title="v1.5 计划"><span class="bw">plan</span><span class="bz">待实施</span></span>中文 probe 集 30–50 条（技术解释、纠错、拒绝、闲聊、道歉），人工 3 档标注（自然/中性/八股）；同时作为 brief 成功标准 1 的评测集复用。</li>
+<li><span class="badge b-plan" title="v1.5 计划"><span class="bw">plan</span><span class="bz">待实施</span></span>judge v1：配对比较 + 双边顺序 + 几何中位数；Empanel 三段式离线跑。</li>
+<li><span class="badge b-plan" title="v1.5 计划"><span class="bw">plan</span><span class="bz">待实施</span></span><code>VoiceRewardSink</code> + <code>JsonlSink</code>；domain KV 存分项分；人工抽检一致性报表。</li>
+<li><span class="badge b-plan" title="v1.5 计划"><span class="bw">plan</span><span class="bz">待实施</span></span>契约 v1（按 probe 集调优，走 A/B 闸门）。</li>
+</ol>
+<h3>v2（持续学习）</h3>
+<ol start="9">
+<li><span class="badge b-plan" title="v2 计划"><span class="bw">plan</span><span class="bz">待实施</span></span>dream 第 6 阶段 <code>voice_review</code> + 契约 diff + A/B 闸门 + 版本链。</li>
+<li><span class="badge b-plan" title="v2 计划"><span class="bw">plan</span><span class="bz">待实施</span></span>关系强度分档接入（若记忆层建了交互图谱）；英文契约（第二语言）。</li>
+</ol>
+<h3>验收（对应 brief 四条）</h3>
+<ul>
+<li><span class="badge b-plan" title="验收项（准确率阈值待定）"><span class="bw">plan</span><span class="bz">待实施</span></span><strong>可治理性</strong>：任一条 <code>voice_audit</code> 能在 30 秒内答清「哪版契约、哪条证据、为什么这个分」。</li>
+<li><span class="badge b-plan" title="验收项（准确率阈值待定）"><span class="bw">plan</span><span class="bz">待实施</span></span><strong>注入成本</strong>：稳定态追加为 0。</li>
+<li><span class="badge b-plan" title="验收项（准确率阈值待定）"><span class="bw">plan</span><span class="bz">待实施</span></span><strong>遗忘可回滚</strong>：契约旧版可回滚、审计记录可软删除。</li>
+<li><span class="badge b-unverified" title="验收项（准确率阈值待定）"><span class="bw">unverified</span><span class="bz">未验证</span></span><strong>准确率</strong>：probe 集人工一致性 ≥ 阈值（待定）。</li>
+</ul>
+<h3>明确不做</h3>
+<ul>
+<li><span class="badge b-design" title="范围取舍"><span class="bw">design</span><span class="bz">设计取舍</span></span>渲染层静默改写（与日志/模型/导出不一致）。</li>
+<li><span class="badge b-design" title="范围取舍"><span class="bw">design</span><span class="bz">设计取舍</span></span><code>llm/stream</code> 篡改 <a class="cite" href="#src-33" title="跳到来源 [33]">[33]</a>。</li>
+<li><span class="badge b-design" title="范围取舍"><span class="bw">design</span><span class="bz">设计取舍</span></span>单一总分门禁（Goodhart <a class="cite" href="#src-28" title="跳到来源 [28]">[28]</a>）。</li>
+<li><span class="badge b-design" title="范围取舍"><span class="bw">design</span><span class="bz">设计取舍</span></span>自动升版（无人裁决）。</li>
+<li><span class="badge b-design" title="范围取舍"><span class="bw">design</span><span class="bz">设计取舍</span></span>把 Caveman 式电报体当人性化 <a class="cite" href="#src-9" title="跳到来源 [9]">[9]</a>。</li>
+<li><span class="badge b-design" title="范围取舍"><span class="bw">design</span><span class="bz">设计取舍</span></span>照抄 SoulSpec 的「反八股区块」（不存在 <a class="cite" href="#src-14" title="跳到来源 [14]">[14]</a>）。</li>
+</ul>
+</section>
+<section class="card" id="insights">
+<div class="sec-head"><span class="kicker">洞见</span><h2>跨维度洞见</h2></div>
+<ol>
+<li><span class="badge b-infer" title="跨维度推论"><span class="bw">infer</span><span class="bz">推论</span></span><strong>证据说 judge 不可靠，宿主说不能改写，两句合起来只剩「源头约束 + 事后记账」。</strong> 这不是折中，是唯一同时满足「不破坏日志」「不依赖不可靠评委」的方案；反过来说，任何声称「自动修复八股」的设计，在 DSH 上都缺一条腿。参考项目清一色是单文件提示词、没有一家做状态，不是因为偷懒，而是它们没有记忆层——<strong>Voice 层的价值来自记忆层的状态，而记忆层没有 Voice 层仍然成立</strong>，所以顺序不能颠倒，也不该为了「显得完整」把两者并行开工。</li>
+<li><span class="badge b-infer" title="跨维度推论"><span class="bw">infer</span><span class="bz">推论</span></span><strong>宿主封死改写，反而逼出与 brief 同构的设计。</strong> brief 的核心主张是「LLM 提议、人裁决」<a class="cite" href="#src-41" title="跳到来源 [41]">[41]</a>；风格层在这里变成「机器打分、人升版」。两条独立线索都推导出同一个治理姿态，这比任何单点论证都更能说明架构自洽。</li>
+<li><span class="badge b-infer" title="跨维度推论"><span class="bw">infer</span><span class="bz">推论</span></span><strong>中文证据空白反而是可交付物。</strong> 既然没有现成基准 <a class="cite" href="#src-20" title="跳到来源 [20]">[20]</a><a class="cite" href="#src-22" title="跳到来源 [22]">[22]</a>，v1 的 probe 集就是本项目的资产，也是别人复制不了的护城河——同时它复用了 brief 已有的评测集需求，边际成本低。</li>
+</ol>
+</section>
+<section class="card" id="contrary">
+<div class="sec-head"><span class="kicker">反证</span><h2>Contrary evidence · 反证</h2></div>
+<p class="lead-in">红队未开启，以下为本次主动检视的异议。</p>
+<article class="objection"><span class="badge b-disputed" title="报告主动检视的异议"><span class="bw">disputed</span><span class="bz">存在异议</span></span><p><strong>「brief 已经把人格排在记忆可信之后，现在做风格层是抢跑。」</strong> 异议成立一半。风格层要拆成两半：<strong>形状</strong>（反八股、结构纪律、称呼规则）不依赖可信记忆，可以早做；<strong>人格</strong>（关系深浅、语气个性）依赖记忆，必须后做。v1 只做形状，v2 才做人格——这个切分让「抢跑」不成立。</p></article>
+<article class="objection"><span class="badge b-disputed" title="报告主动检视的异议"><span class="bw">disputed</span><span class="bz">存在异议</span></span><p><strong>「Caveman 证明少即是多，简短就是人性化。」</strong> 不成立。Caveman 自己写明输入削减 0%、输出中位削减 3–35%、样本 n=10，且要求安全警告与持久化产物改回完整句 <a class="cite" href="#src-8" title="跳到来源 [8]">[8]</a><a class="cite" href="#src-10" title="跳到来源 [10]">[10]</a>。电报体会砍掉陪伴感，方向与「人性化」相反。</p></article>
+<article class="objection"><span class="badge b-disputed" title="报告主动检视的异议"><span class="bw">disputed</span><span class="bz">存在异议</span></span><p><strong>「改写不一定伤事实，没有量化证据。」</strong> 对，所以本报告不声称「改写一定伤事实」。但机制风险是实的：Humanizer 自己把 §6/§9/§19 列为高发丢失节 <a class="cite" href="#src-4" title="跳到来源 [4]">[4]</a>；而对我们的决定性理由是改写破坏可追溯性 <a class="cite" href="#src-23" title="跳到来源 [23]">[23]</a><a class="cite" href="#src-34" title="跳到来源 [34]">[34]</a>——这与 brief 的可审计目标直接冲突，不需要额外证据。</p></article>
+<article class="objection"><span class="badge b-disputed" title="报告主动检视的异议"><span class="bw">disputed</span><span class="bz">存在异议</span></span><p><strong>「多评委能消除偏差。」</strong> 被 RoPoLL 直接否掉：单评委系统性偏差下共识偏差无界 <a class="cite" href="#src-27" title="跳到来源 [27]">[27]</a>。只能用稳健聚合 + 人工抽检，不能宣称「多评委 = 可信」。</p></article>
+</section>
+<section class="card" id="recs">
+<div class="sec-head"><span class="kicker">建议</span><h2>Recommendations · 建议</h2></div>
+<div class="table-block"><div class="table-scroll"><table><thead><tr><th>#</th><th>建议</th><th>置信度依据</th><th>下游绑定</th></tr></thead><tbody><tr><td>R1 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>设 L4 Voice 层（投影 + 契约），单向依赖记忆层，排在记忆层之后建 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>宿主边界 + 项目三件套，高 <span class="badge b-verified" title="报告标注：置信度高"><span class="bw">verified</span><span class="bz">已核实</span></span></td><td>architecture.md（待建）的层图 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td></tr>
+<tr><td>R2 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>v1 只做「契约 + 状态 + 卡片硬门禁 + 审计记账」，不做自动改写 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>宿主不可改写 + 改写破坏可追溯性，高 <span class="badge b-verified" title="报告标注：置信度高"><span class="bw">verified</span><span class="bz">已核实</span></span></td><td>v1 范围（brief「v1 内」） <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td></tr>
+<tr><td>R3 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>打分用分项 + 配对比较 + 多 lens 三段式 + 几何中位数 + 人工抽检；禁单一总分门禁 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>评委偏差证据 <a class="cite" href="#src-24" title="跳到来源 [24]">[24]</a><a class="cite" href="#src-25" title="跳到来源 [25]">[25]</a><a class="cite" href="#src-27" title="跳到来源 [27]">[27]</a> + Goodhart <a class="cite" href="#src-28" title="跳到来源 [28]">[28]</a>，高 <span class="badge b-verified" title="报告标注：置信度高"><span class="bw">verified</span><span class="bz">已核实</span></span></td><td>v1.5 验收指标 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td></tr>
+<tr><td>R4 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>契约版本化 + A/B 闸门 + 字节稳定注入；运行时禁止拼接 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>缓存纪律 <a class="cite" href="#src-30" title="跳到来源 [30]">[30]</a> + 治理三件套 <a class="cite" href="#src-41" title="跳到来源 [41]">[41]</a>，高 <span class="badge b-verified" title="报告标注：置信度高"><span class="bw">verified</span><span class="bz">已核实</span></span></td><td>dream 第 6 阶段规格 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td></tr>
+<tr><td>R5 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>中文 probe 集 30–50 条作为 v1 交付物，兼作 brief 成功标准 1 的评测集 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>中文证据空白 <a class="cite" href="#src-20" title="跳到来源 [20]">[20]</a><a class="cite" href="#src-22" title="跳到来源 [22]">[22]</a>，中（标注成本未估） <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>brief 成功标准 1 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td></tr>
+<tr><td>R6 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td><code>VoiceRewardSink</code> 接口 + <code>JsonlSink</code> 兜底，TriviumDB 适配器标 <code>planned</code> <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>JitRL 未实现 <a class="cite" href="#src-43" title="跳到来源 [43]">[43]</a>，中 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td><td>第 4 线的 case-library 路线 <span class="badge b-medium" title="报告标注：置信度中"><span class="bw">medium</span><span class="bz">中等</span></span></td></tr></tbody></table></div></div>
+</section>
+<section class="card" id="open">
+<div class="sec-head"><span class="kicker">待决</span><h2>Open questions · 未决问题</h2></div>
+<ol class="open-q"><li><span class="badge b-unverified" title="未测 / 未知"><span class="bw">unverified</span><span class="bz">未验证</span></span><strong>mnemon 与 <code>VoiceState</code> 能否合并成同一条 per-turn 快照？</strong> mnemon 每轮注入 USER.md/MEMORY.md 并 pin 唯一 View <a class="cite" href="#src-40" title="跳到来源 [40]">[40]</a>，风格层再写一条就是第二个 per-turn 上下文。需要实测「合并进 mnemon 的 View」是否可行；不可行则明确先后顺序与预算上限。</li>
+<li><span class="badge b-unverified" title="未测 / 未知"><span class="bw">unverified</span><span class="bz">未验证</span></span><strong>domain KV 容量/配额</strong>未知（brief 未决问题 3 <a class="cite" href="#src-41" title="跳到来源 [41]">[41]</a>）。若配额小，<code>VoiceAudit</code> 只能存索引，正文留在插件自有 SQLite。</li>
+<li><span class="badge b-unverified" title="未测 / 未知"><span class="bw">unverified</span><span class="bz">未验证</span></span><strong>中文 probe 集的标注一致性</strong>（Krippendorff α）未测。α 太低说明「八股」在中文里同样主观，评分只能做相对比较。</li>
+<li><span class="badge b-unverified" title="未测 / 未知"><span class="bw">unverified</span><span class="bz">未验证</span></span><strong>judge 的单位经济</strong>：每轮 1 次轻量 judge 的 token 与延迟未测；30% 抽样是否足够稳定也未测。</li>
+<li><span class="badge b-unverified" title="未测 / 未知"><span class="bw">unverified</span><span class="bz">未验证</span></span><strong><code>familiarity</code> 阈值需真实数据校准</strong>。HerAndHim 的 45/70 是虚拟女友语境 <a class="cite" href="#src-16" title="跳到来源 [16]">[16]</a>，不能直接搬。</li>
+<li><span class="badge b-unverified" title="未测 / 未知"><span class="bw">unverified</span><span class="bz">未验证</span></span><strong>哪些文案真由插件产出</strong>未知。DSH 内建状态/通知文案无统一出口 <a class="cite" href="#src-39" title="跳到来源 [39]">[39]</a>，v1 的卡片门禁只能覆盖自家工具。</li></ol>
+</section>
+<details class="appendix" id="appendix" open>
+<summary><span class="kicker">附录</span><h2>Source appendix · 来源附录</h2><span class="vital">44 行 · invalid_urls 0</span><span class="summary-chevron">收起 / 展开 ▾</span></summary>
+<div class="appendix-body"><p class="appendix-note">表格由 <code>recon_kit.py escape-sources</code> 生成：每个单元格已转义、每行锚为 <code>id="src-n"</code>、仅校验通过的 http(s) 渲染为活链接。行内容原样嵌入，仅补 <code>&lt;thead&gt;</code> 表头。</p><table class="sources"><thead><tr><th>#</th><th>支撑的主张</th><th>发布者 / 链接</th><th>发布日</th><th>访问</th><th>置信度</th></tr></thead><tbody><tr id="src-1"><td>[1]</td><td>Stop Slop 本体为 1 个 SKILL.md + 3 references、零脚本；5 维自评 1–10、&lt;35/50 重写</td><td><a href="https://github.com/hardikpandya/stop-slop" target="_blank" rel="noopener">hardikpandya/stop-slop</a></td><td>2026-03-17 (push)</td><td>2026-11-22</td><td>高</td></tr><tr id="src-2"><td>[2]</td><td>Stop Slop 规则 = 8 核心 + 12 Quick Checks + 8 类词表 + 11 类结构清单</td><td><a href="https://github.com/hardikpandya/stop-slop/tree/main/skills/stop-slop/references" target="_blank" rel="noopener">stop-slop references</a></td><td>同上</td><td>2026-11-22</td><td>高</td></tr><tr id="src-3"><td>[3]</td><td>Humanizer 是 26 条 / A–F 六组；「five」指五个最强信号</td><td><a href="https://github.com/blader/humanizer" target="_blank" rel="noopener">blader/humanizer</a> README.md:19,29</td><td>2026-11-19 (push)</td><td>2026-11-22</td><td>高</td></tr><tr id="src-4"><td>[4]</td><td>Humanizer 分诊规则、四步重写、`:37` 指示补真细节、事实保护白名单</td><td><a href="https://github.com/blader/humanizer/blob/main/SKILL.md" target="_blank" rel="noopener">humanizer SKILL.md</a></td><td>同上</td><td>2026-11-22</td><td>高</td></tr><tr id="src-5"><td>[5]</td><td>Humanizer 的「测试」只校验包结构，不查文风</td><td><a href="https://github.com/blader/humanizer/blob/main/scripts/validate-package.py" target="_blank" rel="noopener">validate-package.py</a></td><td>同上</td><td>2026-11-22</td><td>高</td></tr><tr id="src-6"><td>[6]</td><td>Humanizer-zh 31 条 / 6 组；F 组中文特有；「模式清单是检查线索，不是词语黑名单」</td><td><a href="https://github.com/op7418/humanizer-zh" target="_blank" rel="noopener">op7418/humanizer-zh</a> SKILL.md:26,56</td><td>2026-09-23 (push)</td><td>2026-11-22</td><td>高</td></tr><tr id="src-7"><td>[7]</td><td>Humanizer-zh `check_structure.py` 对 8 类受保护片段做逐字比对，全等才 exit 0</td><td><a href="https://github.com/op7418/humanizer-zh/blob/main/tests/check_structure.py" target="_blank" rel="noopener">tests/check_structure.py</a></td><td>同上</td><td>2026-11-22</td><td>高</td></tr><tr id="src-8"><td>[8]</td><td>Caveman 自报输入削减 0%，中位输出削减 3/35/9%（n=10），且承认净亏案例</td><td><a href="https://github.com/JuliusBrussee/caveman/blob/main/docs/HONEST-NUMBERS.md" target="_blank" rel="noopener">docs/HONEST-NUMBERS.md</a></td><td>2026-11-22 (push)</td><td>2026-11-22</td><td>高（自报口径）</td></tr><tr id="src-9"><td>[9]</td><td>Caveman 9 条规则、20 词上限、§9「Never perform caveman」</td><td><a href="https://github.com/JuliusBrussee/caveman/blob/main/plugins/caveman/skills/caveman/SKILL.md" target="_blank" rel="noopener">skills/caveman/SKILL.md</a></td><td>同上</td><td>2026-11-22</td><td>高</td></tr><tr id="src-10"><td>[10]</td><td>Caveman CCR：内容寻址句柄 + 本地 SQLite，默认 512 MiB</td><td><a href="https://github.com/JuliusBrussee/caveman/blob/main/docs/technical/context-recovery.md" target="_blank" rel="noopener">context-recovery.md</a></td><td>同上</td><td>2026-11-22</td><td>高</td></tr><tr id="src-11"><td>[11]</td><td>Empanel 三段式 Assess→Weigh→Reduce；`history=&quot;&quot;` 隔离；加权平均；权重 stdev&lt;0.05 告警</td><td><a href="https://github.com/dreliq9/empanel/blob/main/empanel/engine.py" target="_blank" rel="noopener">empanel/engine.py</a>、[math.py](https://github.com/dreliq9/empanel/blob/main/empanel/math.py)</td><td>未取</td><td>2026-11-22</td><td>高</td></tr><tr id="src-12"><td>[12]</td><td>Empanel 代码评审聚合：指纹归并、HIGH/MAJORITY/UNIQUE、权重闸门 0.3、严重度取 max、UNTRUSTED DATA 标注</td><td><a href="https://github.com/dreliq9/empanel/blob/main/empanel/code_review.py" target="_blank" rel="noopener">empanel/code_review.py</a></td><td>未取</td><td>2026-11-22</td><td>高</td></tr><tr id="src-13"><td>[13]</td><td>Empanel lens = 角色 + system prompt + 可选 checklist；`adversarial` 标志</td><td><a href="https://github.com/dreliq9/empanel/blob/main/empanel/lenses.py" target="_blank" rel="noopener">empanel/lenses.py</a></td><td>未取</td><td>2026-11-22</td><td>高</td></tr><tr id="src-14"><td>[14]</td><td>SoulSpec 规范：`specVersion` / deprecated / supersededBy；硬约束是 RULES.md 的 Must always/Must never，非句式词表</td><td><a href="https://github.com/clawsouls/soulspec/blob/main/docs/spec/v0.6.md" target="_blank" rel="noopener">docs/spec/v0.6.md</a></td><td>未取</td><td>2026-11-22</td><td>高</td></tr><tr id="src-15"><td>[15]</td><td>SoulSpec 仓库内无校验器源码，校验靠外部 npm CLI</td><td><a href="https://github.com/clawsouls/soulspec/blob/main/docs/api/cli.md" target="_blank" rel="noopener">docs/api/cli.md</a></td><td>未取</td><td>2026-11-22</td><td>高</td></tr><tr id="src-16"><td>[16]</td><td>HerAndHim `closeness=(intimacy+trust)/2`，45/70 三档语音规则写入系统 prompt</td><td><a href="https://github.com/ericwang915/herandhim/blob/main/herandhim/core/agent.py" target="_blank" rel="noopener">herandhim/core/agent.py</a></td><td>未取</td><td>2026-11-22</td><td>高</td></tr><tr id="src-17"><td>[17]</td><td>HerAndHim SOUL.md 含「绝对禁止：太工整/太对称/书面语/列清单/排比」</td><td><a href="https://github.com/ericwang915/herandhim/blob/main/herandhim/templates/soul/SOUL.md" target="_blank" rel="noopener">herandhim/templates/soul/SOUL.md</a></td><td>未取</td><td>2026-11-22</td><td>高</td></tr><tr id="src-18"><td>[18]</td><td>HerAndHim 稳定人设 SOUL.md 与易变状态 relationship.json 分仓</td><td><a href="https://github.com/ericwang915/herandhim/blob/main/herandhim/core/memory/manager.py" target="_blank" rel="noopener">herandhim/core/memory/manager.py</a></td><td>未取</td><td>2026-11-22</td><td>高</td></tr><tr id="src-19"><td>[19]</td><td>HerAndHim 投递层人性化：延迟抖动、1–3 条气泡、选择性 emoji</td><td><a href="https://github.com/ericwang915/herandhim/blob/main/core/humanize.py" target="_blank" rel="noopener">core/humanize.py</a></td><td>未取</td><td>2026-11-22</td><td>高</td></tr><tr id="src-20"><td>[20]</td><td>「slop」无公认定义；专家访谈 + span 标注建分类学；二元判断偏主观，全自动测量开放</td><td><a href="https://arxiv.org/abs/2509.19163" target="_blank" rel="noopener">arXiv:2509.19163</a></td><td>2025-09-23</td><td>2026-11-22</td><td>高（已复核摘要）</td></tr><tr id="src-21"><td>[21]</td><td>常用 AI 文本检测器把非母语英语写作稳定误判为 AI；简单 prompt 可绕过</td><td><a href="https://doi.org/10.1016/j.patter.2023.100779" target="_blank" rel="noopener">Patterns 2304.02819</a></td><td>2023</td><td>2026-11-22</td><td>高</td></tr><tr id="src-22"><td>[22]</td><td>中文 AI 文本检测需专门基准（C-ReD）才谈得上域内可靠与跨模型泛化</td><td><a href="https://arxiv.org/abs/2604.11796" target="_blank" rel="noopener">arXiv:2604.11796</a></td><td>2026</td><td>2026-11-22</td><td>中（仅摘要口径）</td></tr><tr id="src-23"><td>[23]</td><td>DIPPER 复述使 watermark/GPTZero/DetectGPT 失效，但检索仍是有效防御</td><td><a href="https://arxiv.org/abs/2303.13408" target="_blank" rel="noopener">arXiv:2303.13408</a></td><td>2023-03-23</td><td>2026-11-22</td><td>高（已复核摘要）</td></tr><tr id="src-24"><td>[24]</td><td>LLM 评委存在位置/冗长/自我偏好偏差，强模型人类一致率 &gt;80%</td><td><a href="https://arxiv.org/abs/2306.05685" target="_blank" rel="noopener">arXiv:2306.05685</a></td><td>2023</td><td>2026-11-22</td><td>高</td></tr><tr id="src-25"><td>[25]</td><td>谄媚普遍存在；人类偏好数据本身偏谄媚</td><td><a href="https://arxiv.org/abs/2310.13548" target="_blank" rel="noopener">arXiv:2310.13548</a></td><td>2023</td><td>2026-11-22</td><td>高</td></tr><tr id="src-26"><td>[26]</td><td>PoLL：多评委面板便宜约 7×、降 intra-model bias</td><td><a href="https://arxiv.org/abs/2404.18796" target="_blank" rel="noopener">arXiv:2404.18796</a></td><td>2024</td><td>2026-11-22</td><td>高</td></tr><tr id="src-27"><td>[27]</td><td>RoPoLL：单评委系统性偏差下小组共识偏差无界，需稳健均值（几何中位数一类）</td><td><a href="https://arxiv.org/abs/2606.30931" target="_blank" rel="noopener">arXiv:2606.30931</a></td><td>2026-06-29</td><td>2026-11-22</td><td>高（已复核摘要）</td></tr><tr id="src-28"><td>[28]</td><td>奖励模型过优化后 gold 分先升后降（Goodhart 定量）</td><td><a href="https://arxiv.org/abs/2210.10760" target="_blank" rel="noopener">arXiv:2210.10760</a></td><td>2022-10-19</td><td>2026-11-22</td><td>高（已复核摘要）</td></tr><tr id="src-29"><td>[29]</td><td>语域差异与社区指标的关联仅为相关性，非因果、非中文</td><td><a href="https://arxiv.org/abs/2307.02758" target="_blank" rel="noopener">arXiv:2307.02758</a></td><td>2023</td><td>2026-11-22</td><td>中</td></tr><tr id="src-30"><td>[30]</td><td>PromptSection 静态文本/`interpolate:false`/渲染变化即原地替换；PromptContext 变化才追加；`complete` 段恢复后监听者不可改</td><td>`@deepseek-ai/dsh@0.2.2-rc.5` docs/subsystems/system-prompt.md:46,64-65,78,81-93,218-228</td><td>未标注</td><td>2026-11-22</td><td>高（一手文档）</td></tr><tr id="src-31"><td>[31]</td><td>`assistant/message` 先落盘；turn-stopping 只有 steer 语义、不否决；session/event 是重放面</td><td>同上 docs/agent-lifecycle.md:53-55,70-72,91</td><td>未标注</td><td>2026-11-22</td><td>高</td></tr><tr id="src-32"><td>[32]</td><td>Session 是 append-only 日志、`deriveMessages()` 派生；turn-stopping 在 core.md:1092-1114</td><td>同上 docs/subsystems/core.md:406,415-419,1092-1114</td><td>未标注</td><td>2026-11-22</td><td>高</td></tr><tr id="src-33"><td>[33]</td><td>`llm/stream` 可短接 yield，但文档要求「read it, never rewrite it」；Message 不可变</td><td>同上 docs/subsystems/llm-streaming.md:50,1236-1253</td><td>未标注</td><td>2026-11-22</td><td>高</td></tr><tr id="src-34"><td>[34]</td><td>surface 事件必带 surfaceOp；`assistant/message` 禁 `sourceEventSeqs`；node 0 仅允许 prompt 原地替换</td><td>同上 docs/subsystems/session.md:64-77,296,300,698</td><td>未标注</td><td>2026-11-22</td><td>高</td></tr><tr id="src-35"><td>[35]</td><td>`tools/post-execute` 可 accept/block/replace/add context；替换 content 或 value 二选一</td><td>同上 docs/tool-execution-pipeline.md:6,22,55-56；docs/subsystems/tools.md:574</td><td>未标注</td><td>2026-11-22</td><td>高</td></tr><tr id="src-36"><td>[36]</td><td>domain 单域单写链、`update` 原子、`domain/changed` 仅进程内、容量未记载</td><td>同上 docs/subsystems/storage.md:143,170</td><td>未标注</td><td>2026-11-22</td><td>高</td></tr><tr id="src-37"><td>[37]</td><td>`job/settled` 可晚于 turn/end；输出环形缓冲有界、lossy</td><td>同上 docs/subsystems/jobs.md:27-31,455</td><td>未标注</td><td>2026-11-22</td><td>高</td></tr><tr id="src-38"><td>[38]</td><td>schedule 三种目标；每任务最小间隔 60s；Host 必须常驻；宕机只补最近一次</td><td>同上 docs/subsystems/schedule.md:5,75-84,118,129,131</td><td>未标注</td><td>2026-11-22</td><td>高</td></tr><tr id="src-39"><td>[39]</td><td>Web 插槽是注册式 React 组合；组件拿不到 ctx；文案来自 props 与 locale t；ui_card 在 docs 中零命中</td><td>同上 docs/subsystems/slots.md:101,120,221,226</td><td>未标注</td><td>2026-11-22</td><td>高</td></tr><tr id="src-40"><td>[40]</td><td>dsh-mnemon 每轮注入紧凑 USER.md/MEMORY.md，项目档案按需召回，Core 固定唯一 View</td><td>`dsh-mnemon@0.5.31` README.zh-CN.md:36,69-73,103-104</td><td>未标注</td><td>2026-11-22</td><td>中（README 表述）</td></tr><tr id="src-41"><td>[41]</td><td>哦鲸鲸分层 L0–L3、dream 五阶段、治理三件套、有界检索、四条成功标准</td><td>`docs/planning-artifacts/briefs/brief-DSH哦鲸鲸-2026-11-22/brief.md`</td><td>2026-11-22</td><td>2026-11-22</td><td>高（本项目一手）</td></tr><tr id="src-42"><td>[42]</td><td>稳定人设进 PromptSection 且字节稳定、易变状态进 PromptContext；关系四维与阈值映射；漂移 8 轮内发生</td><td>`.../technical-anthropomorphic-companion-agent-persona-2026-11-22/research.md`</td><td>2026-11-22</td><td>2026-11-22</td><td>高（本项目一手）</td></tr><tr id="src-43"><td>[43]</td><td>JitRL 实为 top_logprobs 重排、β 硬编码；DSH 无 logprobs/logit_bias；推荐案例库 + 上下文注入 + A/B</td><td>`.../technical-frozen-weight-policy-iteration-via-memor-2026-11-22/research.md`</td><td>2026-11-22</td><td>2026-11-22</td><td>高（本项目一手）</td></tr><tr id="src-44"><td>[44]</td><td>世界模型降级为可回溯事实状态图；`valid_from/valid_to/recorded_at/superseded_at`；默认查 `superseded_at IS NULL`</td><td>`.../technical-ontology-world-model-references-2026-11-22/research.md`</td><td>2026-11-22</td><td>2026-11-22</td><td>高（本项目一手）</td></tr></tbody></table><p><code><a class="cite" href="#src-29" title="跳到来源 [29]">[29]</a></code> 与 <code><a class="cite" href="#src-22" title="跳到来源 [22]">[22]</a></code> 支撑的是「相关性/基准存在」这类弱主张，未进任何推荐的承重链；其余用于承重链的主张均为一手代码、一手宿主文档或已复核摘要。</p></div>
+</details>
+<section class="card" id="staleness">
+<div class="sec-head"><span class="kicker">时效</span><h2>Staleness map · 陈旧度地图</h2></div>
+<p class="claim"><span class="badge b-verified" title="脚本计算，2026-11-22"><span class="bw">verified</span><span class="bz">已核实</span></span>由 <code>uv run .agents/skills/bmad-deep-recon/scripts/recon_kit.py staleness claims.json --windows '{&quot;host/docs&quot;:3,&quot;repo/code&quot;:6,&quot;self-report&quot;:6,&quot;project/doc&quot;:12,&quot;paper/method&quot;:60}'</code> 于 2026-11-22 计算，输入是同目录的 <code>claims.json</code>（20 条承重结论）。<strong>当前 0 条过期</strong>，最早重查日 <strong>2027-02-22</strong>。</p>
+<figure class="chart"><figcaption>重查时间轴：4 个批次（5 / 7 / 4 / 3 条），当前 0 条过期。</figcaption><svg class="timeline" viewBox="0 0 760 300" role="img" aria-label="重查时间轴：2027-02-22 5 条、2027-05-22 7 条、2027-10-19 4 条、2027-11-22 3 条，当前 0 条过期"><line class="grid" x1="56" y1="200" x2="720" y2="200"/><text class="tick" x="46" y="204" text-anchor="end">0</text><line class="grid" x1="56" y1="160" x2="720" y2="160"/><text class="tick" x="46" y="164" text-anchor="end">2</text><line class="grid" x1="56" y1="120" x2="720" y2="120"/><text class="tick" x="46" y="124" text-anchor="end">4</text><line class="grid" x1="56" y1="80" x2="720" y2="80"/><text class="tick" x="46" y="84" text-anchor="end">6</text><line class="grid" x1="56" y1="40" x2="720" y2="40"/><text class="tick" x="46" y="44" text-anchor="end">8</text><line class="axis" x1="56" y1="200" x2="720" y2="200"/><line class="tickmark" x1="56" y1="200" x2="56" y2="205"/><text class="tick" x="56" y="219" text-anchor="middle">2026-11-22</text><line class="tickmark" x1="121.58024691358024" y1="200" x2="121.58024691358024" y2="205"/><text class="tick" x="121.58024691358024" y="219" text-anchor="middle">2027-01</text><line class="tickmark" x1="269.1358024691358" y1="200" x2="269.1358024691358" y2="205"/><text class="tick" x="269.1358024691358" y="219" text-anchor="middle">2027-04</text><line class="tickmark" x1="418.3308641975309" y1="200" x2="418.3308641975309" y2="205"/><text class="tick" x="418.3308641975309" y="219" text-anchor="middle">2027-07</text><line class="tickmark" x1="569.1654320987655" y1="200" x2="569.1654320987655" y2="205"/><text class="tick" x="569.1654320987655" y="219" text-anchor="middle">2027-10</text><line class="tickmark" x1="720" y1="200" x2="720" y2="205"/><text class="tick" x="720" y="219" text-anchor="middle">2028-01</text><rect class="bar" x="183.83456790123458" y="100" width="46" height="100" rx="3"><title>2027-02-22 · 5 条 · host/docs</title></rect><text class="vlabel" x="206.83456790123458" y="92" text-anchor="middle">5</text><text class="cat" x="206.83456790123458" y="238" text-anchor="middle">host/docs</text><rect class="bar" x="329.7506172839506" y="60" width="46" height="140" rx="3"><title>2027-05-22 · 7 条 · repo/code|· self-report</title></rect><text class="vlabel" x="352.7506172839506" y="52" text-anchor="middle">7</text><text class="cat" x="352.7506172839506" y="238" text-anchor="middle">repo/code</text><text class="cat" x="352.7506172839506" y="252" text-anchor="middle">· self-report</text><rect class="bar" x="575.6765432098765" y="120" width="46" height="80" rx="3"><title>2027-10-19 · 4 条 · paper/method</title></rect><text class="vlabel" x="598.6765432098765" y="112" text-anchor="middle">4</text><text class="cat" x="598.6765432098765" y="238" text-anchor="middle">paper/method</text><rect class="bar" x="631.4197530864197" y="140" width="46" height="60" rx="3"><title>2027-11-22 · 3 条 · project/doc</title></rect><text class="vlabel" x="654.4197530864197" y="132" text-anchor="middle">3</text><text class="cat" x="654.4197530864197" y="238" text-anchor="middle">project/doc</text><text class="axis-title" x="388" y="290" text-anchor="middle">重查日期（横轴，2026-11 起）· 条数（纵轴）</text><text class="axis-title" transform="translate(18,120) rotate(-90)" text-anchor="middle">承重结论条数</text></svg></figure>
+<div class="table-block"><div class="table-note"><span class="badge b-verified" title="脚本计算，2026-11-22"><span class="bw">verified</span><span class="bz">已核实</span></span><span>脚本计算，2026-11-22</span></div><div class="table-scroll"><table class="dates"><thead><tr><th>重查日</th><th>类目</th><th>条数</th><th>代表结论</th><th>为什么是这个周期</th></tr></thead><tbody><tr><td><strong>2027-02-22</strong></td><td>host/docs</td><td>5</td><td>生成后只能审计、PromptSection 变化即缓存击穿、post-execute 是唯一硬门禁、llm/stream 不许改写、mnemon 争同一注入位</td><td>结论绑定 <code>@deepseek-ai/dsh@0.2.2-rc.5</code> 的具体行号，DSH 升级即可能失效；3 个月是最短窗口</td></tr>
+<tr><td>2027-05-22</td><td>repo/code（6）+ self-report（1）</td><td>7</td><td>四仓库无可复现得分、Empanel 的 lens 机制与 stdev 告警、HerAndHim 三档映射、Caveman 的 0% 输入削减</td><td>参考仓库仍在活跃 push（humanizer/caveman 于 2026-11 仍有提交），代码级事实半年重看一次</td></tr>
+<tr><td>2027-10-19</td><td>paper/method</td><td>4</td><td>slop 无公认定义（2509.19163）、RoPoLL 偏差无界（2606.30931）、Goodhart 定量（2210.10760）、DIPPER 与检测（2303.13408）</td><td>方法类结论按 60 个月窗口；表中最早者为 2022 年的奖励过优化，仍是本报告 cap 设计的唯一定量依据</td></tr>
+<tr><td>2027-11-22</td><td>project/doc</td><td>3</td><td>brief 的「无可信记忆前人格是表演」、JitRL 实为候选重排、世界模型降级为事实状态图</td><td>本项目 brief 与三条兄弟研究线会随产品设计演进；12 个月</td></tr></tbody></table></div></div>
+<p class="claim"><span class="badge b-design" title="重查顺序建议"><span class="bw">design</span><span class="bz">设计取舍</span></span>重查顺序建议：先跑 host/docs 那 5 条（成本最低、最易失效，且 G1–G4 四个闸门的可行性都压在上面），再跑参考仓库的代码级事实。<code>Refresh</code> 会按这张表重建检索集，<code>Deepen</code> 用于把某一维度做到实现级。</p>
+</section>
+<section class="card" id="legend">
+<div class="sec-head"><span class="kicker">图例</span><h2>徽章怎么读</h2></div>
+<p>徽章文字始终可见，颜色只是辅助。五个置信度徽章的判读口径如下：</p>
+<ul class="legend-list">
+<li><span class="badge b-verified" title="已核实"><span class="bw">verified</span><span class="bz">已核实</span></span> 一手代码、一手宿主文档、已复核摘要或本次实查。</li>
+<li><span class="badge b-medium" title="中等"><span class="bw">medium</span><span class="bz">中等</span></span> 单摘要口径、README 自述或未复核细节。</li>
+<li><span class="badge b-low" title="弱"><span class="bw">low</span><span class="bz">弱</span></span> 仅相关性或单点自报，未进承重链。</li>
+<li><span class="badge b-unverified" title="未验证"><span class="bw">unverified</span><span class="bz">未验证</span></span> 报告正文明确写「未实测 / 待验证假设 / 阈值待定」的部分，本页给最高视觉权重。</li>
+<li><span class="badge b-disputed" title="存在异议"><span class="bw">disputed</span><span class="bz">存在异议</span></span> 报告主动检视并判定「部分成立 / 不成立」的异议。</li>
+<li><span class="badge b-design" title="设计取舍"><span class="bw">design</span><span class="bz">设计取舍</span></span><span class="badge b-plan" title="待实施"><span class="bw">plan</span><span class="bz">待实施</span></span><span class="badge b-infer" title="推论"><span class="bw">infer</span><span class="bz">推论</span></span> 非实证标记：架构取舍、待实施计划、跨维度推论，不参与置信度判定。</li>
+</ul>
+<p class="appendix-note">口径说明：报告 <code>validation_note</code> 记录 memlog 44 条（claim 32 / decision 8 / assumption 2 / event 1），tally 计 31 条 verified、0 条 unverified 或 disputed。本页徽章按段落的证据类型标示，与 memlog 的 claim 级 tally 口径不同；两者均照录，未改动任何结论。</p>
+</section>
+</div>
+</div>
+</main>
+<footer class="footer"><div class="wrap"><p>本页是 <code>research.md</code> 的全保真呈现：结论、数字与引用编号与报告一致，未做增删或改写。单文件、内联 CSS/JS、零外部请求，可离线打开。</p><p>源文件：docs/planning-artifacts/research/technical-output-humanization-anti-slop-voice-laye-2026-11-22/research.md · 渲染日期 2026-11-22 · 附录由 <code>recon_kit.py escape-sources</code> 生成（44 行，invalid_urls: 0）。</p></div></footer>
+<button class="totop" id="totop" type="button">↑ 回到顶部</button>
+<script>(function () {
+  var tocLinks = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+  var targets = tocLinks.map(function (a) { return document.querySelector(a.getAttribute('href')); }).filter(Boolean);
+  function setActive(id) {
+    tocLinks.forEach(function (a) { a.classList.toggle('active', a.getAttribute('href') === '#' + id); });
+  }
+  if ('IntersectionObserver' in window && targets.length) {
+    var ratios = {};
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { ratios[e.target.id] = e.isIntersecting ? e.intersectionRatio : 0; });
+      var best = null, bestV = 0;
+      Object.keys(ratios).forEach(function (k) { if (ratios[k] > bestV) { bestV = ratios[k]; best = k; } });
+      if (best) setActive(best);
+    }, { rootMargin: '-15% 0px -70% 0px', threshold: [0, 0.2, 0.6, 1] });
+    targets.forEach(function (t) { io.observe(t); });
+  }
+  var bar = document.getElementById('progress');
+  var top = document.getElementById('totop');
+  function onScroll() {
+    var h = document.documentElement;
+    var max = h.scrollHeight - h.clientHeight;
+    if (bar) bar.style.width = (max > 0 ? (h.scrollTop / max) * 100 : 0) + '%';
+    if (top) top.classList.toggle('show', h.scrollTop > 600);
+  }
+  document.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  onScroll();
+  if (top) top.addEventListener('click', function () { window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest ? e.target.closest('a.cite') : null;
+    if (!a) return;
+    var det = document.getElementById('appendix');
+    if (det && !det.open) det.open = true;
+  });
+  document.querySelectorAll('details.appendix').forEach(function (d) {
+    var c = d.querySelector('.summary-chevron');
+    if (c) c.textContent = d.open ? '收起 / 展开 ▾' : '展开附录 44 条 ▸';
+    d.addEventListener('toggle', function () {
+      if (c) c.textContent = d.open ? '收起 / 展开 ▾' : '展开附录 44 条 ▸';
+    });
+  });
+})();
+</script>
+</body>
+</html>

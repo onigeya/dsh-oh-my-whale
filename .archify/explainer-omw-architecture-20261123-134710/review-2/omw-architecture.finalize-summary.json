@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "explainer",
+  "quality": "showcase",
+  "specification": {
+    "path": "D:\\src\\dsh-oh-my-whale\\.archify\\explainer-omw-architecture-20261123-134710\\candidate.archify.md",
+    "sha256": "56625829708f569b1efc0cfd0fbe1ebc494052dcb8e1c2e674df2da1bd1ba0f7",
+    "bytes": 10057
+  },
+  "artifact": {
+    "path": "D:\\src\\dsh-oh-my-whale\\docs\\planning-artifacts\\architecture\\architecture-DSH哦鲸鲸-2026-11-23\\omw-architecture.html",
+    "sha256": "284f93e5ea0f9da9acb7c0fb65ff6ad53e25ccf363cdc117ad3dc81fbf703a0f",
+    "bytes": 1317454
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "D:\\src\\dsh-oh-my-whale\\.archify\\explainer-omw-architecture-20261123-134710\\review-2\\omw-architecture.finalize.json",
+    "summaryReceipt": "D:\\src\\dsh-oh-my-whale\\.archify\\explainer-omw-architecture-20261123-134710\\review-2\\omw-architecture.finalize-summary.json",
+    "browserCheckReceipt": "D:\\src\\dsh-oh-my-whale\\.archify\\explainer-omw-architecture-20261123-134710\\review-2\\omw-architecture.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-11-09T12:06:48.580Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 13767,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}

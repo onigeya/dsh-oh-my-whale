@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "explainer",
+  "quality": "showcase",
+  "specification": {
+    "path": "D:\\src\\dsh-oh-my-whale\\docs\\planning-artifacts\\architecture\\architecture-DSH哦鲸鲸-2026-11-23\\omw-architecture.archify.md",
+    "sha256": "766f4bfe74eddd0d924d27e1b8d1c516a265b373d6bd5dbb596c3831267db237",
+    "bytes": 9513
+  },
+  "artifact": {
+    "path": "D:\\src\\dsh-oh-my-whale\\docs\\planning-artifacts\\architecture\\architecture-DSH哦鲸鲸-2026-11-23\\omw-architecture.html",
+    "sha256": "69131d30437358657940c0a353c87c01d879be7c3962630617c279acc1c85e41",
+    "bytes": 1314671
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "not-run"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "D:\\src\\dsh-oh-my-whale\\docs\\planning-artifacts\\architecture\\architecture-DSH哦鲸鲸-2026-11-23\\omw-architecture.finalize.json",
+    "summaryReceipt": "D:\\src\\dsh-oh-my-whale\\docs\\planning-artifacts\\architecture\\architecture-DSH哦鲸鲸-2026-11-23\\omw-architecture.finalize-summary.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-11-09T12:06:48.580Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 1914,
+  "browserCheck": {
+    "requested": false,
+    "ran": false
+  }
+}
