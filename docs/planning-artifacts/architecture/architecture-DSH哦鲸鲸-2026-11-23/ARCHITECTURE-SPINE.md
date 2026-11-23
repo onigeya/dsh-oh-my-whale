@@ -78,7 +78,7 @@ graph TD
 
 - **Binds:** CAP-1, CAP-4, seams/
 - **Prevents:** 各模块自行调 `section()` 导致前缀缓存天天失效；预算失控；说不清一轮对话到底注入了多少。
-- **Rule:** 两条注入通道各管一档，不得混用：身份段（≤1200 字符、字节稳定）走 `ctx.systemPrompt.section({name:'omw:persona', order, text})`——它的渲染结果被提交为节点 0，文本一变就原地替换、击穿前缀缓存，所以不许承载任何逐轮变化的文本；状态尾巴（≤30 token、每轮可变）**只能**走 `ctx.systemPrompt.context({name:'omw:persona-state', order, text})`，那是宿主给出的 cache-safe 通道，快照只在变化或 compaction 后才追加；两处都只允许出现在 `seams/prompt-composer.ts`；它持有预算表——身份段 ≤1200 字符、状态尾巴 ≤30 token（关系四维与档位 ≈12、最近一条已确认偏好 ≈10、一条待处理 flag ≈8）、场景常驻为 0；身份段文本哈希不变即不重写，保持字节稳定；超预算按 身份 > 状态 > 召回 顺序裁剪并记账。此处有意取代设计稿的 ≤120 token 常驻档：v1 只留身份段与 30 token 尾巴，场景与更多偏好走按需召回（用户第四轮裁定）。
+- **Rule:** 两条注入通道各管一档，不得混用：身份段（≤1200 字符、字节稳定）走 `ctx.systemPrompt.section({name:'harness:identity', order, text})`——它的渲染结果被提交为节点 0，文本一变就原地替换、击穿前缀缓存，所以不许承载任何逐轮变化的文本；状态尾巴（≤30 token、每轮可变）**只能**走 `ctx.systemPrompt.context({name:'omw:persona-state', order, text})`，那是宿主给出的 cache-safe 通道，快照只在变化或 compaction 后才追加；两处都只允许出现在 `seams/prompt-composer.ts`；它持有预算表——身份段 ≤1200 字符、状态尾巴 ≤30 token（关系四维与档位 ≈12、最近一条已确认偏好 ≈10、一条待处理 flag ≈8）、场景常驻为 0；身份段文本哈希不变即不重写，保持字节稳定；超预算按 身份 > 状态 > 召回 顺序裁剪并记账。此处有意取代设计稿的 ≤120 token 常驻档：v1 只留身份段与 30 token 尾巴，场景与更多偏好走按需召回（用户第四轮裁定）。
 
 档位与预算一览：
 

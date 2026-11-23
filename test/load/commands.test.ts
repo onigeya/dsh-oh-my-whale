@@ -86,7 +86,7 @@ describe('/omw doctor: healthy instance', () => {
     expect(lines[1]).toMatch(/^2\/5 snapshot\s+pass/u)
     expect(lines[2]).toMatch(/^3\/5 dim\s+pass/u)
     expect(lines[3]).toMatch(/^4\/5 credential\s+pass/u)
-    expect(lines[4]).toMatch(/^5\/5 section\s+pass 已注册 omw:persona（\d+ 字符，4 个工具）/u)
+    expect(lines[4]).toMatch(/^5\/5 section\s+pass 已注册 harness:identity（\d+ 字符，4 个工具）/u)
     expect(text).toContain('omw doctor: 5/5 通过')
   })
 

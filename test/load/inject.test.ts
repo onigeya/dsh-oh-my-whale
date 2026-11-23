@@ -44,9 +44,9 @@ function load(): { sections: ReturnType<typeof createRecordingContext>; stderr: 
 }
 
 describe('load: identity section', () => {
-  it('registers omw:persona with the persona file text', () => {
+  it('registers harness:identity with the persona file text', () => {
     const { sections } = load()
-    const persona = sections.sections.find(section => section.name === 'omw:persona')
+    const persona = sections.sections.find(section => section.name === 'harness:identity')
     expect(persona).toBeDefined()
     const expected = normalizePersona(readFileSync(personaFile, 'utf8'), 1200)
     expect(persona?.text).toBe(expected.text)
@@ -55,7 +55,7 @@ describe('load: identity section', () => {
 
   it('keeps the section within the 1200-character budget', () => {
     const { sections } = load()
-    const persona = sections.sections.find(section => section.name === 'omw:persona')
+    const persona = sections.sections.find(section => section.name === 'harness:identity')
     expect([...(persona?.text ?? '')].length).toBeLessThanOrEqual(1200)
   })
 
@@ -63,7 +63,7 @@ describe('load: identity section', () => {
     const first = load()
     const second = load()
     const textOf = (recorder: ReturnType<typeof createRecordingContext>): string =>
-      recorder.sections.find(section => section.name === 'omw:persona')?.text ?? ''
+      recorder.sections.find(section => section.name === 'harness:identity')?.text ?? ''
     expect(textOf(first.sections)).toBe(textOf(second.sections))
     const hash = createHash('sha256').update(textOf(first.sections), 'utf8').digest('hex')
     expect(hash).toBe(createHash('sha256').update(textOf(second.sections), 'utf8').digest('hex'))
@@ -86,7 +86,7 @@ describe('load: stderr confirmation', () => {
     const { stderr } = load()
     const lines = stderr.split(/\r?\n/u).filter(line => line.includes('[omw] loaded'))
     expect(lines).toHaveLength(1)
-    expect(lines[0]).toContain('section=omw:persona')
+    expect(lines[0]).toContain('section=harness:identity')
   })
 
   it('does not write the load line to omw.log', () => {
@@ -155,7 +155,7 @@ describe('load: host seams', () => {
       })
       states.push(stderr)
       expect(recorder.tools).toEqual([])
-      expect(recorder.sections.find(section => section.name === 'omw:persona')).toBeDefined()
+      expect(recorder.sections.find(section => section.name === 'harness:identity')).toBeDefined()
       recorder.dispose()
     }
 

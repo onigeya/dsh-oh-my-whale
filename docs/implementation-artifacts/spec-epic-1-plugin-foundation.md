@@ -39,7 +39,7 @@ deferred:
 
 **Always:**
 - 全部逻辑在 `apply(ctx, config)` 内注册、随 fiber 销毁；不新增常驻进程、端口监听、子进程、跨进程锁文件（`worker_threads` 属同进程，不在此列）。
-- 注入只有两个出口，且只允许出现在 `src/seams/prompt-composer.ts`：身份段 `ctx.systemPrompt.section({name:'omw:persona'})` ≤1200 字符、字节稳定、文本哈希不变即不重写；状态尾巴 `ctx.systemPrompt.context({name:'omw:persona-state'})` ≤30 token。其它任何文件出现 `systemPrompt.` 调用即为越界。
+- 注入只有两个出口，且只允许出现在 `src/seams/prompt-composer.ts`：身份段 `ctx.systemPrompt.section({name:'harness:identity'})` ≤1200 字符、字节稳定、文本哈希不变即不重写；状态尾巴 `ctx.systemPrompt.context({name:'omw:persona-state'})` ≤30 token。其它任何文件出现 `systemPrompt.` 调用即为越界。
 - 降级状态是封闭三值 `ok | no-op | vector-off`，由单一状态机持有；任何代码路径不得产生第四态、中间态或「先降级后悄悄恢复」。
 - 运行时降级错误码封闭八个：`OMW_DB_OPEN`、`OMW_SNAPSHOT_VERIFY`、`OMW_DIM_MISMATCH`、`OMW_EMBED_AUTH`、`OMW_EMBED_QUOTA`、`OMW_EMBED_TIMEOUT`、`OMW_EXTRACT_FAIL`、`OMW_DREAM_BUDGET`。
 - 配置唯一出处是 `src/seams/config.ts` 的 zod schema；环境变量只承载凭据（键名由 `embedding.apiKeyEnv` 指定，默认 `SILICONFLOW_API_KEY`）；宿主补丁条目的 `config:` 原样传入 `apply`，未知键保留不报错。
@@ -61,13 +61,13 @@ deferred:
 
 | Scenario | Input / State | Expected Output / Behavior | Error Handling |
 |----------|--------------|---------------------------|----------------|
-| LOAD_OK | profile 的 `dsh.profile.bundles` 含本包，`cordis.patch.yml` 有 `insert` 条目 | stderr 打印一次 `[omw] loaded`；组装后的系统提示含 `omw:persona` 文本；会话正常结束 | 无错误 |
+| LOAD_OK | profile 的 `dsh.profile.bundles` 含本包，`cordis.patch.yml` 有 `insert` 条目 | stderr 打印一次 `[omw] loaded`；组装后的系统提示含 `harness:identity` 文本；会话正常结束 | 无错误 |
 | PATCH_WRONG_PLACE | 条目只写在生成物 `cordis.yml`，补丁文件没有 | `omw doctor` 非零退出，打印 `OMW_CONFIG_WRONG_PATCH_FILE` 并指出应改 `cordis.patch.yml` | 退出码 1 |
 | DEP_NOT_DECLARED | profile `package.json` 的 `dsh.profile.bundles` 缺本包 | 打印 `OMW_CONFIG_DEP_NOT_DECLARED` 并点名包名与字段 | 退出码 1 |
 | SCHEMA_INVALID | `config.db.dim` 为字符串 / 负数 | 打印 `OMW_CONFIG_SCHEMA` 并点名 `db.dim` 与收到的类型 | 退出码 1 |
-| SECTION_MISSING | 产物 `apply` 未注册 `omw:persona`（fixture 包） | 打印 `OMW_SECTION_NOT_REGISTERED` | 退出码 1 |
+| SECTION_MISSING | 产物 `apply` 未注册 `harness:identity`（fixture 包） | 打印 `OMW_SECTION_NOT_REGISTERED` | 退出码 1 |
 | CRED_MISSING | 无 `SILICONFLOW_API_KEY` | 凭据项 fail、`OMW_EMBED_AUTH`、全程零网络请求 | 退出码 1 |
-| DB_OPEN_FAIL | 库文件被独占或损坏 | 运行时整体 no-op：`omw:persona` 仍注入、四个工具未注册、`omw.log` 恰一行 `level=error, code=OMW_DB_OPEN` | 无未捕获异常；退出码不因插件而变 |
+| DB_OPEN_FAIL | 库文件被独占或损坏 | 运行时整体 no-op：`harness:identity` 仍注入、四个工具未注册、`omw.log` 恰一行 `level=error, code=OMW_DB_OPEN` | 无未捕获异常；退出码不因插件而变 |
 | DIM_MISMATCH | `db.dim=1024`，库实际 dim=512 | 该检查 fail，`OMW_DIM_MISMATCH`，点名 `db.dim` 与两侧取值 | 退出码 1；运行时同样 no-op |
 | CONTRACT_AHEAD | 库内 `contract_version=99` > 代码支持 1 | 整体 no-op，日志/诊断点名两侧取值，不注入记忆段 | 无崩溃，不重载即状态不变 |
 | EMBED_401_402 | `POST /embeddings` 返回 401 / 402 | 关闭向量（`vector-off`），分别记 `OMW_EMBED_AUTH` / `OMW_EMBED_QUOTA`，不重试、不阻塞写入 | 写事务照常成功 |
@@ -134,7 +134,7 @@ deferred:
 - `src/seams/runtime.ts` -- 组装顺序：开库 → 闸门 → 注入 → 工具 → 日志/审计 -- 唯一装配处
 - `src/seams/prompt-composer.ts` -- 身份段与状态尾巴、预算、哈希不变即不重写 -- 注入单出口
 - `src/seams/tools.ts` -- 按名注册四个占位工具；no-op 时一个都不注册 -- 1.3 的对照面
-- `src/index.ts` -- 导出 `Config` 与 `apply`，注册身份段后向 stderr 写一次 `[omw] loaded ... section=omw:persona` -- 插件入口与加载确认
+- `src/index.ts` -- 导出 `Config` 与 `apply`，注册身份段后向 stderr 写一次 `[omw] loaded ... section=harness:identity` -- 插件入口与加载确认
 - `src/cli/profile.ts` -- 读 `<DSH_HOME>/profiles/<name>` 的 package.json、cordis.patch.yml、cordis.yml -- 结构诊断
 - `src/cli/doctor.ts` -- 五项有序检查与诊断码映射 -- FR-17 主体
 - `src/cli.ts` -- `omw doctor` 参数解析、输出格式、退出码 0/1/2 -- 命令面
@@ -154,14 +154,14 @@ deferred:
 **Acceptance Criteria:**
 - Given 干净仓库，when `pnpm install && pnpm build`，then 产出 `lib/index.js` 与 `lib/cli.js`，且无未声明依赖。
 - Given 空测试集，when `pnpm test`，then 通过（脚手架阶段）——最终状态下 `pnpm test` 全绿且至少覆盖 I/O 矩阵每一行。
-- Given 临时 `DSH_HOME` 中已把本包装进 profile 且在 `cordis.patch.yml` 写了 `insert` 条目，when 跑 `dsh --profile <tmp> --dump-config`，then 组合后的树含 `{id: oh-my-whale, name: dsh-oh-my-whale}`；when 再跑 `dsh --profile <tmp> "hi"`，then stderr 出现恰一次 `[omw] loaded` 且同一行含 `section=omw:persona`（模型轮次是否成功不影响该判定）。
+- Given 临时 `DSH_HOME` 中已把本包装进 profile 且在 `cordis.patch.yml` 写了 `insert` 条目，when 跑 `dsh --profile <tmp> --dump-config`，then 组合后的树含 `{id: oh-my-whale, name: dsh-oh-my-whale}`；when 再跑 `dsh --profile <tmp> "hi"`，then stderr 出现恰一次 `[omw] loaded` 且同一行含 `section=harness:identity`（模型轮次是否成功不影响该判定）。
 - Given 同一 profile，when 把条目只写进生成物 `cordis.yml`，then `omw doctor` 非零退出并指认「补丁文件改错位置」。
 - Given `pnpm lint`，when 在 `src/core/` 里加一条指向 `../seams/` 的 import，then `pnpm lint` 失败并指出违规文件与规则；移除后恢复通过。
 - Given 正常配置，when `omw doctor`，then 五项按固定顺序输出、全部 pass、退出码 0、`omw.log` 只多一行、库内节点数与审计文件均未变。
 - Given `db.dim=1024` 与 dim=512 的库，when `omw doctor`/`apply`，then 该检查 fail 并点名 `db.dim` 与两侧取值，运行时整体 no-op。
 - Given 五种错误配置（依赖未声明 / 补丁改错 / schema 不合法 / 注入段未注册 / 库不可开），when `omw doctor`，then 各自非零退出、打印出错项与对应码、不打印任何密钥。
 - Given 无 `SILICONFLOW_API_KEY`，when `omw doctor`，then 凭据项 fail、`OMW_EMBED_AUTH`、零网络请求（用拦截过的 `fetch` 断言零调用）。
-- Given 脏库 fixture，when 插件加载，then `omw:persona` 注入文本与健康库逐字节相同，四工具未注册，`omw.log` 恰一行 `OMW_DB_OPEN`，审计无「已注入记忆」记录，库写入 0 次。
+- Given 脏库 fixture，when 插件加载，then `harness:identity` 注入文本与健康库逐字节相同，四工具未注册，`omw.log` 恰一行 `OMW_DB_OPEN`，审计无「已注入记忆」记录，库写入 0 次。
 - Given 库内 `contract_version=99`，when 插件加载，then 整体 no-op 且日志点名两侧取值，重载前状态不变。
 - Given embedding 返回 401/402 或超过 2s，when 走写入路径，then 分别记 `OMW_EMBED_AUTH`/`OMW_EMBED_QUOTA`/`OMW_EMBED_TIMEOUT`；超时那条 `vec_state=pending` 且写事务成功；401/402 不重试。
 - Given 向量关闭，when 非向量检索，then 返回非空、审计 `degraded_reason` 命中封闭枚举；且测试枚举断言不存在第四态。
@@ -224,7 +224,7 @@ deferred:
   - `[low]` `[patch]` 只扫 `.ts/.mts/.tsx`，`.js/.mjs` 源文件不受规则约束 —— 并入同一补丁。
   - `[low]` `[patch]` 字符串里的 `delete(` 误报 —— 并入同一补丁。
   - `[low]` `[patch]` 文档写了 `--dry-run` 但未实现 —— 最小修复：实现为只做检查不写证据、不启动 dsh。
-  - `[medium]` `[patch]` 加载行无条件打印 `section=omw:persona`，即使段注册失败 —— 最小修复：按实际注册结果打印。
+  - `[medium]` `[patch]` 加载行无条件打印 `section=harness:identity`，即使段注册失败 —— 最小修复：按实际注册结果打印。
   - `[medium]` `[patch]` e2e 空过 —— 与 blind-hunter 同根因。
   - `[false]` `[reject]` `search.ts` 重复声明 `DEFAULT_TOP_K`/`MAX_TOP_K` 违反「配置单一来源」 —— 分层规则禁止 `store/` import `seams/`，重复是被强制的；改的是 config 头注释的措辞。
 
@@ -258,13 +258,13 @@ deferred:
 
 **`omw doctor` 的诊断码与运行时八码分离。** 运行时降级码严格封闭为八个；结构性配置问题不属于降级语义，用 doctor 专属码：`OMW_CONFIG_DEP_NOT_DECLARED`、`OMW_CONFIG_WRONG_PATCH_FILE`、`OMW_CONFIG_PATCH_ENTRY_MISSING`、`OMW_CONFIG_SCHEMA`、`OMW_SECTION_NOT_REGISTERED`。库相关检查复用 `OMW_DB_OPEN`/`OMW_SNAPSHOT_VERIFY`/`OMW_DIM_MISMATCH`，凭据缺失复用 `OMW_EMBED_AUTH`（`detail.reason='missing'`）。
 
-**「注入段已注册」如何离线判定。** doctor 加载构建产物 `lib/index.js`，用录制式假 ctx 调 `apply`，断言 `systemPrompt.section` 收到 `name === 'omw:persona'` 且文本非空，随后 dispose。全程零网络、零库写入；它验证的是「产物会注册这个段」，与真实会话的观察互为补充。
+**「注入段已注册」如何离线判定。** doctor 加载构建产物 `lib/index.js`，用录制式假 ctx 调 `apply`，断言 `systemPrompt.section` 收到 `name === 'harness:identity'` 且文本非空，随后 dispose。全程零网络、零库写入；它验证的是「产物会注册这个段」，与真实会话的观察互为补充。
 
 **lint 与 G0-6 的机制。** `@typescript-eslint/parser@8.x` 的 peer 要求是 `typescript >=4.8.4 <6.1.0`，与钉住的 7.0.2 冲突，eslint 10 自身也无法解析 TS（`Parsing error: Unexpected token :`）。因此 `pnpm lint` = `tsc --noEmit` + `node scripts/check-layers.mjs` + `eslint .`；层依赖规则由 `check-layers.mjs` 做确定性检查，并用 `test/lint/layers.test.ts`（临时 fixture 上运行该脚本）证明「故意的 `core → seams` import 会让 `pnpm lint` 失败」。
 
 **G0-4 不在本 epic。** G0-4 是「写入→注入→召回最小闭环」，其召回属 FR-5/Epic 2；epics.md 的反向约束禁止为过关而预埋后续 epic 的实现。本 epic 负责 G0-5（真实启用并注入一次）与 G0-6（层依赖静态闸门），G0-1/2/3/8 作为回归保持，G0-4 留给 Epic 2。
 
-**端到端取证的机制与边界。** 端到端只在临时 `DSH_HOME`（环境变量，优先级高于 `~/.dsh`）里做：让 `dsh` 初始化一个自带 profile 模板的临时 profile，把仓库作为 `file:` 依赖装进该 profile 的 `node_modules`，在 profile `package.json` 的 `dsh.profile.bundles` 追加包名、在其 `cordis.patch.yml` 追加 `insert` 条目，然后 `--dump-config` 验证组合结果、真实启动一次会话验证 stderr 的加载行。`dsh` 可执行文件优先取 `OMW_DSH_BIN`，否则用 PATH 上的 `dsh`。由于无人值守环境不保证有可用模型凭据，判定只依赖「加载行 + 段注册标记 + 组合后的树」，模型轮次失败不算失败；「提示文本含 `omw:persona` 正文」由 `test/load/inject.test.ts` 在录制式 ctx 上断言，二者合起来覆盖 1.1 的观察面。
+**端到端取证的机制与边界。** 端到端只在临时 `DSH_HOME`（环境变量，优先级高于 `~/.dsh`）里做：让 `dsh` 初始化一个自带 profile 模板的临时 profile，把仓库作为 `file:` 依赖装进该 profile 的 `node_modules`，在 profile `package.json` 的 `dsh.profile.bundles` 追加包名、在其 `cordis.patch.yml` 追加 `insert` 条目，然后 `--dump-config` 验证组合结果、真实启动一次会话验证 stderr 的加载行。`dsh` 可执行文件优先取 `OMW_DSH_BIN`，否则用 PATH 上的 `dsh`。由于无人值守环境不保证有可用模型凭据，判定只依赖「加载行 + 段注册标记 + 组合后的树」，模型轮次失败不算失败；「提示文本含 `harness:identity` 正文」由 `test/load/inject.test.ts` 在录制式 ctx 上断言，二者合起来覆盖 1.1 的观察面。
 
 **四个工具名只注册占位。** 1.3 的验收是「no-op 时 `remember/recall/forget/explain` 一个都不注册」，隐含 ok 状态下按名存在；本 epic 注册占位实现，调用返回 `{ok:false, code:'E_NOT_IMPLEMENTED'}`，不写库、不注入。
 
@@ -277,7 +277,7 @@ deferred:
 - `pnpm lint` -- expected: 通过；注入一条跨层 import 后失败（G0-6 取证）
 - `node scripts/gate.ts --gate g0-6` -- expected: 通过并写 `docs/implementation-artifacts/gates/g0-6.json`
 - `node scripts/gate.ts --gate g0-5` -- expected: 通过并写 `docs/implementation-artifacts/gates/g0-5.json`（临时 `DSH_HOME`，不改用户 profile）
-- `OMW_E2E=1 pnpm test -- test/e2e` -- expected: 临时 `DSH_HOME` 内加载成功、`[omw] loaded` 出现、提示含 `omw:persona`
+- `OMW_E2E=1 pnpm test -- test/e2e` -- expected: 临时 `DSH_HOME` 内加载成功、`[omw] loaded` 出现、提示含 `harness:identity`
 - `node lib/cli.js doctor --home <tmp> --profile web` -- expected: 五项按序输出，退出码 0/1 与矩阵一致
 
 **Manual checks (if no CLI):**
@@ -291,7 +291,7 @@ deferred:
 **Baseline:** `cf04e95038f7fd6d7be37589f3f3fd03bbdcb9b7`
 
 ### 实现摘要
-Epic 1（1.1–1.5）以**一个可被 DSH 真实加载的插件底座**交付：分层目录 + 锁定版本工具链 + `apply(ctx, config)` 入口 + 字节稳定的身份段注入（`omw:persona`）；`omw doctor` 五项按序体检与非零退出码；库打不开/快照校验失败/维度不符/契约版本过高 → 整体 no-op（身份段照常、四工具零注册、日志恰一行）；向量故障 → 只关向量（401/402/维度不符），超时只记 `OMW_EMBED_TIMEOUT` 且写入照常、节点留 `vec_state=pending`；每日快照做后即校验、保留 7 份、恢复先关库、迁移前必须已有 `pre-migration-*`。闸门 G0-5/G0-6 以真实宿主会话与故意违规 fixture 双重取证。
+Epic 1（1.1–1.5）以**一个可被 DSH 真实加载的插件底座**交付：分层目录 + 锁定版本工具链 + `apply(ctx, config)` 入口 + 字节稳定的身份段注入（`harness:identity`）；`omw doctor` 五项按序体检与非零退出码；库打不开/快照校验失败/维度不符/契约版本过高 → 整体 no-op（身份段照常、四工具零注册、日志恰一行）；向量故障 → 只关向量（401/402/维度不符），超时只记 `OMW_EMBED_TIMEOUT` 且写入照常、节点留 `vec_state=pending`；每日快照做后即校验、保留 7 份、恢复先关库、迁移前必须已有 `pre-migration-*`。闸门 G0-5/G0-6 以真实宿主会话与故意违规 fixture 双重取证。
 
 ### 变更文件（按职责）
 - `package.json` / `tsconfig.json` / `tsconfig.test.json` / `eslint.config.js` / `vitest.config.ts` / `.gitignore` / `cordis.patch.yml` / `README.md` — 包清单（`dsh.manifestVersion/bundle.patch`、`bin.omw`、`prepare`、`packageManager`）、构建与测试配置、启用三步与降级语义文档
@@ -321,7 +321,7 @@ Epic 1（1.1–1.5）以**一个可被 DSH 真实加载的插件底座**交付�
 - `pnpm lint` → exit 0（`tsc` src + `tsc` test + `layers: 21 个源文件，全部规则通过` + eslint）
 - `pnpm test` → 9 文件通过 / 1 skip，**91 passed | 1 skipped**
 - `node scripts/gate.ts --gate g0-6` → pass（`tree-clean` / 故意违规报 `core-no-seams` / 移除后恢复通过）
-- `node scripts/gate.ts --gate g0-5` → pass，证据 detail 为真实观测行 `[omw] loaded state=ok section=omw:persona …`
+- `node scripts/gate.ts --gate g0-5` → pass，证据 detail 为真实观测行 `[omw] loaded state=ok section=harness:identity …`
 - `OMW_E2E=1 pnpm test -- test/e2e` → pass（临时 `DSH_HOME` 中的真实 `dsh` 会话，60→ 全绿）
 - 矩阵审计：16 行 I/O 矩阵逐行有对应测试且均已实跑通过
 

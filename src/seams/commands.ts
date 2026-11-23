@@ -251,7 +251,7 @@ export const OMW_USAGE = `/omw doctor — 在本进程内跑五项体检（库�
 export function registerOmwCommand(registry: CommandRegistryLike, view: () => DoctorView): () => void {
   return registry.register({
     name: 'omw',
-    description: '哦鲸鲸体检：/omw doctor 在当前进程内跑五项检查',
+    description: '鲸鲸体检：/omw doctor 在当前进程内跑五项检查',
     input: { hint: 'doctor' },
     handler: (invocation: CommandInvocationLike): CommandResultLike => {
       const sub = invocation.rawInput.trim().toLowerCase()

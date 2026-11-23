@@ -36,13 +36,13 @@ DSH 记忆插件。**本版本只有底座**：可被宿主加载、可用一条
 
 ### ③ 验证（装完即可用，不必重启）
 
-web profile 里 `dsh-hmr` 是启用的：它监听 profile 的 `package.json`、`cordis.patch.yml` 与 `--patch` 覆盖层，**profile 重新组合时会替换"磁盘上已加载文件发生变化"的插件**——包括 `node_modules` 下的已安装包与 `link:` 包的目标。因此改完本插件（源码重建、`assets/persona.md` 等）之后，触发一次重新组合即可热生效：改一行 `cordis.patch.yml`（例如给条目加一个 `config:` 键），或在 Plugin Manager 里做一次操作。实测：改身份段文本后触发重组合，宿主提示里的 `omw:persona` 段当场换成新文本，无需重启。
+web profile 里 `dsh-hmr` 是启用的：它监听 profile 的 `package.json`、`cordis.patch.yml` 与 `--patch` 覆盖层，**profile 重新组合时会替换"磁盘上已加载文件发生变化"的插件**——包括 `node_modules` 下的已安装包与 `link:` 包的目标。因此改完本插件（源码重建、`assets/persona.md` 等）之后，触发一次重新组合即可热生效：改一行 `cordis.patch.yml`（例如给条目加一个 `config:` 键），或在 Plugin Manager 里做一次操作。实测：改身份段文本后触发重组合，宿主提示里的 `harness:identity` 段当场换成新文本，无需重启。
 
 headless / SDK / ACP 组合包默认关闭 HMR，那些场景下仍以重启为准。
 
 ```bash
 dsh --profile <名字> --dump-config   # 组合后的树里应出现 {id: oh-my-whale, name: dsh-oh-my-whale}
-dsh --profile <名字> "hi"            # stderr 恰一次 [omw] loaded ... section=omw:persona
+dsh --profile <名字> "hi"            # stderr 恰一次 [omw] loaded ... section=harness:identity
 ```
 
 stderr 的加载行由插件自己写，不走 `ctx.logger`：宿主只把插件日志压进内存环形缓冲，且唯一的 exporter 只转发 `warn`/`error`。这一行也**不**写进 `omw.log`，否则「库坏时 `omw.log` 恰一行」就不成立。
@@ -64,7 +64,7 @@ stderr 的加载行由插件自己写，不走 `ctx.logger`：宿主只把插件
 | 2 | 快照校验过 | 今天有已校验快照，缺则补做一份 | `OMW_SNAPSHOT_VERIFY` |
 | 3 | 维度匹配 | `db.dim` 与库一致 | `OMW_DIM_MISMATCH` |
 | 4 | 凭据可用 | `embedding.apiKeyEnv` 指向的环境变量已设置 | `OMW_EMBED_AUTH` |
-| 5 | 注入段已注册 | 本实例注册了 `omw:persona` 且文本非空，并报出已注册的工具数 | `OMW_SECTION_NOT_REGISTERED` |
+| 5 | 注入段已注册 | 本实例注册了 `harness:identity` 且文本非空，并报出已注册的工具数 | `OMW_SECTION_NOT_REGISTERED` |
 
 退出码不适用（它是聊天里的命令）：命令用消息文本报告，有失败时以错误样式返回，摘要给出「k/5 通过」与首个失败码。
 
@@ -82,7 +82,7 @@ stderr 的加载行由插件自己写，不走 `ctx.logger`：宿主只把插件
 
 运行时降级错误码封闭八个：`OMW_DB_OPEN`、`OMW_SNAPSHOT_VERIFY`、`OMW_DIM_MISMATCH`、`OMW_EMBED_AUTH`、`OMW_EMBED_QUOTA`、`OMW_EMBED_TIMEOUT`、`OMW_EXTRACT_FAIL`、`OMW_DREAM_BUDGET`。新增或改名都算破坏兼容。
 
-「坏掉的是记忆，不是人设」是硬约束：库不可用时 `omw:persona` 的文本与健康库**逐字节相同**（`test/degrade/no-op.test.ts` 断言）。
+「坏掉的是记忆，不是人设」是硬约束：库不可用时 `harness:identity` 的文本与健康库**逐字节相同**（`test/degrade/no-op.test.ts` 断言）。
 
 ## 数据目录
 

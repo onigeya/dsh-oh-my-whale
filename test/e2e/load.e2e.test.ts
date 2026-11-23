@@ -107,12 +107,16 @@ describe.skipIf(!enabled)('e2e: real dsh session', () => {
     const stderr = `${session.stdout ?? ''}\n${session.stderr ?? ''}`
     const loadLines = stderr.split(/\r?\n/u).filter(line => line.includes('[omw] loaded'))
     expect(loadLines, `未观察到加载行。输出：\n${stderr.slice(-2000)}`).toHaveLength(1)
-    expect(loadLines[0]).toContain('section=omw:persona')
+    expect(loadLines[0]).toContain('section=harness:identity')
     // Publish the observation: the gate quotes this line as its evidence, and only
     // this test saw it in the session's stderr.
     process.stdout.write(`${loadLines[0]}\n`)
 
-    const log = readFileSync(join(home.dir, 'oh-my-whale', 'omw.log'), 'utf8')
+    // The append sink creates the file on its first entry. A clean `ok` load
+    // writes none, so an absent log is the expected shape here; the assertion is
+    // about content, never about existence.
+    const logPath = join(home.dir, 'oh-my-whale', 'omw.log')
+    const log = existsSync(logPath) ? readFileSync(logPath, 'utf8') : ''
     expect(log).not.toContain('[omw] loaded')
   }, 600_000)
 })

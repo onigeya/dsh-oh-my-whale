@@ -155,7 +155,7 @@ AD-7 管的是「往系统提示里放什么」，AD-20 管的是「放了多少
 
 - **Binds:** CAP-6, CAP-4
 - **Prevents:** 折叠顺手把身份段当普通上下文摘要掉（身份段本该随每轮常驻，且字节稳定），或折叠失败时把人格一起带进降级。
-- **Rule:** `omw:persona`（section）与 `omw:persona-state`（context）都不是消息，永远不会进入折叠选区——它们在 `systemPrompt` 层，折叠只作用于消息表面。人格影响折叠的唯一通道是**保留优先级**：检查点的 KEEP 规则要求逐字保留用户的显式偏好与边界表达（「不要主动打扰」这类），这与 `assets/persona.md` 的第四段同源，但人格文本本身不进入检查点。折叠前后断言 `sha256(personaText)` 相等（测试 `test/govern/persona-immune.test.ts`），库不可用与折叠失败两种情形都要覆盖。
+- **Rule:** `harness:identity`（section）与 `omw:persona-state`（context）都不是消息，永远不会进入折叠选区——它们在 `systemPrompt` 层，折叠只作用于消息表面。人格影响折叠的唯一通道是**保留优先级**：检查点的 KEEP 规则要求逐字保留用户的显式偏好与边界表达（「不要主动打扰」这类），这与 `assets/persona.md` 的第四段同源，但人格文本本身不进入检查点。折叠前后断言 `sha256(personaText)` 相等（测试 `test/govern/persona-immune.test.ts`），库不可用与折叠失败两种情形都要覆盖。
 
 ### AD-39 — 经济性可结算：每折一行，含盈亏平衡 [ADOPTED]
 
