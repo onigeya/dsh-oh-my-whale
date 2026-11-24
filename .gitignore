@@ -4,4 +4,5 @@ node_modules/
 lib/
 .omw-e2e/
 coverage/
+**/experiments/data/
 *.tsbuildinfo

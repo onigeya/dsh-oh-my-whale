@@ -38,7 +38,7 @@
 - **写入路径**：core 依本轮活动版本算出每个节点的完整终值；唯一索引抛错即写被拒记录，不做 CAS 重试。全进程一个写队列串行提交，优先级 对话 > 快照 > 固化，模块不得自行加锁或绕过。
 - **存储与查询纪律**：只经 store 具名函数访问库，不引入通用仓储抽象；写方法只在提交子目录，库包只允许 store 层 import，store 不 import 其他层、core 不 import seams。TQL 只在查询模板目录，预编译首参须字面量（AST）；未失效过滤器只在 `store/filters.ts` 的 `liveOnly()` 构造，`$exists` 未被类型声明覆盖，本地放宽并钉死版本 + 语义测试；集合条件由模板构造为过滤对象，预编译只收标量。
 - **召回候选线程化**：同步原生检索无超时参数，必须放同进程线程并用原生请求上下文限时；端口与子进程仍全线禁止。
-- **注入通道**：身份段走 `section({name:'omw:persona'})`、尾巴走 `context({name:'omw:persona-state'})`，调用只允许出现在提示词组装模块；`compose()` 同步段 p95 ≤20ms，审计异步。
+- **注入通道**：身份段走 `section({name:'harness:identity'})`、尾巴走 `context({name:'omw:persona-state'})`，调用只允许出现在提示词组装模块；`compose()` 同步段 p95 ≤20ms，审计异步。
 - **工具面**：`remember(patch)`、`recall(query, topK?≤8)` 的签名与返回包封（ok / items / degraded / reason）在此固定，`forget` / `explain` 的名字与入参形态一并锁定；越界检查在 execute 前完成。
 - **错误码与 schema**：运行时八个 `OMW_*` 沿用；工具侧封闭为 `E_BUDGET` / `E_TIMEOUT` / `E_DEGRADED` / `E_BOUNDARY` / `E_GATE_DOWN`；时间 ISO-8601 UTC 毫秒。首次建 schema 只建断言集合与两个索引，其余等真正需要的 story 再建。
 

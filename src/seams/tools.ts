@@ -29,12 +29,27 @@ export type PlaceholderToolName = (typeof PLACEHOLDER_TOOL_NAMES)[number]
 /** Error code every placeholder returns. */
 export const E_NOT_IMPLEMENTED = 'E_NOT_IMPLEMENTED'
 
+/** A rendered content block, as the host accepts it. */
+export interface ContentBlockLike {
+  readonly type: 'text'
+  readonly text: string
+}
+
 /** A registered tool, as the host understands it. */
 export interface ToolDefinitionLike {
   readonly name: string
   readonly description: string
   readonly parameters: JsonSchemaNode
-  readonly output: { readonly schema: JsonSchemaNode }
+  /**
+   * Canonical output contract. `render` is mandatory: the host rejects a tool
+   * without it ("must declare output { schema, render, presentationMeta? }"),
+   * which is exactly how the real host refused all four placeholders.
+   */
+  readonly output: {
+    readonly schema: JsonSchemaNode
+    render(args: unknown, value: unknown): readonly ContentBlockLike[]
+    presentationMeta?(args: unknown, value: unknown): unknown
+  }
   execute(args: unknown, exec?: unknown): Promise<unknown>
 }
 
@@ -269,7 +284,14 @@ export function memoryTools(writer?: RememberWriter): ToolDefinitionLike[] {
     name,
     description: DESCRIPTIONS[name],
     parameters: PARAMETERS[name],
-    output: { schema: OUTPUT_SCHEMA },
+    output: {
+      schema: OUTPUT_SCHEMA,
+      // One text block carrying the canonical JSON, so a rejection is readable in
+      // the transcript. Placeholders produce no presentation metadata.
+      render: (_args: unknown, value: unknown): readonly ContentBlockLike[] => [
+        { type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) },
+      ],
+    },
     execute: async (args: unknown, exec?: unknown): Promise<unknown> => {
       if (name !== 'remember') return notImplemented(name)
       if (writer === undefined) return writeUnavailable(name)

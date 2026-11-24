@@ -3,10 +3,13 @@
  *
  * Two channels, two tiers, and nobody else may call them:
  *
- * - `ctx.systemPrompt.section({name:'omw:persona'})` — the identity text, at most
- *   1200 characters, byte-stable. It is rendered into the prompt cache prefix, so
- *   a changed byte invalidates the cache; an unchanged hash therefore re-registers
- *   nothing.
+ * - `ctx.systemPrompt.section({name:'harness:identity'})` — the identity text, at
+ *   most 1200 characters, byte-stable. It is registered under the host's own
+ *   opening-section name, so it replaces "You are an AI agent powered by DeepSeek
+ *   Harness." in place instead of queueing behind it (the documented same-name
+ *   rule: nearest scope wins, and within one scope the latest live registration
+ *   wins). It is rendered into the prompt cache prefix, so a changed byte
+ *   invalidates the cache; an unchanged hash therefore re-registers nothing.
  * - `ctx.systemPrompt.context({name:'omw:persona-state'})` — the mutable state
  *   tail, at most 30 estimated tokens. The host treats it as cache-safe context.
  *
@@ -17,14 +20,26 @@
  */
 import { createHash } from 'node:crypto'
 
-/** Name of the identity section. Part of the public contract; do not rename. */
-export const PERSONA_SECTION_NAME = 'omw:persona'
+/**
+ * Name of the identity section: the host's own opening section.
+ *
+ * The host registers "You are an AI agent powered by DeepSeek Harness." under
+ * this name at order -1000, in the context-global layer. Reusing the name is the
+ * documented way to replace it — the same-name rule keeps the nearest scope's
+ * latest live registration, and this plugin mounts after the host service, so
+ * the identity text lands exactly where the host sentence was. Unloading the
+ * plugin removes the registration and the host sentence reappears.
+ */
+export const PERSONA_SECTION_NAME = 'harness:identity'
 
 /** Name of the state tail. Part of the public contract; do not rename. */
 export const PERSONA_STATE_CONTEXT_NAME = 'omw:persona-state'
 
-/** Where the identity section sorts among host sections. */
-export const PERSONA_SECTION_ORDER = 150
+/**
+ * Where the identity section sorts among host sections: the host's
+ * `HARNESS_IDENTITY` slot, ahead of every other section.
+ */
+export const PERSONA_SECTION_ORDER = -1000
 
 /** Where the state tail sorts among host runtime contexts. */
 export const PERSONA_STATE_CONTEXT_ORDER = 130

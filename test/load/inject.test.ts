@@ -44,9 +44,9 @@ function load(): { sections: ReturnType<typeof createRecordingContext>; stderr: 
 }
 
 describe('load: identity section', () => {
-  it('registers omw:persona with the persona file text', () => {
+  it('registers harness:identity with the persona file text', () => {
     const { sections } = load()
-    const persona = sections.sections.find(section => section.name === 'omw:persona')
+    const persona = sections.sections.find(section => section.name === 'harness:identity')
     expect(persona).toBeDefined()
     const expected = normalizePersona(readFileSync(personaFile, 'utf8'), 1200)
     expect(persona?.text).toBe(expected.text)
@@ -55,7 +55,7 @@ describe('load: identity section', () => {
 
   it('keeps the section within the 1200-character budget', () => {
     const { sections } = load()
-    const persona = sections.sections.find(section => section.name === 'omw:persona')
+    const persona = sections.sections.find(section => section.name === 'harness:identity')
     expect([...(persona?.text ?? '')].length).toBeLessThanOrEqual(1200)
   })
 
@@ -63,7 +63,7 @@ describe('load: identity section', () => {
     const first = load()
     const second = load()
     const textOf = (recorder: ReturnType<typeof createRecordingContext>): string =>
-      recorder.sections.find(section => section.name === 'omw:persona')?.text ?? ''
+      recorder.sections.find(section => section.name === 'harness:identity')?.text ?? ''
     expect(textOf(first.sections)).toBe(textOf(second.sections))
     const hash = createHash('sha256').update(textOf(first.sections), 'utf8').digest('hex')
     expect(hash).toBe(createHash('sha256').update(textOf(second.sections), 'utf8').digest('hex'))
@@ -89,7 +89,7 @@ describe('load: stderr confirmation', () => {
     const { stderr } = load()
     const lines = stderr.split(/\r?\n/u).filter(line => line.includes('[omw] loaded'))
     expect(lines).toHaveLength(1)
-    expect(lines[0]).toContain('section=omw:persona')
+    expect(lines[0]).toContain('section=harness:identity')
   })
 
   it('does not write the load line to omw.log', () => {
@@ -158,7 +158,7 @@ describe('load: host seams', () => {
       })
       states.push(stderr)
       expect(recorder.tools).toEqual([])
-      expect(recorder.sections.find(section => section.name === 'omw:persona')).toBeDefined()
+      expect(recorder.sections.find(section => section.name === 'harness:identity')).toBeDefined()
       await recorder.dispose()
     }
 
@@ -186,5 +186,25 @@ describe('load: tool registration is all-or-nothing', () => {
     expect(registered).toEqual(['remember', 'recall'])
     // Undone newest-first, so a partial surface never survives a failure.
     expect(disposed).toEqual(['recall', 'remember'])
+  })
+})
+
+describe('load: optional host surfaces', () => {
+  it('does not fail the mount when the tools property throws without inject', () => {
+    const home = tempHome()
+    homes.push(home)
+    const recorder = createRecordingContext({ home: home.dir })
+    const guarded = {
+      ...recorder.ctx,
+      get: (_name: string): unknown => undefined,
+      get tools(): never {
+        // Mirrors Cordis: reading an un-injected service throws.
+        throw new Error('cannot get property "tools" without inject')
+      },
+    }
+    const { stderr } = captureStderr(() => apply(guarded, {}))
+    expect(stderr).toContain('[omw] loaded state=ok')
+    // The mount survived, so the section was registered on the guarded context.
+    expect(guarded.get('tools')).toBeUndefined()
   })
 })

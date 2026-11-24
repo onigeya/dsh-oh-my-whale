@@ -45,7 +45,7 @@ describe('degrade: dirty database (DB_OPEN_FAIL)', () => {
     mkdirSync(home.path('oh-my-whale'), { recursive: true })
     writeFileSync(home.path('oh-my-whale', 'oh-my-whale.tdb'), 'definitely not a trivium database')
     const recorder = load(home)
-    const persona = recorder.sections.find(section => section.name === 'omw:persona')
+    const persona = recorder.sections.find(section => section.name === 'harness:identity')
     expect(persona?.text).toBe(expectedPersona())
     expect(recorder.tools).toEqual([])
   })
@@ -89,7 +89,7 @@ describe('degrade: contract version ahead (CONTRACT_AHEAD)', () => {
     closeDatabase(prepared.db)
 
     const recorder = load(home)
-    expect(recorder.sections.find(section => section.name === 'omw:persona')?.text).toBe(expectedPersona())
+    expect(recorder.sections.find(section => section.name === 'harness:identity')?.text).toBe(expectedPersona())
     expect(recorder.tools).toEqual([])
 
     const lines = readJsonLines(home.path('oh-my-whale', 'omw.log'))
@@ -160,7 +160,7 @@ describe('degrade: snapshot cannot be verified (SNAPSHOT_VERIFY)', () => {
 
     expect(stderr).toContain('state=no-op')
     expect(recorder.tools).toEqual([])
-    expect(recorder.sections.find(section => section.name === 'omw:persona')?.text).toBe(expectedPersona())
+    expect(recorder.sections.find(section => section.name === 'harness:identity')?.text).toBe(expectedPersona())
 
     const lines = readJsonLines(home.path('oh-my-whale', 'omw.log'))
     expect(lines).toHaveLength(1)

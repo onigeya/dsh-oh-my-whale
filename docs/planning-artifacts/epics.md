@@ -244,7 +244,7 @@ So that 我在一分钟内就能判断「到底装上了没有」，而不是靠
 
 **Given** `package.json` 已写 `dsh.profile.bundles`
 **When** 在宿主 `cordis.patch.yml` 添加 `{id, name, config}` 条目并重启 DSH
-**Then** 启动输出出现 `[omw] loaded`，系统提示里出现 `omw:persona` 段
+**Then** 启动输出出现 `[omw] loaded`，系统提示里出现 `harness:identity` 段
 **And** 改的是生成物 `cordis.yml` 时不生效，且 `omw doctor` 明确指认「补丁文件改错位置」（AR-10、FR-17；G0-5）
 
 **Given** 插件已加载
@@ -289,7 +289,7 @@ So that 坏掉的是记忆，不是人设——不会出现「半个插件」这
 
 **Given** 库文件损坏或被其他进程独占（`OMW_DB_OPEN`）
 **When** 一个对话回合开始
-**Then** 不注入记忆段、不注册 `remember` / `recall` / `forget` / `explain` 工具、不排固化，但 `omw:persona` 身份段照常注入（FR-15、FR-18、AD-13）
+**Then** 不注入记忆段、不注册 `remember` / `recall` / `forget` / `explain` 工具、不排固化，但 `harness:identity` 身份段照常注入（FR-15、FR-18、AD-13）
 
 **Given** 已进入整体 no-op
 **When** 检查 `omw.log` 与审计文件
@@ -499,14 +499,14 @@ So that 提示词前缀缓存一直有效，记忆不会把上下文挤爆。
 
 **Given** 一个回合开始组装提示词
 **When** 注入身份段与状态尾巴
-**Then** 身份段走 `ctx.systemPrompt.section({name:'omw:persona'})`、尾巴走 `ctx.systemPrompt.context({name:'omw:persona-state'})`，两处调用只出现在 `seams/prompt-composer.ts`（AD-7、FR-6）
+**Then** 身份段走 `ctx.systemPrompt.section({name:'harness:identity'})`、尾巴走 `ctx.systemPrompt.context({name:'omw:persona-state'})`，两处调用只出现在 `seams/prompt-composer.ts`（AD-7、FR-6）
 
 **Given** 身份段文本 ≤1200 字符
 **When** 连续两轮文本未变
 **Then** 第二次不重写，前缀字节一致，审计 `prefix_unchanged: true`（FR-6、FR-15）
 
 **Given** 连续 100 轮对话（含库不可用的轮次）
-**When** 逐轮计算 `omw:persona` section 文本的 sha256
+**When** 逐轮计算 `harness:identity` section 文本的 sha256
 **Then** 100 个哈希全同（I9、FR-15）；判据是哈希，不是「看起来一样」
 
 **Given** 身份段 + 尾巴 + 召回合计超预算

@@ -333,8 +333,10 @@ export function registerOmwCommand(
 ): () => void {
   return registry.register({
     name: 'omw',
-    description: '哦鲸鲸体检：/omw doctor 在当前进程内跑五项检查；/omw pred promote 提升谓词基数；/omw evidence 查证据指针；/omw history 查版本链；/omw ledger 查决策账本',
+    description: '鲸鲸体检：/omw doctor 在当前进程内跑五项检查；/omw pred promote 提升谓词基数；/omw evidence 查证据指针；/omw history 查版本链；/omw ledger 查决策账本',
     input: { hint: 'doctor | pred promote <名> --single|--multi --reason <理由> | evidence <mem_key> | history <mem_key> | ledger <mem_key>' },
+    // The handler is `async` only so it can await nothing today and still be free
+    // to in Story 2.6; the registry accepts either shape.
     handler: async (invocation: CommandInvocationLike): Promise<CommandResultLike> => {
       const sub = invocation.rawInput.trim().toLowerCase()
       // The subcommand is the first token, whatever separated it from its

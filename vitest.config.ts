@@ -14,7 +14,7 @@ export default defineConfig({
       // The built output and the scripts are checked by other gates; coverage is
       // about the plugin's own behaviour.
       include: ['src/**/*.ts'],
-      exclude: ['src/cli/**', 'src/index.ts'],
+      exclude: ['src/index.ts'],
       // Epic 2 DoD: 行 ≥80%、分支 ≥70%（用户 2026-11-23 确认）。
       thresholds: {
         lines: 80,
