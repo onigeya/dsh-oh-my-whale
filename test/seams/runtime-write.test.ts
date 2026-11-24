@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { apply, type ApplyContext } from '../../src/index.ts'
 import type { CommandDefinitionLike } from '../../src/seams/commands.ts'
-import { parseConfig, type Config } from '../../src/seams/config.ts'
+import { DEFAULT_TAIL_MAX_TOKENS, DEFAULT_TOP_K, parseConfig, RECALL_ITEM_BUDGET_TOKENS, type Config } from '../../src/seams/config.ts'
 import { createLogger, createMemorySink, type MemorySink } from '../../src/seams/logger.ts'
 import { startRuntime, type Runtime } from '../../src/seams/runtime.ts'
 import { closeDatabase, nodeCount, openDatabase } from '../../src/store/db.ts'
@@ -44,15 +44,26 @@ function homeWithCap(maxNewPredsPerDay: number): { home: TempHome; config: Confi
   return { home, config: parsed.config }
 }
 
+/** A configuration that narrows the recall contract, to prove it reaches the composer. */
+function homeWithTopK(topK: number): { home: TempHome; config: Config } {
+  const home = tempHome('omw-runtime-')
+  homes.push(home)
+  const parsed = parseConfig({ db: { dim: TEST_DIM }, recall: { topK } })
+  if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues))
+  return { home, config: parsed.config }
+}
+
 /** Boot one runtime over a temp home, keeping the log sink. */
-function boot(options: { readonly dim?: number; readonly maxNewPredsPerDay?: number } = {}): {
+function boot(options: { readonly dim?: number; readonly maxNewPredsPerDay?: number; readonly topK?: number } = {}): {
   readonly runtime: Runtime
   readonly sink: MemorySink
   readonly home: TempHome
 } {
-  const { home, config } = options.maxNewPredsPerDay === undefined
-    ? homeAt(options.dim ?? TEST_DIM)
-    : homeWithCap(options.maxNewPredsPerDay)
+  const { home, config } = options.topK !== undefined
+    ? homeWithTopK(options.topK)
+    : options.maxNewPredsPerDay === undefined
+      ? homeAt(options.dim ?? TEST_DIM)
+      : homeWithCap(options.maxNewPredsPerDay)
   const sink = createMemorySink()
   const recorder = createRecordingContext({ home: home.dir })
   const runtime = startRuntime({
@@ -104,6 +115,73 @@ describe('runtime: installing the store', () => {
     const { runtime } = boot()
     expect(runtime.write).toBeDefined()
     expect(runtime.loaded.tools).toEqual(['remember', 'recall', 'forget', 'explain'])
+  })
+
+  it('exposes the injection plan the audit row will report', () => {
+    const { runtime } = boot()
+    const plan = runtime.injection
+    expect(plan).toBeDefined()
+    // The numbers on the plan are what actually reached the host, not a recount.
+    expect(plan?.persona.text).toBe('You are the whale.')
+    // No state source is wired, so the tail has no text at all — not an empty string.
+    expect(plan?.tail.text).toBeUndefined()
+    expect(plan?.tail.tokens).toBe(0)
+    expect(plan?.prefixUnchanged).toBe(false)
+    // No recall tier is wired yet, so the plan recalls nothing and drops nothing.
+    expect(plan?.recall.kept).toEqual([])
+    expect(plan?.truncatedItems).toEqual([])
+    // The budget is derived from the three caps as configured, not from numbers
+    // copied into this test: changing a default would be a semantics failure here,
+    // not an arithmetic one.
+    expect(plan?.budget).toBe(
+      (plan?.identityTokens ?? 0) + DEFAULT_TAIL_MAX_TOKENS + DEFAULT_TOP_K * RECALL_ITEM_BUDGET_TOKENS,
+    )
+  })
+
+  it('takes the recall width from the configuration, not from the composer default', () => {
+    // The composer's own default equals the configuration default, so a missing
+    // wire would stay invisible: boot with a narrower contract and read it back.
+    const { runtime } = boot({ topK: 3 })
+    const plan = runtime.injection
+    expect(plan?.budget).toBe(
+      (plan?.identityTokens ?? 0) + DEFAULT_TAIL_MAX_TOKENS + 3 * RECALL_ITEM_BUDGET_TOKENS,
+    )
+    expect(plan?.budget).not.toBe(
+      (plan?.identityTokens ?? 0) + DEFAULT_TAIL_MAX_TOKENS + DEFAULT_TOP_K * RECALL_ITEM_BUDGET_TOKENS,
+    )
+  })
+
+  it('keeps the assembled plan when the host refuses the section, and says so', () => {
+    // `register()` reports a refused channel instead of throwing, so the runtime
+    // must treat it as a partial mount: the plan still describes what was
+    // assembled, the load line stops claiming a section, and the log names it.
+    const home = tempHome('omw-runtime-')
+    homes.push(home)
+    const parsed = parseConfig({ db: { dim: TEST_DIM } })
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues))
+    const recorder = createRecordingContext({ home: home.dir })
+    const refusing: ApplyContext = {
+      ...recorder.ctx,
+      systemPrompt: {
+        section(): never {
+          throw new Error('host refused the section')
+        },
+        context: recorder.ctx.systemPrompt.context,
+      },
+    }
+    const sink = createMemorySink()
+    const runtime = startRuntime({
+      ctx: refusing,
+      config: parsed.config,
+      logger: createLogger(sink),
+      personaText: 'You are the whale.',
+    })
+    runtimes.push(runtime)
+    expect(runtime.injection).toBeDefined()
+    expect((runtime.injection?.persona.text ?? '').length).toBeGreaterThan(0)
+    expect(runtime.loaded.sectionRegistered).toBe(false)
+    const codes = sink.lines.map(line => (JSON.parse(line) as { code: string }).code)
+    expect(codes).toContain('OMW_SECTION_NOT_REGISTERED')
   })
 
   it('writes through the port and reads the fact back by its business key', async () => {

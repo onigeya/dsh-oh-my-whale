@@ -38,9 +38,9 @@ import {
   readContractVersion,
   writeContractVersion,
 } from '../store/meta.ts'
-import { resolvePaths, type Config, type HomePath, type Paths } from './config.ts'
+import { RECALL_ITEM_BUDGET_TOKENS, resolvePaths, type Config, type HomePath, type Paths } from './config.ts'
 import { createAppendFileSink, createLogger, type Logger } from './logger.ts'
-import { PromptComposer, type PersonaState, type SystemPromptLike } from './prompt-composer.ts'
+import { PromptComposer, type InjectionPlan, type PersonaState, type SystemPromptLike } from './prompt-composer.ts'
 import { registerPlaceholderTools, type ToolRegistryLike } from './tools.ts'
 import { createVectorPolicy, type VectorPolicy } from './vector.ts'
 import { createWriteAudit, createWritePort, type WritePort } from './write-port.ts'
@@ -153,6 +153,20 @@ export interface Runtime {
    */
   readonly version?: VersionReader
   /**
+   * The plan composed at mount, present once the section was assembled.
+   *
+   * Exposed rather than logged here because *where* an injection row goes belongs
+   * to the audit story (2.6); what this handle can guarantee is that the numbers
+   * an audit row would report are the numbers that actually reached the host —
+   * the same object `register()` consumed, not a recomputation.
+   *
+   * It is deliberately a mount-time snapshot: nothing recomposes per round yet, so
+   * claiming otherwise would promise freshness the implementation does not have.
+   * Per-round plans arrive with Epic 7, when the state tail finally has a source
+   * that changes between turns.
+   */
+  readonly injection?: InjectionPlan
+  /**
    * Drain the write queue, then close the database and release both injection
    * registrations. Idempotent, and returns a promise the caller must await:
    * closing the handle under a queued write would lose it.
@@ -245,6 +259,11 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
     personaText: deps.personaText ?? loadPersonaText(deps.personaPath),
     personaMaxChars: config.inject.personaMaxChars,
     tailMaxTokens: config.inject.tailMaxTokens,
+    // The pool the recall tier may fill is derived from the configured count and
+    // the per-item estimate; the composer owns the arithmetic, this passes the
+    // two inputs so the budget is never a number invented at the call site.
+    topK: config.recall.topK,
+    recallItemBudgetTokens: RECALL_ITEM_BUDGET_TOKENS,
     ...(deps.readState === undefined ? {} : { readState: deps.readState }),
   })
 
@@ -255,16 +274,30 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
   let write: WritePort | undefined
   let evidence: EvidenceReader | undefined
   let version: VersionReader | undefined
+  let injection: InjectionPlan | undefined
   let disposed = false
   let disposing: Promise<void> | undefined
 
   const registerSection = (): void => {
+    let outcome: ReturnType<PromptComposer['register']>
     try {
-      const outcome = composer.register(ctx.systemPrompt)
-      sectionRegistered = outcome.personaRegistered || composer.composePersona().text.length > 0
+      outcome = composer.register(ctx.systemPrompt)
     } catch (error) {
+      // `register` reports refused channels instead of throwing, so this is a
+      // failure before any host call: there is no plan, and a stale one would let
+      // a reader mistake an old assembly for this one.
+      injection = undefined
       sectionRegistered = false
       logger.warn(OPERATIONAL_LOG_CODES.sectionRegistrationFailed, { reason: describeError(error) })
+      return
+    }
+    // The plan this boot composed, whether or not the host took it: a caller
+    // reading the numbers is asking what was assembled, and a refused
+    // registration still composed exactly that.
+    injection = outcome.plan
+    sectionRegistered = composer.hasSection
+    if (outcome.failed.length > 0) {
+      logger.warn(OPERATIONAL_LOG_CODES.sectionRegistrationFailed, { reason: outcome.failed.join(',') })
     }
   }
 
@@ -522,6 +555,7 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
       ...(write === undefined ? {} : { write }),
       ...(evidence === undefined ? {} : { evidence }),
       ...(version === undefined ? {} : { version }),
+      ...(injection === undefined ? {} : { injection }),
       dispose,
     }
   }

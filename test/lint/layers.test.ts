@@ -80,6 +80,21 @@ describe('lint: layer dependencies', () => {
     }
   })
 
+  it('rejects prompt-seam calls on the tail channel too', () => {
+    const file = join(fixture, 'src', 'seams', 'leak.ts')
+    // The identity section and the state tail are two channels of the same seam:
+    // guarding only one of them would let the tail be registered anywhere.
+    writeFileSync(file, "export function leak(ctx: any) {\n  return ctx.systemPrompt.context({ name: 'x', order: 1, text: 'y' })\n}\n")
+    try {
+      const result = check(fixture)
+      expect(result.status).toBe(1)
+      expect(result.output).toContain('prompt-seam-owner')
+      expect(result.output).toContain('leak.ts')
+    } finally {
+      rmSync(file, { force: true })
+    }
+  })
+
   it('rejects hard deletes outside the snapshot module', () => {
     const file = join(fixture, 'src', 'ops', 'leak.ts')
     mkdirSync(join(fixture, 'src', 'ops'), { recursive: true })

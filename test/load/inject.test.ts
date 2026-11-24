@@ -4,9 +4,12 @@
  */
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { apply } from '../../src/index.ts'
+import { parseConfig, resolvePaths, type Config } from '../../src/seams/config.ts'
 import { normalizePersona } from '../../src/seams/prompt-composer.ts'
+import { closeDatabase, openDatabase } from '../../src/store/db.ts'
 import { registerPlaceholderTools, type ToolRegistryLike } from '../../src/seams/tools.ts'
 import { createRecordingContext, tempHome, type TempHome } from '../support/fake-ctx.ts'
 
@@ -33,14 +36,79 @@ afterEach(() => {
 })
 
 /** Run `apply` against a fresh recording context. */
-function load(): { sections: ReturnType<typeof createRecordingContext>; stderr: string; home: TempHome } {
+function load(config: unknown = {}): {
+  sections: ReturnType<typeof createRecordingContext>
+  stderr: string
+  home: TempHome
+} {
   const home = tempHome()
   homes.push(home)
   const recorder = createRecordingContext({ home: home.dir })
   const { stderr } = captureStderr(() => {
-    apply(recorder.ctx, {})
+    apply(recorder.ctx, config)
   })
   return { sections: recorder, stderr, home }
+}
+
+/**
+ * Mount against a temp home whose database has been seeded first.
+ *
+ * Story 2.4 AC5: assembling the prompt must not read the store, so a scene
+ * node left behind by a dream cycle may not change one byte of the injection.
+ * The configuration is the same one the plain `load()` uses, and both mounts
+ * must come up healthy — otherwise "same bytes" could just mean "both failed".
+ * @param config - the configuration both mounts share.
+ * @param seed - called with the data directory before the plugin mounts.
+ * @returns the recorder, the captured stderr and the home.
+ */
+function loadWithSeed(config: Config, seed: (dataDir: string) => void): {
+  sections: ReturnType<typeof createRecordingContext>
+  stderr: string
+  home: TempHome
+} {
+  const home = tempHome()
+  homes.push(home)
+  const paths = resolvePaths(config, (...segments) => join(home.dir, ...segments))
+  mkdirSync(paths.dataDir, { recursive: true })
+  seed(paths.dataDir)
+  const recorder = createRecordingContext({ home: home.dir })
+  const { stderr } = captureStderr(() => {
+    apply(recorder.ctx, config)
+  })
+  return { sections: recorder, stderr, home }
+}
+
+/**
+ * Write one scene node into the store, the way a dream cycle would.
+ *
+ * The write is checked here rather than in the caller: if the node never landed,
+ * the test that compares two mounts would compare an empty store with an empty
+ * store and still pass, which is the one way this check can lie.
+ */
+function writeScene(dataDir: string): void {
+  const opened = openDatabase({
+    file: join(dataDir, 'oh-my-whale.tdb'),
+    dim: 4,
+    memoryLimitMb: 512,
+  })
+  if (!opened.ok) throw new Error('could not open the seeded store: ' + opened.reason)
+  const id = opened.db.insert([0, 0, 0, 0], {
+    kind: 'scene',
+    mem_key: 'scene:weeknight-cooking',
+    name: 'weeknight-cooking',
+    description: '一起做晚饭的那些晚上',
+    episode_refs: [],
+    confidence: 0.6,
+    active_slot: 1,
+    valid_from: '2026-11-20T10:00:00.000Z',
+    recorded_at: '2026-11-20T10:00:00.000Z',
+    vec_state: 'pending',
+  })
+  const stored = opened.db.getPayload(id)
+  closeDatabase(opened.db)
+  if (stored === undefined || stored['kind'] !== 'scene') {
+    throw new Error('the scene node did not land in the seeded store')
+  }
 }
 
 describe('load: identity section', () => {
@@ -78,7 +146,7 @@ describe('load: identity section', () => {
     expect(normalizePersona(crlf, 1200).text).toBe(normalizePersona(lf, 1200).text)
   })
 
-  it('registers no state tail in Epic 1', () => {
+  it('registers no state tail while the tail has no source', () => {
     const { sections } = load()
     expect(sections.contexts).toEqual([])
   })
@@ -208,3 +276,26 @@ describe('load: optional host surfaces', () => {
     expect(guarded.get('tools')).toBeUndefined()
   })
 })
+
+describe('load: what the injection may read (Story 2.4)', () => {
+  it('injects the same bytes whether or not a scene is in the store', () => {
+    // One configuration for both mounts, with a small dimension so the seeded
+    // store can be written cheaply: a dimension mismatch would make the two
+    // mounts disagree for a reason that has nothing to do with the scene.
+    const parsed = parseConfig({ db: { dim: 4 } })
+    if (!parsed.ok) throw new Error('the shared config did not parse: ' + JSON.stringify(parsed.issues))
+    const config = parsed.config
+    const empty = load(config)
+    const seeded = loadWithSeed(config, writeScene)
+    const textOf = (recorder: ReturnType<typeof createRecordingContext>): string =>
+      recorder.sections.find(section => section.name === 'harness:identity')?.text ?? ''
+    // Both mounts came up healthy: "same bytes" must not be "both degraded".
+    expect(empty.stderr).toContain('state=ok')
+    expect(seeded.stderr).toContain('state=ok')
+    expect(textOf(seeded.sections)).toBe(textOf(empty.sections))
+    expect(textOf(seeded.sections).length).toBeGreaterThan(0)
+    // Both mounts must record the same registrations, not just the same text.
+    expect(seeded.sections.contexts).toEqual(empty.sections.contexts)
+  })
+})
+

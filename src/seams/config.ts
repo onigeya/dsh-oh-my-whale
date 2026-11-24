@@ -38,6 +38,16 @@ export const DEFAULT_API_KEY_ENV = 'SILICONFLOW_API_KEY'
 export const DEFAULT_EMBEDDING_ENDPOINT = 'https://api.siliconflow.cn/v1/embeddings'
 /** Default recall result count (AD-8). */
 export const DEFAULT_TOP_K = 5
+/**
+ * Estimated tokens one recalled item is budgeted for, used only to derive the
+ * injection pool (AD-7).
+ *
+ * AD-7 and NFR-9 bound the recall tier by item count ("≤5 条"), never by tokens, so the pool
+ * needs a per-item estimate before the three tiers can be added up. 60 is the
+ * conservative side of a one-sentence memory plus its label; it is a derivation
+ * input, not a fourth budget the other documents have to agree with.
+ */
+export const RECALL_ITEM_BUDGET_TOKENS = 60
 /** Most predicates a model may introduce in one local day (AD-27). */
 export const DEFAULT_MAX_NEW_PREDS_PER_DAY = 20
 
