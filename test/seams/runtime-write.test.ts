@@ -395,3 +395,94 @@ describe('runtime: the host session log (AD-6)', () => {
     await cleanup?.()
   })
 })
+
+describe('runtime: the version reader (Story 2.3)', () => {
+  it('is assembled beside the write side, and answers a rewrite without a second mount', async () => {
+    const { runtime } = boot()
+    expect(runtime.version).toBeDefined()
+    const first = await runtime.write?.remember({
+      ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'lives_in', obj: '杭州' }],
+    }, 'model', 'remember')
+    expect(first?.ok).toBe(true)
+    const second = await runtime.write?.remember({
+      ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'lives_in', obj: '上海' }],
+    }, 'model', 'remember')
+    expect(second?.ok).toBe(true)
+
+    const history = runtime.version?.history('assertion:Elliott:lives_in')
+    expect(history?.ok).toBe(true)
+    expect(history?.versions).toHaveLength(2)
+    expect(history?.versions.map(version => version.live)).toEqual([false, true])
+    expect(history?.versions[0]?.obj).toBe('杭州')
+    expect(history?.versions[1]?.obj).toBe('上海')
+    const ledger = runtime.version?.ledger('assertion:Elliott:lives_in')
+    expect(ledger?.entries.map(entry => entry.kind)).toEqual(['insert', 'supersede'])
+  })
+
+  it('is disposed with the runtime, rather than answering from a closed handle', async () => {
+    const { runtime } = boot()
+    await runtime.write?.remember({
+      ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'lives_in', obj: '杭州' }],
+    }, 'model', 'remember')
+    const reader = runtime.version
+    expect(reader).toBeDefined()
+    await runtime.dispose()
+    runtimes.length = 0
+    const answer = reader?.history('assertion:Elliott:lives_in')
+    expect(answer?.ok).toBe(false)
+    expect(answer?.code).toBe('E_GATE_DOWN')
+  })
+
+  it('answers /omw history and /omw ledger through a real apply() mount', async () => {
+    const { home } = homeAt()
+    const commands: CommandDefinitionLike[] = []
+    const registry = {
+      register(definition: CommandDefinitionLike): () => void {
+        commands.push(definition)
+        return () => {}
+      },
+    }
+    const recorder = createRecordingContext({ home: home.dir })
+    let cleanup: (() => Promise<void>) | undefined
+    apply({
+      ...recorder.ctx,
+      get: (name: string) => (name === 'commands' ? registry : undefined),
+      effect: (callback) => {
+        cleanup = callback() as (() => Promise<void>) | undefined
+      },
+    }, { db: { dim: TEST_DIM } })
+
+    const remember = recorder.definitions.find(definition => definition.name === 'remember')
+    if (remember === undefined) throw new Error('remember was not registered')
+    for (const city of ['杭州', '上海']) {
+      const written = await remember.execute({
+        patch: { ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'lives_in', obj: city }] },
+      }, { agent: { id: 'session-alpha' } }) as { ok: boolean }
+      expect(written.ok).toBe(true)
+    }
+
+    const command = commands.find(entry => entry.name === 'omw')
+    if (command === undefined) throw new Error('/omw was not registered')
+    const history = await command.handler({ rawInput: ' history assertion:Elliott:lives_in' }) as { kind: string; text?: string }
+    expect(history.kind).toBe('success')
+    const historyText = history.text ?? ''
+    expect(historyText).toContain('[已退役] 杭州')
+    expect(historyText).toContain('[当前版本] 上海')
+    const historyJson = JSON.parse(historyText.split('\n').at(-1) ?? '{}') as { versions: { live: boolean }[] }
+    expect(historyJson.versions.map(version => version.live)).toEqual([false, true])
+
+    const ledger = await command.handler({ rawInput: ' ledger assertion:Elliott:lives_in' }) as { kind: string; text?: string }
+    expect(ledger.kind).toBe('success')
+    const ledgerText = ledger.text ?? ''
+    expect(ledgerText).toContain('insert')
+    expect(ledgerText).toContain('supersede')
+    const ledgerJson = JSON.parse(ledgerText.split('\n').at(-1) ?? '{}') as { entries: { kind: string }[] }
+    expect(ledgerJson.entries.map(entry => entry.kind)).toEqual(['insert', 'supersede'])
+
+    // The ledger key itself has no chain: it is a record, not a memory version.
+    const refused = await command.handler({ rawInput: ' history rejected:let-me' }) as { kind: string; text?: string }
+    expect(refused.kind).toBe('error')
+    expect(refused.text ?? '').toContain('账本')
+    await cleanup?.()
+  })
+})

@@ -114,7 +114,7 @@ export function apply(ctx: ApplyContext, config?: unknown, seams?: ApplySeams): 
         sectionRegistered: runtime.loaded.sectionRegistered,
         sectionChars: runtime.sectionChars,
         tools: runtime.loaded.tools,
-      }), () => runtime.write, () => runtime.evidence)
+      }), () => runtime.write, () => runtime.evidence, () => runtime.version)
     } catch {
       return undefined
     }

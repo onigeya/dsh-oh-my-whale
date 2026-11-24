@@ -32,6 +32,37 @@ export interface ReadGateway {
    * @returns the pointers, empty when the assertion is absent or unsupported.
    */
   listEvidenceFor(assertionMemKey: string, options?: EvidenceReadOptions): readonly StoredEvidenceNode[]
+  /**
+   * Every version of one business key, live and retired.
+   *
+   * A retired version is not deleted state (AD-5): it is the same key under a
+   * higher `active_slot`, which is why this read does not filter on
+   * `superseded_at` at all.
+   * @param memKey - the business key.
+   * @returns the versions, empty when the key was never written.
+   */
+  findVersions(memKey: string): readonly StoredNode[]
+  /**
+   * Every ledger entry that names one business key, as its target or as part of
+   * what the change touched.
+   *
+   * Both halves matter: a decision's `target_mem_key` is the key the change was
+   * about, while `affected` also carries the keys written in the same batch —
+   * including the evidence pointers a fact was given. Asking `/omw ledger` about
+   * a pointer key must therefore find the decision that linked it, or the ledger
+   * would report that nothing ever happened to a key a person can see in the
+   * store.
+   * @param memKey - the business key to explain.
+   * @returns the entries, empty when nothing ever named the key.
+   */
+  listDecisionsFor(memKey: string): readonly StoredNode[]
+}
+
+/** Whether one ledger payload names a key, as its target or in what it touched. */
+function names(payload: Readonly<Record<string, unknown>>, memKey: string): boolean {
+  if (payload['target_mem_key'] === memKey) return true
+  const affected = payload['affected']
+  return Array.isArray(affected) && affected.includes(memKey)
 }
 
 /**
@@ -62,6 +93,15 @@ export function createReadGateway(db: Database): ReadGateway {
       // read surface cannot forget the rule.
       if (options?.includeSensitive === true) return pointers
       return pointers.filter(pointer => pointer.payload['deidentified'] !== true)
+    },
+    findVersions(memKey: string): readonly StoredNode[] {
+      return assertions.findAllVersionsByKey(memKey)
+    },
+    listDecisionsFor(memKey: string): readonly StoredNode[] {
+      // Filtered in memory rather than in TQL: the query language has no
+      // containment operator, so `affected` cannot be asked about, and the
+      // ledger is only ever read by a person asking for its reasons.
+      return assertions.findAllDecisions().filter(node => names(node.payload, memKey))
     },
   }
 }

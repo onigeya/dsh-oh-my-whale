@@ -94,20 +94,26 @@ describe('writing one assertion', () => {
     expect(h.rows()).toHaveLength(2)
   })
 
-  it('refuses a different value for a single-valued fact, and says why', async () => {
+  it('retires the old value when a single-valued fact is rewritten', async () => {
     const h = harness()
     await h.port.remember({ ops: [assertOp({ pred: 'name', obj: 'Elliott' })] }, 'user', 'remember')
     const afterFirst = h.store.db.nodeCount()
     const answer = await h.port.remember({ ops: [assertOp({ pred: 'name', obj: 'Eliot' })] }, 'user', 'remember')
 
-    expect(answer.ok).toBe(false)
-    expect(answer.code).toBe('E_CONFLICT')
-    expect(answer.items).toEqual([])
-    expect(answer.mem_keys).toEqual([])
-    expect(answer.message).toContain('已有不同的值')
-    // The rejected row is a second transaction, so exactly one node lands.
-    expect(h.store.db.nodeCount()).toBe(afterFirst + 1)
-    expect(h.rows().at(-1)).toMatchObject({ outcome: 'rejected', code: 'E_CONFLICT' })
+    expect(answer.ok).toBe(true)
+    expect(answer.code).toBe(E_OK)
+    expect(answer.items.map(item => item.outcome)).toEqual(['superseded'])
+    // The caller has to see that a version was retired: 'wrote 0 new facts'
+    // would read as a no-op to someone who just corrected themselves.
+    expect(answer.message).toContain('1 条旧版本已退役（改写）')
+    expect(answer.mem_keys).toEqual(['assertion:Elliott:name'])
+    // A rewrite lands the replacement and its ledger entry; the retired version
+    // is an update to a node that already existed.
+    expect(h.store.db.nodeCount()).toBe(afterFirst + 2)
+    expect(h.rows().at(-1)).toMatchObject({ outcome: 'committed' })
+    const templates = createAssertionTemplates(h.store.db)
+    expect(templates.findLiveByKey('assertion:Elliott:name')?.payload['obj']).toBe('Eliot')
+    expect(templates.findAllVersionsByKey('assertion:Elliott:name')).toHaveLength(2)
   })
 
   it('refuses a table it cannot parse, and still records the refusal', async () => {
@@ -264,17 +270,17 @@ describe('promoting a predicate', () => {
 })
 
 describe('one bad op refuses the whole table', () => {
-  it('stores nothing when a writable op shares a table with a conflicting one', async () => {
+  it('stores nothing when a writable op shares a table with a contradictory one', async () => {
     const h = harness()
-    // A single-valued fact already on file: the second op below contradicts it,
-    // and rewriting it belongs to Story 2.3, not to this table.
-    await h.port.remember({ ops: [assertOp({ pred: 'name', obj: 'Elliott' })] }, 'user', 'remember')
     const before = h.store.db.nodeCount()
     const rowsBefore = h.rows().length
 
+    // Two answers for one single-valued fact in one table: there is no earlier
+    // version to retire and no later one to keep, so the whole table is refused.
     const answer = await h.port.remember({
       ops: [
         assertOp({ obj: 'tea' }),
+        assertOp({ pred: 'name', obj: 'Elliott' }),
         assertOp({ pred: 'name', obj: 'Eliot' }),
       ],
     }, 'model', 'remember')
@@ -290,24 +296,27 @@ describe('one bad op refuses the whole table', () => {
     expect(rows[0]).toMatchObject({ kind: 'write', outcome: 'rejected', code: 'E_CONFLICT', mem_keys: [] })
     const templates = createAssertionTemplates(h.store.db)
     expect(templates.findLiveByKey('assertion:Elliott:likes:tea')).toBeUndefined()
+    expect(templates.findLiveByKey('assertion:Elliott:name')).toBeUndefined()
   })
 
-  it('reports the same item shape whether the table or the store refused it', async () => {
+  it('reports the same shape whether the table failed to parse or to agree with itself', async () => {
     const h = harness()
-    await h.port.remember({ ops: [assertOp({ pred: 'name', obj: 'Elliott' })] }, 'user', 'remember')
-
-    const stored = await h.port.remember({
-      ops: [assertOp({ pred: 'name', obj: 'Eliot' })],
-    }, 'model', 'remember')
-    const inTable = await h.port.remember({
+    const unparseable = await h.port.remember({ ops: [] }, 'model', 'remember')
+    const selfContradictory = await h.port.remember({
       ops: [assertOp({ pred: 'name', obj: 'Elliott' }), assertOp({ pred: 'name', obj: 'Eliot' })],
     }, 'model', 'remember')
 
-    expect(stored.code).toBe('E_CONFLICT')
-    expect(inTable.code).toBe('E_CONFLICT')
-    expect(stored.items).toEqual(inTable.items)
-    expect(stored.mem_keys).toEqual(inTable.mem_keys)
-    expect(stored.items).toEqual([])
+    // A refusal is a refusal: the caller branches on `ok`, and a shape that
+    // varied by which check caught it would make that branch unreliable. The
+    // same holds for a refusal the store makes, pinned in
+    // `test/seams/write-port-failures.test.ts`.
+    expect(unparseable.ok).toBe(false)
+    expect(selfContradictory.ok).toBe(false)
+    expect(unparseable.items).toEqual(selfContradictory.items)
+    expect(unparseable.mem_keys).toEqual(selfContradictory.mem_keys)
+    expect(selfContradictory.items).toEqual([])
+    expect(selfContradictory.mem_keys).toEqual([])
+    expect(selfContradictory.message).toContain('assertion:Elliott:name')
   })
 })
 

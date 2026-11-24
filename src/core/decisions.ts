@@ -153,3 +153,74 @@ export function buildDecisionPayload(
   if (input.precedentId !== undefined) payload['precedent_id'] = input.precedentId
   return { memKey, payload }
 }
+
+/**
+ * One ledger entry as a reader sees it: the shape FR-3 and AD-21 name.
+ *
+ * The stored node keeps `kind: 'decision'` so a `kind` scan finds every entry;
+ * the action therefore travels under `decision_kind` in the payload and is
+ * projected back to `kind` here. Nothing outside this function has to know the
+ * storage shape, and the trade-off stays in one place instead of two.
+ */
+export interface DecisionView {
+  /** Instant of the change, ISO-8601 UTC. */
+  readonly ts: string
+  /** Who caused it: `user` | `model` | `seed` | `system`. */
+  readonly actor: string
+  /** What it did: `insert` | `supersede` | `arbitrate` | `resolve_flag` | `migrate` | `revert`. */
+  readonly kind: string
+  /** Operation id, shared by every entry one op wrote. */
+  readonly op_id: string
+  /** `mem_key`s this op wrote or changed (data-model §6 closure). */
+  readonly affected: readonly string[]
+  /** The state the op was about. */
+  readonly target_mem_key: string
+  readonly from?: unknown
+  readonly to?: unknown
+  readonly reason: string
+  readonly contract_version: number
+  readonly precedent_id?: string
+}
+
+/**
+ * Read one stored payload as a ledger entry.
+ * @param payload - the stored payload, as read back from the engine.
+ * @returns the entry, or `undefined` when the payload is not a decision node.
+ */
+export function decisionView(payload: Readonly<Record<string, unknown>>): DecisionView | undefined {
+  if (payload['kind'] !== 'decision') return undefined
+  const ts = textField(payload['ts'])
+  const actor = textField(payload['actor'])
+  const kind = textField(payload['decision_kind'])
+  const opId = textField(payload['op_id'])
+  const target = textField(payload['target_mem_key'])
+  const reason = textField(payload['reason'])
+  const contractVersion = payload['contract_version']
+  if (ts === undefined || actor === undefined || kind === undefined) return undefined
+  if (opId === undefined || target === undefined || reason === undefined) return undefined
+  if (typeof contractVersion !== 'number') return undefined
+  const affected = payload['affected']
+  const view: DecisionView = {
+    ts,
+    actor,
+    kind,
+    op_id: opId,
+    affected: Array.isArray(affected) ? affected.filter((key): key is string => typeof key === 'string') : [],
+    target_mem_key: target,
+    reason,
+    contract_version: contractVersion,
+    ...(payload['from'] === undefined ? {} : { from: payload['from'] }),
+    ...(payload['to'] === undefined ? {} : { to: payload['to'] }),
+    ...(typeof payload['precedent_id'] === 'string' ? { precedent_id: payload['precedent_id'] } : {}),
+  }
+  return view
+}
+
+/**
+ * Read a required string field.
+ * @param value - the stored value.
+ * @returns the text, or `undefined` when the field is missing or empty.
+ */
+function textField(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' ? value : undefined
+}

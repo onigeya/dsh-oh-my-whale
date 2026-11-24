@@ -87,13 +87,23 @@ export interface WriteGateway {
   findPredicate(name: string): StoredNode | undefined
   /**
    * Every version of one business key, live or retired.
-   *
-   * The planner needs the highest slot already taken before it retires a version,
-   * so two retirements in the same millisecond cannot collide on the unique index.
    * @param memKey - the business key.
    * @returns the versions, in engine order.
    */
   findVersions(memKey: string): readonly StoredNode[]
+  /**
+   * The versions of one key whose slot is at or above an instant.
+   *
+   * The planner needs the highest slot already taken before it retires a version,
+   * so two retirements in the same millisecond cannot collide on the unique index.
+   * Slots below the instant cannot raise the answer — the slot it will use is
+   * already at least that instant — so asking for these few keeps the write path
+   * flat however long the chain grows.
+   * @param memKey - the business key.
+   * @param sinceMs - the instant the write happens at.
+   * @returns the versions at or above that slot.
+   */
+  findVersionsSinceSlot(memKey: string, sinceMs: number): readonly StoredNode[]
   /**
    * How many predicates the model has proposed since local midnight.
    *
@@ -204,6 +214,9 @@ export function createWriteGateway(
     },
     findVersions(memKey: string): readonly StoredNode[] {
       return templates.findAllVersionsByKey(memKey)
+    },
+    findVersionsSinceSlot(memKey: string, sinceMs: number): readonly StoredNode[] {
+      return templates.findVersionsSinceSlot(memKey, sinceMs)
     },
     countModelPredicatesToday(nowMs: number): number {
       return templates.findModelPredsSince(startOfLocalDayIso(new Date(nowMs))).length

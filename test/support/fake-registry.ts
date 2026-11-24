@@ -115,7 +115,7 @@ export const PLAN_NOW = Date.UTC(2026, 10, 23, 4, 0, 0)
  */
 export function fakeContext(
   store: FakeStore,
-  overrides: Partial<Omit<PatchContext, 'lookupLive' | 'lookupVersions'>> = {},
+  overrides: Partial<Omit<PatchContext, 'lookupLive' | 'lookupSpentSlots'>> = {},
 ): PatchContext {
   return {
     caller: 'model',
@@ -125,7 +125,13 @@ export function fakeContext(
     newPredsToday: 0,
     ...overrides,
     lookupLive: memKey => store.live.get(memKey),
-    lookupVersions: memKey => store.versions.get(memKey) ?? [],
+    // The fake keeps every version in one list; the bound is applied here so a
+    // case can prove the planner asked for the instant and not the whole chain.
+    lookupSpentSlots: (memKey, sinceMs) =>
+      (store.versions.get(memKey) ?? []).filter(node => {
+        const slot = node.payload['active_slot']
+        return typeof slot === 'number' && slot >= sinceMs
+      }),
   }
 }
 

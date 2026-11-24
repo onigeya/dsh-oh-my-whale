@@ -71,10 +71,10 @@ describe('tool errors: a write failure becomes a tool code', () => {
 })
 
 describe('tool errors: one sentence per failure kind', () => {
-  it('explains a uniqueness violation as an identity change that is not this story', () => {
+  it('explains a uniqueness violation as a race, now that a rewrite retires in-batch', () => {
     const failure = writeFailureError(UNIQUE, '写入补丁表')
     expect(failure.code).toBe('E_CONFLICT')
-    expect(failure.message).toBe('写入补丁表：业务键已被另一条活动版本占用（改写属 2.3）')
+    expect(failure.message).toBe('写入补丁表：业务键已被另一条活动版本占用（同键并发写入，本次没有落库）')
   })
 
   it('names the read-only handle and the operation it refused', () => {

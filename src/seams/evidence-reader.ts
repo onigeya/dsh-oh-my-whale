@@ -19,7 +19,7 @@ import type { StoredEvidenceNode } from '../store/templates/evidence.ts'
 import type { Database } from '../store/db.ts'
 import { createReadGateway } from '../store/commits/reads.ts'
 import { isUnreadableQuote } from '../core/evidence.ts'
-import { E_OK } from './write-port.ts'
+import { E_OK } from '../core/tool-errors.ts'
 
 /**
  * One pointer, as the reader reports it.

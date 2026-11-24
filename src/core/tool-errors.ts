@@ -27,6 +27,16 @@ export const TOOL_ERROR_CODES = [
   'E_NOT_IMPLEMENTED',
 ] as const
 
+/**
+ * The code a successful answer carries.
+ *
+ * It lives beside the closed vocabulary rather than in the write seam: a reader
+ * that only ever reads still has to say 'this worked', and reaching into
+ * `src/seams/write-port.ts` to say it would tie the read side to the write side
+ * for one string.
+ */
+export const E_OK = 'OK'
+
 /** One code from {@link TOOL_ERROR_CODES}. */
 export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[number]
 
@@ -78,7 +88,11 @@ export function writeFailureError(failure: WriteFailure, operation: string): Too
   const code = toolCodeForWriteFailure(failure)
   switch (failure.kind) {
     case 'unique':
-      return toolError(code, `${operation}：业务键已被另一条活动版本占用（改写属 2.3）`)
+      // A rewrite retires the old version in the same batch, so reaching here
+      // means two writers raced for one key, not that the caller tried to
+      // change their mind. Saying which is the difference between retrying and
+      // giving up.
+      return toolError(code, `${operation}：业务键已被另一条活动版本占用（同键并发写入，本次没有落库）`)
     case 'read-only':
       return toolError(code, `${operation}：数据库句柄只读，写面未就绪（${failure.operation}）`)
     case 'closed':

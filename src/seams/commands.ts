@@ -31,6 +31,7 @@ import { PERSONA_SECTION_NAME } from './prompt-composer.ts'
 import type { Logger } from './logger.ts'
 import type { WritePort } from './write-port.ts'
 import type { EvidenceReadAnswer, EvidenceReader } from './evidence-reader.ts'
+import type { LedgerAnswer, VersionHistoryAnswer, VersionReader } from './version-reader.ts'
 
 /** Outcome of one invocation, as the host's command registry expects it. */
 export type CommandResultLike =
@@ -253,6 +254,8 @@ export function inspectInProcess(view: DoctorView): DoctorReport {
 export const OMW_USAGE = `/omw doctor — 在本进程内跑五项体检（库、快照、维度、凭据、注入段），复用当前实例的库句柄
 /omw pred promote <谓词名> --single|--multi --reason <理由> — 把谓词提升为单值或多值（只有用户能做这件事）
 /omw evidence <mem_key> — 列出该业务键的证据指针（会话、区间、引文、是否截断、是否脱敏）
+/omw history <mem_key> — 列出该业务键的全部版本（旧值、valid_from/valid_to、谁在什么时候退役了它）
+/omw ledger <mem_key> — 列出改动过该业务键的决策记录（动作、操作号、影响范围、理由）
 /omw help — 显示这段说明`
 
 /** One parsed `/omw pred promote` invocation. */
@@ -326,13 +329,18 @@ export function registerOmwCommand(
   view: () => DoctorView,
   write?: () => WritePort | undefined,
   evidence?: () => EvidenceReader | undefined,
+  version?: () => VersionReader | undefined,
 ): () => void {
   return registry.register({
     name: 'omw',
-    description: '哦鲸鲸体检：/omw doctor 在当前进程内跑五项检查；/omw pred promote 提升谓词基数；/omw evidence 查一条记忆的证据指针',
-    input: { hint: 'doctor | pred promote <名> --single|--multi --reason <理由> | evidence <mem_key>' },
+    description: '哦鲸鲸体检：/omw doctor 在当前进程内跑五项检查；/omw pred promote 提升谓词基数；/omw evidence 查证据指针；/omw history 查版本链；/omw ledger 查决策账本',
+    input: { hint: 'doctor | pred promote <名> --single|--multi --reason <理由> | evidence <mem_key> | history <mem_key> | ledger <mem_key>' },
     handler: async (invocation: CommandInvocationLike): Promise<CommandResultLike> => {
       const sub = invocation.rawInput.trim().toLowerCase()
+      // The subcommand is the first token, whatever separated it from its
+      // argument: a tab after `history` is the same request as a space, and a
+      // literal `'history '` prefix test answered 'unknown subcommand' to it.
+      const head = /^[^\s]*/u.exec(sub)?.[0] ?? ''
       if (sub === 'doctor') {
         const report = inspectInProcess(view())
         return { kind: report.failures === 0 ? 'success' : 'error', text: report.text }
@@ -340,13 +348,19 @@ export function registerOmwCommand(
       // Exactly `pred promote`: a prefix match would route `/omw predict` or
       // `/omw predicate` here and then answer "unknown subcommand" about a
       // command the user never typed.
-      if (sub === 'pred' || sub.startsWith('pred ')) {
+      if (head === 'pred') {
         return promote(invocation.rawInput, write)
       }
       // `evidence` reads a business key, which is case-sensitive: the dispatch
       // test above lowercases, so the key is cut from the raw text instead.
-      if (sub === 'evidence' || sub.startsWith('evidence ')) {
+      if (head === 'evidence') {
         return readEvidence(invocation.rawInput, evidence)
+      }
+      if (head === 'history') {
+        return readHistory(invocation.rawInput, version)
+      }
+      if (head === 'ledger') {
+        return readLedger(invocation.rawInput, version)
       }
       if (sub === '' || sub === 'help' || sub === '--help') {
         return { kind: 'success', text: OMW_USAGE }
@@ -401,13 +415,27 @@ export type EvidenceKeyParse =
  * @returns the key as typed, or the reason it cannot be taken.
  */
 export function parseEvidenceKey(raw: string): EvidenceKeyParse {
+  return parseMemKeyArgument(raw, 'evidence')
+}
+
+/**
+ * Cut the business key out of `<subcommand> <mem_key>`.
+ *
+ * Shared by every single-key read so the three commands cannot drift: a key is
+ * case-sensitive, never contains whitespace, and a second token is a mistake
+ * reported back rather than silently dropped.
+ * @param raw - the command text after `/omw`.
+ * @param subcommand - the subcommand, used only in the usage hint.
+ * @returns the key as typed, or the reason it cannot be taken.
+ */
+export function parseMemKeyArgument(raw: string, subcommand: string): EvidenceKeyParse {
   const tokens = raw.trim().split(/\s+/u)
   const key = tokens[1] ?? ''
   if (key === '') return { ok: true, key }
   if (tokens.length > 2) {
     return {
       ok: false,
-      reason: `一次只查一个业务键，后面这些多写的词没有当作键：${tokens.slice(2).join(' ')}`,
+      reason: `/omw ${subcommand} 一次只查一个业务键，后面这些多写的词没有当作键：${tokens.slice(2).join(' ')}`,
     }
   }
   return { ok: true, key }
@@ -494,5 +522,127 @@ async function readEvidence(
     ...(answer.degraded === undefined ? {} : { degraded: answer.degraded }),
   }
   lines.push(JSON.stringify(payload))
+  return { kind: 'success', text: lines.join('\n') }
+}
+
+/**
+ * Render one version as a single human-readable line.
+ *
+ * The old value is rendered whole rather than truncated: seeing what the memory
+ * used to say is the whole point of asking for history.
+ * @param version - one version.
+ * @param index - its position in the chain.
+ * @returns one line.
+ */
+function renderVersion(version: VersionHistoryAnswer['versions'][number], index: number): string {
+  const value = version.obj ?? version.value ?? version.status ?? '（无值字段）'
+  const state = version.live ? '当前版本' : '已退役'
+  const from = version.valid_from ?? '?'
+  const to = version.valid_to ?? (version.live ? '至今' : '?')
+  const retiredAt = millisecondLabel(version.superseded_at)
+  const retired = retiredAt === undefined ? '' : `，退休于 ${retiredAt}`
+  const actor = version.actor === undefined ? '' : `，写入者 ${version.actor}`
+  return `${index + 1}. [${state}] ${value}（valid_from ${from} → valid_to ${to}${retired}${actor}）`
+}
+
+/**
+ * Render a millisecond timestamp as ISO text, or give up on it.
+ *
+ * `new Date(x).toISOString()` throws for a value outside the representable
+ * range, and one corrupt row must not reject the whole command: the field is
+ * printed as the raw number instead of taking the answer down with it.
+ * @param ms - milliseconds since the epoch, or `undefined` when absent.
+ * @returns the ISO text, the raw number for an unrepresentable value, or `undefined`.
+ */
+function millisecondLabel(ms: number | undefined): string | undefined {
+  if (ms === undefined) return undefined
+  const when = new Date(ms)
+  return Number.isNaN(when.getTime()) ? String(ms) : when.toISOString()
+}
+
+/**
+ * Render one ledger entry as a single human-readable line.
+ *
+ * `affected` is shown because it is what makes an operation reversible (AD-22):
+ * a revert names these keys, not the node ids.
+ * @param entry - one ledger entry.
+ * @param index - its position in the list.
+ * @returns one line.
+ */
+function renderDecision(entry: LedgerAnswer['entries'][number], index: number): string {
+  const from = entry.from === undefined ? '' : `（从 ${JSON.stringify(entry.from)}）`
+  const to = entry.to === undefined ? '' : `（到 ${JSON.stringify(entry.to)}）`
+  const affected = entry.affected.length === 0 ? '无' : entry.affected.join('、')
+  return `${index + 1}. ${entry.ts} ${entry.kind} by ${entry.actor}${from}${to}：${entry.reason}；操作号 ${entry.op_id}；影响 ${affected}`
+}
+
+/**
+ * Run one `history` read and render it.
+ *
+ * The JSON line is the machine-readable half of the same answer, so a script can
+ * check the versions without parsing prose.
+ * @param raw - the command text after `/omw`.
+ * @param version - reads the reader at invocation time, or `undefined` when the store is unusable.
+ * @returns the command result.
+ */
+function readHistory(
+  raw: string,
+  version?: () => VersionReader | undefined,
+): CommandResultLike {
+  const parsed = parseMemKeyArgument(raw, 'history')
+  if (!parsed.ok) return { kind: 'error', text: `${parsed.reason}\n\n${OMW_USAGE}` }
+  const memKey = parsed.key
+  if (memKey === '') {
+    return { kind: 'error', text: `需要给出一个业务键：/omw history <mem_key>\n\n${OMW_USAGE}` }
+  }
+  const reader = version?.()
+  if (reader === undefined) {
+    return { kind: 'error', text: '记忆库本次启动不可读（schema 未就绪或句柄已关闭），没有可查的版本链。' }
+  }
+  let answer: VersionHistoryAnswer
+  try {
+    answer = reader.history(memKey)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    return { kind: 'error', text: `读取版本链时出错：${reason}` }
+  }
+  if (!answer.ok) return { kind: 'error', text: answer.message }
+  // No fallback sentence for the empty list: the reader's own message already
+  // says why it is empty, and adding one would say it twice.
+  const lines = [answer.message, ...answer.versions.map((entry, index) => renderVersion(entry, index))]
+  lines.push(JSON.stringify({ ok: answer.ok, code: answer.code, mem_key: answer.mem_key, message: answer.message, versions: answer.versions }))
+  return { kind: 'success', text: lines.join('\n') }
+}
+
+/**
+ * Run one `ledger` read and render it.
+ * @param raw - the command text after `/omw`.
+ * @param version - reads the reader at invocation time, or `undefined` when the store is unusable.
+ * @returns the command result.
+ */
+function readLedger(
+  raw: string,
+  version?: () => VersionReader | undefined,
+): CommandResultLike {
+  const parsed = parseMemKeyArgument(raw, 'ledger')
+  if (!parsed.ok) return { kind: 'error', text: `${parsed.reason}\n\n${OMW_USAGE}` }
+  const memKey = parsed.key
+  if (memKey === '') {
+    return { kind: 'error', text: `需要给出一个业务键：/omw ledger <mem_key>\n\n${OMW_USAGE}` }
+  }
+  const reader = version?.()
+  if (reader === undefined) {
+    return { kind: 'error', text: '记忆库本次启动不可读（schema 未就绪或句柄已关闭），没有可查的决策账本。' }
+  }
+  let answer: LedgerAnswer
+  try {
+    answer = reader.ledger(memKey)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    return { kind: 'error', text: `读取决策账本时出错：${reason}` }
+  }
+  if (!answer.ok) return { kind: 'error', text: answer.message }
+  const lines = [answer.message, ...answer.entries.map((entry, index) => renderDecision(entry, index))]
+  lines.push(JSON.stringify({ ok: answer.ok, code: answer.code, mem_key: answer.mem_key, message: answer.message, entries: answer.entries }))
   return { kind: 'success', text: lines.join('\n') }
 }

@@ -55,10 +55,16 @@ describe('lint: layer dependencies', () => {
   })
 
   it('rejects triviumdb outside the store layer', () => {
-    writeFileSync(join(fixture, 'src', 'core', 'db.ts'), "import { TriviumDB } from 'triviumdb'\nexport const x = TriviumDB\n")
-    const result = check(fixture)
-    expect(result.status).toBe(1)
-    expect(result.output).toContain('triviumdb-owner')
+    const file = join(fixture, 'src', 'core', 'db.ts')
+    writeFileSync(file, "import { TriviumDB } from 'triviumdb'\nexport const x = TriviumDB\n")
+    try {
+      const result = check(fixture)
+      expect(result.status).toBe(1)
+      expect(result.output).toContain('triviumdb-owner')
+    } finally {
+      // Left in place it would fail every later case that expects a clean run.
+      rmSync(file, { force: true })
+    }
   })
 
   it('rejects prompt-seam calls outside the prompt composer', () => {
@@ -164,6 +170,89 @@ describe('lint: layer dependencies', () => {
     } finally {
       rmSync(file, { force: true })
     }
+  })
+
+  it('rejects a transaction op literal naming a hard delete, in every spelling', () => {
+    mkdirSync(join(fixture, 'src', 'core'), { recursive: true })
+    const spellings = [
+      ["bare", "export const a = { type: 'delete', id: 1 }"],
+      ['as const', "export const b = { type: ('unlink' as const), id: 1 }"],
+      ['concatenated', "export const c = { type: 'del' + 'ete', id: 1 }"],
+      ['template', 'export const d = { type: `unlinkLabel`, id: 1 }'],
+    ] as const
+    for (const [name, body] of spellings) {
+      const file = join(fixture, 'src', 'core', 'op.ts')
+      writeFileSync(file, `${body}\n`)
+      try {
+        const result = check(fixture)
+        expect(result.status, `${name} was not caught`).toBe(1)
+        expect(result.output, `${name} was not caught`).toContain('hard-delete-literal')
+        expect(result.output).toContain('op.ts:1')
+      } finally {
+        rmSync(file, { force: true })
+      }
+    }
+  })
+
+  it('leaves shapes that do not delete alone', () => {
+    mkdirSync(join(fixture, 'src', 'core'), { recursive: true })
+    const harmless = [
+      "export const a = { type: 'link', from: 1, to: 2 }",
+      "export const b = { mode: 'delete', id: 1 }",
+      "// { type: 'delete' }\nexport const c = 1",
+      'export const d = { type: `${name}`, id: 1 }',
+    ]
+    for (const body of harmless) {
+      const file = join(fixture, 'src', 'core', 'op.ts')
+      writeFileSync(file, `${body}\n`)
+      try {
+        const result = check(fixture)
+        expect(result.output, body).not.toContain('hard-delete-literal')
+      } finally {
+        rmSync(file, { force: true })
+      }
+    }
+  })
+
+  it('still reads unlink( as a hard delete and not as link(', () => {
+    mkdirSync(join(fixture, 'src', 'core'), { recursive: true })
+    const file = join(fixture, 'src', 'core', 'op.ts')
+    writeFileSync(file, 'export function x(db: any) {\n  return db.unlink(1)\n}\n')
+    try {
+      const result = check(fixture)
+      expect(result.output).toContain('hard-delete-owner')
+      expect(result.output).not.toContain('write-authority')
+    } finally {
+      rmSync(file, { force: true })
+    }
+  })
+
+  it('requires the AD-15 header on an exempt module', () => {
+    // A root of its own, so the three states can be compared on the whole exit
+    // code and not just on the presence of one rule in the output.
+    const root = mkdtempSync(join(tmpdir(), 'omw-exempt-'))
+    mkdirSync(join(root, 'src', 'ops'), { recursive: true })
+    const file = join(root, 'src', 'ops', 'retention.ts')
+    try {
+      writeFileSync(file, 'export const kept = 1\n')
+      const missing = check(root)
+      expect(missing.status).toBe(1)
+      expect(missing.output).toContain('ad15-exempt-header')
+
+      writeFileSync(file, '\n// AD-15 豁免：\nexport const kept = 1\n')
+      expect(check(root).output).toContain('ad15-exempt-header')
+
+      writeFileSync(file, '// AD-15 豁免：保留策略\nexport const kept = 1\n')
+      expect(check(root).output).not.toContain('ad15-exempt-header')
+      expect(check(root).status).toBe(0)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not complain about an exempt module that does not exist', () => {
+    const result = check(fixture)
+    expect(result.output).not.toContain('ad15-exempt-header')
   })
 
   it('allows the live-version filter in the template directory', () => {

@@ -111,6 +111,21 @@ omw doctor [--home <DSH_HOME>] [--profile <名字>] [--json]
 
 区间上限 20 条事件（超过报 `E_BOUNDARY`，不会去白读宿主）。一次只查一个业务键；多写一个词会被点名，而不是被默默当成键的一部分。
 
+## 改写与账本：`/omw history` 与 `/omw ledger`（聊天里）
+
+改主意不需要删东西。对同一个单值业务键再 `remember` 一次新值，旧版本**退役**而不是被覆盖：`superseded_at` 记下毫秒时刻、`valid_to` 写下退役的 ISO 时间，新版本以 `active_slot: 1` 进来。默认读取只看未失效的那条；所有版本都还在库里。
+
+`active_slot` 不是「第几版」的小序号，而是唯一索引 `(mem_key, active_slot)` 的让位机制：活版本恒为 `1`，退役版本取 `max(本次写入毫秒, 该键已花过的槽位 + 1)`。所以它是个 13 位的时间戳量级数字，读库时不要按版本序号理解；要知道顺序请按 `valid_from` 排，`/omw history` 就是这么排的。同一毫秒内连改两次也不会撞索引——第二个退役版本取到 `+1`。
+
+```
+/omw history assertion:Elliott:lives_in   # 这条键的全部版本，旧值也看得到
+/omw ledger  assertion:Elliott:lives_in   # 谁在什么时候、因为什么改了它
+```
+
+两条都是只读命令，末行同样给一段 JSON（`versions` / `entries`）。答案码三种：`OK` 表示读到了（可能是一条空列表）、`E_BOUNDARY` 表示这次请求本身不成立、`E_GATE_DOWN` 表示库已关闭或这次没接上。空键会被拒（`E_BOUNDARY`，附用法）；查 `decision:` / `rejected:` 前缀会被拒并说明审计条目没有版本链。`history` 的每一行是一个版本：值、`valid_from` → `valid_to`、退休时刻、写入者；`ledger` 的每一行是一条决策：动作（`insert` / `supersede` / …）、操作号、影响到的业务键、从什么改到什么、理由。
+
+两条命令的分工是刻意的：版本回答「它以前说什么」，账本回答「为什么变成现在这样」。账本条目（`decision:` / `rejected:`）本身没有版本链，查它们会被拒并说明原因——审计记录不参与记忆的版本演化。
+
 ## 降级：只有三档，没有中间态
 
 状态封闭为 `ok` / `no-op` / `vector-off`，由单一状态机持有；`no-op` 是终点，进程内**不自愈、不重试**，恢复一律靠重载插件。
@@ -150,10 +165,18 @@ OMW_E2E=1 pnpm test -- test/e2e   # 真实 dsh 会话（临时 DSH_HOME，不动
 
 `pnpm lint` 里的层依赖检查不是约定：`scripts/check-layers.mjs` 扫描 import 说明符与禁用调用，故意写一条 `src/core/ → src/seams/` 的 import 会让它非零退出（`test/lint/layers.test.ts` 在临时 fixture 上证明了这一点）。
 
+物理删除有独立的两道门，扫的是**整个仓库**（`src/`、`test/`、`scripts/` 与根目录一层文件），不只是源码树：
+
+1. **函数名**：`delete(` / `deleteManyAtomic(` / `unlink(` / `unlinkLabel(` 按词法 token 判定「调用」，字符串与注释里提到这些名字不算。
+2. **事务 op 字面量**：`type: 'delete'` / `'unlink'` / `'unlinkLabel'`，覆盖裸字面量、`as const`、`+` 拼接、无插值模板四种写法。`type` 的取值读不出来时也报（`hard-delete-unreadable`）——静默跳过等于没查。
+
+豁免只对函数名那道生效，且只有 `src/ops/snapshots.ts`、`src/ops/retention.ts`、`src/ops/dispose.ts` 三个路径（后两个是预留，文件尚不存在）；这三个文件的首行必须写 `// AD-15 豁免：<用途>`，门会校验这一行而不是相信清单。op 字面量那道对豁免文件同样生效，删节点只能走退役，没有例外。
+
 ## 本版本的边界
 
 - `remember` 已实现（Story 2.1）：整张补丁表规划后一次事务写入，冲突整表拒收并补写一条 `rejected`；`recall` / `forget` / `explain` 仍是占位。
 - 追源已实现（Story 2.2）：`remember` 的补丁表可带 `evidence: {seq_from, seq_to}`，`/omw evidence <mem_key>` 读回指针。文本检索跳过 `kind: 'evidence'` 节点——引文是宿主原话的引述，不是我们的记忆，扫它会同一句说两次。
+- 改写与账本已实现（Story 2.3）：同键改值走版本链（旧版本退役，不删除），`/omw history` 读版本、`/omw ledger` 读决策。
 - 写入的节点 `vec_state` 恒为 `pending`：向量补算属于 Story 2.5，在那之前新记忆不进向量召回。
 - 谓词基数只能由用户通过 `/omw pred promote <名> --single|--multi --reason <理由>` 修改。
 - `/omw doctor` 只读：不建索引、不写种子、不写审计行。

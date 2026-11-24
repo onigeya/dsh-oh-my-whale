@@ -149,7 +149,7 @@ describe('an engine message that names node ids', () => {
     expect(answer.message).not.toContain('节点 7')
     expect(answer.message).not.toContain('conflicting_id')
     expect(answer.message).not.toContain('唯一约束冲突')
-    expect(answer.message).toBe('写入补丁表：业务键已被另一条活动版本占用（改写属 2.3）')
+    expect(answer.message).toBe('写入补丁表：业务键已被另一条活动版本占用（同键并发写入，本次没有落库）')
   })
 
   it('keeps the refusal that reached the audit row free of ids too', async () => {

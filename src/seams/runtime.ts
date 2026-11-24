@@ -46,6 +46,7 @@ import { createVectorPolicy, type VectorPolicy } from './vector.ts'
 import { createWriteAudit, createWritePort, type WritePort } from './write-port.ts'
 import { asSessionQuery, createQuoteSource, type SessionQueryLike } from './evidence-source.ts'
 import { createEvidenceReader, type EvidenceReader } from './evidence-reader.ts'
+import { createVersionReader, type VersionReader } from './version-reader.ts'
 
 /**
  * Diagnostic log codes for registration problems.
@@ -143,6 +144,14 @@ export interface Runtime {
    * store still answers it. `/omw evidence` refuses only when this is absent.
    */
   readonly evidence?: EvidenceReader
+  /**
+   * The history side: every version of one key and every decision that changed
+   * it (AD-5, AD-21). Present whenever the handle is, for the same reason
+   * `evidence` is — history is a read, and a store that refused the bootstrap
+   * still knows what it holds. `/omw history` and `/omw ledger` refuse only
+   * when this is absent.
+   */
+  readonly version?: VersionReader
   /**
    * Drain the write queue, then close the database and release both injection
    * registrations. Idempotent, and returns a promise the caller must await:
@@ -245,6 +254,7 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
   let vector: VectorPolicy | undefined
   let write: WritePort | undefined
   let evidence: EvidenceReader | undefined
+  let version: VersionReader | undefined
   let disposed = false
   let disposing: Promise<void> | undefined
 
@@ -279,6 +289,8 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
     write = undefined
     evidence?.dispose()
     evidence = undefined
+    version?.dispose()
+    version = undefined
     disposing = (async () => {
       composer.dispose()
       let closedByPort = false
@@ -460,6 +472,9 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
   // the bootstrap still answers questions about what is in it.
   if (db !== undefined) {
     evidence = createEvidenceReader({ db, readQuote })
+    // History and the ledger share the same handle and the same read gateway:
+    // one command surface, three questions about one key.
+    version = createVersionReader({ db })
   }
   registerTools()
   if (db !== undefined) {
@@ -506,6 +521,7 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
       ...(vector === undefined ? {} : { vector }),
       ...(write === undefined ? {} : { write }),
       ...(evidence === undefined ? {} : { evidence }),
+      ...(version === undefined ? {} : { version }),
       dispose,
     }
   }

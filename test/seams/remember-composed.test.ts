@@ -139,16 +139,24 @@ describe('remember, end to end', () => {
     })
   })
 
-  it('carries a refusal from the store back through the tool unchanged', async () => {
+  it('carries a planner refusal back through the tool, word for word', async () => {
     const m = mount()
-    await remember(m, { ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'name', obj: 'Elliott' }] })
-    const answer = await remember(m, { ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'name', obj: 'Eliot' }] })
+    // One key, two answers, in the same table: there is no earlier version to
+    // retire, so the planner refuses. What matters here is that the sentence
+    // survives the tool layer intact rather than being replaced by a generic
+    // 'write failed' the model could not act on.
+    const answer = await remember(m, {
+      ops: [
+        { op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'name', obj: 'Elliott' },
+        { op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'name', obj: 'Eliot' },
+      ],
+    })
 
     expect(answer.ok).toBe(false)
     expect(answer.code).toBe('E_CONFLICT')
     expect(answer.items).toEqual([])
     expect(answer.mem_keys).toEqual([])
-    expect(answer.message).toContain('已有不同的值')
+    expect(answer.message).toContain('同一张表里 assertion:Elliott:name 有两个不同的值')
   })
 
   it('applies the new-predicate budget it was configured with', async () => {

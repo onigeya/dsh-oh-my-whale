@@ -205,6 +205,53 @@ describe('reusing one pointer', () => {
   })
 })
 
+describe('which ledger entry a new pointer belongs to', () => {
+  it('names the pointer in the entry of the op that declared it, not the first one', async () => {
+    const { source } = sourceOf({ 50: messageEvent({ type: 'text', text: '两个事实，只有一个带来源。' }) })
+    const h = harness(source)
+    await h.port.remember({
+      ops: [
+        assertOp({ pred: 'likes', obj: 'coffee' }),
+        assertOp({ pred: 'likes', obj: 'tea', evidence: { seq_from: 50, seq_to: 50 } }),
+      ],
+    }, 'model', 'remember', SESSION)
+
+    const pointerKey = evidenceMemKey(SESSION, 50, 50)
+    const gateway = createReadGateway(h.store.db)
+    const first = gateway.listDecisionsFor('assertion:Elliott:likes:coffee')
+    const second = gateway.listDecisionsFor('assertion:Elliott:likes:tea')
+    expect(first).toHaveLength(1)
+    expect(second).toHaveLength(1)
+    // Op positions are 1-based everywhere: an off-by-one here would file the
+    // pointer under the op above it, and no other case would notice.
+    expect(first[0]?.payload['affected']).not.toContain(pointerKey)
+    expect(second[0]?.payload['affected']).toContain(pointerKey)
+    expect(second[0]?.payload['op_id']).toMatch(/^[^:]+:2:/u)
+  })
+
+  it('gives each op its own pointer when one table declares two ranges', async () => {
+    const { source } = sourceOf({
+      51: messageEvent({ type: 'text', text: '第一段来源。' }),
+      52: messageEvent({ type: 'text', text: '第二段来源。' }),
+    })
+    const h = harness(source)
+    await h.port.remember({
+      ops: [
+        assertOp({ pred: 'likes', obj: 'coffee', evidence: { seq_from: 51, seq_to: 51 } }),
+        assertOp({ pred: 'likes', obj: 'tea', evidence: { seq_from: 52, seq_to: 52 } }),
+      ],
+    }, 'model', 'remember', SESSION)
+
+    const gateway = createReadGateway(h.store.db)
+    const first = gateway.listDecisionsFor('assertion:Elliott:likes:coffee')[0]
+    const second = gateway.listDecisionsFor('assertion:Elliott:likes:tea')[0]
+    expect(first?.payload['affected']).toContain(evidenceMemKey(SESSION, 51, 51))
+    expect(first?.payload['affected']).not.toContain(evidenceMemKey(SESSION, 52, 52))
+    expect(second?.payload['affected']).toContain(evidenceMemKey(SESSION, 52, 52))
+    expect(second?.payload['affected']).not.toContain(evidenceMemKey(SESSION, 51, 51))
+  })
+})
+
 describe('a refused declared range', () => {
   it('refuses an inverted range and writes nothing but the rejection', async () => {
     const { source, reads } = sourceOf({ 30: messageEvent({ type: 'text', text: '不会被读到' }) })

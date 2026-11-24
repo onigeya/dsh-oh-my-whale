@@ -46,6 +46,7 @@ import {
 import type { QuoteSource } from './evidence-source.ts'
 import { SUPPORTS_LABEL } from '../store/templates/evidence.ts'
 import {
+  E_OK,
   sanitizeEngineText,
   writeFailureError,
   writeQueueError,
@@ -65,8 +66,13 @@ import type { WriteFailure, WriteOutcome } from '../store/commits/engine.ts'
 /** The lane a conversation write takes; the highest priority in the queue. */
 const WRITE_LANE = 'conversation' as const
 
-/** The success code a tool answer carries when the table landed. */
-export const E_OK = 'OK'
+/**
+ * The success code a tool answer carries when the table landed.
+ *
+ * Defined beside the closed vocabulary in `src/core/tool-errors.ts` and
+ * re-exported here so the write seam's own imports stay put.
+ */
+export { E_OK }
 
 /** One row of a planned table, as the caller sees it. */
 export interface WriteItem {
@@ -75,7 +81,7 @@ export interface WriteItem {
   /** Which op produced it. */
   readonly op: 'assert' | 'pred'
   /** What happened to it. */
-  readonly outcome: 'created' | 'existing' | 'promoted' | 'unchanged' | 'downgraded'
+  readonly outcome: 'created' | 'existing' | 'promoted' | 'unchanged' | 'downgraded' | 'superseded'
   /** The business key it addresses. */
   readonly mem_key: string
   /** The node kind it addresses. */
@@ -335,13 +341,17 @@ export function createWritePort(deps: WritePortDeps): WritePort {
     plan: { readonly decisions: readonly DecisionDraft[] },
     caller: 'user' | 'model',
     atMs: number,
+    createdPointers: ReadonlyMap<number, readonly string[]>,
   ): Record<string, unknown>[] => {
     return plan.decisions.map(draft => buildDecisionPayload({
       ts: new Date(atMs).toISOString(),
       actor: caller,
       decisionKind: draft.decisionKind,
       opId: operationId(atMs, draft.index),
-      affected: draft.affected,
+      // AD-22 closure: a pointer this batch created is state this op changed, so
+      // its key belongs in the entry. Pointers that were reused were not
+      // changed and stay out; the target key keeps its place at the end.
+      affected: [...new Set([...(createdPointers.get(draft.index) ?? []), ...draft.affected])],
       targetMemKey: draft.targetMemKey,
       ...(draft.from === undefined ? {} : { from: draft.from }),
       ...(draft.to === undefined ? {} : { to: draft.to }),
@@ -497,7 +507,7 @@ interface ResolvedEvidence {
       contractVersion: deps.contractVersion,
       newPredsToday: gateway.countModelPredicatesToday(atMs),
       lookupLive: memKey => gateway.findLive(memKey),
-      lookupVersions: memKey => gateway.findVersions(memKey),
+      lookupSpentSlots: (memKey, sinceMs) => gateway.findVersionsSinceSlot(memKey, sinceMs),
     }
     const plan = planPatchTable(parsed.table, context)
     if (!plan.ok) {
@@ -505,7 +515,6 @@ interface ResolvedEvidence {
       audit({ outcome: 'rejected', code: plan.code, memKeys: [], elapsedMs: now() - startedAt, atMs })
       return { ok: false, code: plan.code, tool, message: `${plan.field}：${plan.reason}`, mem_keys: [], items: [] }
     }
-    const ledger = ledgerRows(plan, caller, atMs)
     const pointers = sessionId === undefined
       ? []
       : resolveEvidence(plan.evidence, sessionId, quotes)
@@ -518,6 +527,17 @@ interface ResolvedEvidence {
     // twice, and a range that is dropped still has to appear in the answer, or a
     // caller who declared a source would read a silent write as a stored source.
     const declaredRanges = new Set(plan.evidence.map(draft => `${draft.seqFrom}-${draft.seqTo}`)).size
+    // Which op declared which freshly created pointer: the ledger entry of that
+    // op is the one that has to name it.
+    const createdPointersByOp = new Map<number, string[]>()
+    for (const item of fresh) {
+      for (const assertion of item.entry.assertions) {
+        const keys = createdPointersByOp.get(assertion.index) ?? []
+        keys.push(item.entry.key)
+        createdPointersByOp.set(assertion.index, keys)
+      }
+    }
+    const ledger = ledgerRows(plan, caller, atMs, createdPointersByOp)
     const evidenceSummary: WriteEvidenceSummary | undefined = declaredRanges === 0
       ? undefined
       : {
@@ -765,7 +785,13 @@ function describeSuccess(
   const existing = items.filter(item => item.outcome === 'existing').length
   const promoted = items.filter(item => item.outcome === 'promoted').length
   const unchanged = items.filter(item => item.outcome === 'unchanged').length
+  const superseded = items.filter(item => item.outcome === 'superseded').length
   const parts = [`写入 ${created} 条新事实`]
+  if (superseded > 0) {
+    // The old version still exists, so this is not 'a new fact': the caller has
+    // to see that a version was retired rather than that nothing happened.
+    parts.push(`${superseded} 条旧版本已退役（改写）`)
+  }
   if (existing > 0) parts.push(`${existing} 条已存在`)
   // A promotion writes no new fact but does change the registry: saying only
   // '写入 0 条新事实' would read as a no-op to the user who just promoted.

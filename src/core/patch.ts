@@ -270,7 +270,7 @@ export interface PlanItemResult {
   /** 1-based position in the table. */
   readonly index: number
   readonly op: 'assert' | 'pred'
-  readonly outcome: 'created' | 'existing' | 'promoted' | 'unchanged' | 'downgraded'
+  readonly outcome: 'created' | 'existing' | 'promoted' | 'unchanged' | 'downgraded' | 'superseded'
   readonly memKey: string
   readonly kind: string
   readonly value?: string
@@ -506,8 +506,14 @@ export interface PatchContext {
   readonly newPredsToday: number
   /** The single live version of a business key, or `undefined`. */
   readonly lookupLive: (memKey: string) => StoredNode | undefined
-  /** Every version of a business key, live or retired. */
-  readonly lookupVersions: (memKey: string) => readonly StoredNode[]
+  /**
+   * The versions of a business key whose slot is at or above an instant.
+   *
+   * Only used to pick a retirement slot, so it may be bounded: a slot below the
+   * instant cannot raise the answer. It is a function of the instant rather than
+   * of the whole chain because the chain is unbounded and the write is not.
+   */
+  readonly lookupSpentSlots: (memKey: string, sinceMs: number) => readonly StoredNode[]
 }
 
 /**
@@ -605,6 +611,18 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
           }
         }
       }
+      // The ledger entry for the first declaration already said what the entry
+      // became. Folding a later declaration's vocabulary into the node without
+      // folding it into that entry would leave the record disagreeing with the
+      // row it describes.
+      const ledger = decisions.findIndex(entry => entry.targetMemKey === predKey)
+      if (ledger >= 0) {
+        const recorded = decisions[ledger]!
+        decisions[ledger] = {
+          ...recorded,
+          to: { ...(recorded.to ?? {}), aliases: merged },
+        }
+      }
       items.push({ index: index + 1, op: 'pred', outcome: 'promoted', memKey: predKey, kind: 'pred' })
       continue
     }
@@ -656,9 +674,12 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
     if (liveNode === undefined) return refuse(`ops[${index}].pred`, `谓词 ${name} 的活动登记在规划期间消失`)
 
     if (live.cardinality === op.cardinality) {
-      // Same cardinality: merge the vocabulary, write no ledger entry.
       // Same cardinality is still a real edit when it activates a candidate or
       // merges vocabulary; only a byte-identical active entry is a no-op.
+      //
+      // An edit that does change something becomes a new version rather than an
+      // in-place rewrite: the invariant this planner keeps is that a live node is
+      // only ever retired, never rewritten under its own identity.
       const changed = live.status !== 'active'
         || state.aliases.length !== live.aliases.length
         || state.aliases.some((alias, position) => live.aliases[position] !== alias)
@@ -669,6 +690,15 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
       updates.push({
         memKey: predKey,
         nodeId: liveNode.id,
+        payload: retireVersion({
+          payload: liveNode.payload,
+          nowMs: context.nowMs,
+          nowIso,
+          slot: retirementSlot(predKey, context),
+        }),
+      })
+      nodes.push({
+        memKey: predKey,
         payload: buildPredicatePayload({
           name,
           cardinality: state.cardinality,
@@ -683,6 +713,15 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
           validFrom: nowIso,
         }),
       })
+      decisions.push({
+        index: index + 1,
+        decisionKind: 'supersede',
+        targetMemKey: predKey,
+        affected: [predKey],
+        from: { status: live.status, aliases: live.aliases, evidence_count: live.evidenceCount },
+        to: { status: 'active', aliases: state.aliases, evidence_count: state.evidenceCount },
+        reason,
+      })
       items.push({ index: index + 1, op: 'pred', outcome: 'promoted', memKey: predKey, kind: 'pred' })
       continue
     }
@@ -692,7 +731,7 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
     updates.push({
       memKey: predKey,
       nodeId: liveNode.id,
-      payload: { ...liveNode.payload, active_slot: slot, superseded_at: context.nowMs },
+      payload: retireVersion({ payload: liveNode.payload, nowMs: context.nowMs, nowIso, slot }),
     })
     // The op position is part of the key: two promotions inside one
     // millisecond would otherwise render the same key and collide.
@@ -719,7 +758,7 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
         memKey: flagKey,
         flagType: 'predicate_rekey',
         severity: 'warn',
-        detail: `谓词 ${name} 的基数由 ${live.cardinality} 改为 ${op.cardinality}；既有键未改写，留给 2.3 的改写决策。`,
+        detail: `谓词 ${name} 的基数由 ${live.cardinality} 改为 ${op.cardinality}；既有键不改写，改写由后续写入按版本链自行退役。`,
         nowIso,
       }),
     })
@@ -727,7 +766,10 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
       index: index + 1,
       decisionKind: 'supersede',
       targetMemKey: predKey,
-      affected: [predKey, flagKey],
+      // A ledger entry ends with the key it is about, so a reader that only
+      // looks at the last element still finds the subject of the change. The
+      // flag is written by this same op, so it belongs in the closure ahead of it.
+      affected: [flagKey, predKey],
       from: { cardinality: live.cardinality, aliases: live.aliases, evidence_count: live.evidenceCount },
       to: { cardinality: state.cardinality, aliases: state.aliases, evidence_count: state.evidenceCount },
       reason,
@@ -890,15 +932,56 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
       ...(obj === undefined ? {} : { obj }),
       ...(objNorm === undefined ? {} : { objNorm }),
     })
-    if (resolution.kind === 'conflict') {
-      return {
-        ok: false,
-        code: 'E_CONFLICT',
-        field: `ops[${index}].obj`,
-        reason: `${memKey} 已有不同的值（改写属 2.3）`,
-      }
+    if (resolution.kind === 'refuse') {
+      return refuse(`ops[${index}].obj`, resolution.reason)
     }
     seen.set(memKey, identity)
+    if (resolution.kind === 'supersede') {
+      // A rewrite is a retirement plus a new version, never an in-place edit:
+      // the old payload keeps its history with valid_to and superseded_at, and
+      // the ledger records what replaced what.
+      updates.push({
+        memKey,
+        nodeId: resolution.live.id,
+        payload: retireVersion({
+          payload: resolution.live.payload,
+          nowMs: context.nowMs,
+          nowIso,
+          slot: retirementSlot(memKey, context),
+        }),
+      })
+      nodes.push(resolution.node)
+      pushEvidence(index, memKey, op)
+      const previous = resolution.live.payload
+      const previousValue = payloadValue(previous)
+      const previousNorm = payloadObjNorm(previous)
+      decisions.push({
+        index: index + 1,
+        decisionKind: 'supersede',
+        targetMemKey: memKey,
+        affected: [...affected, memKey],
+        from: {
+          kind: typeof previous['kind'] === 'string' ? previous['kind'] : op.kind,
+          ...(previousValue === undefined ? {} : { value: previousValue }),
+          ...(previousNorm === undefined ? {} : { obj_norm: previousNorm }),
+        },
+        to: {
+          kind: op.kind,
+          ...(obj === undefined ? {} : { value: obj }),
+          ...(objNorm === undefined ? {} : { obj_norm: objNorm }),
+        },
+        reason: tableReason,
+      })
+      items.push({
+        index: index + 1,
+        op: 'assert',
+        outcome: 'superseded',
+        memKey,
+        kind: op.kind,
+        ...(obj === undefined ? {} : { value: obj }),
+      })
+      continue
+    }
     if (resolution.kind === 'existing') {
       items.push({
         index: index + 1,
@@ -918,7 +1001,14 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
       decisionKind: 'insert',
       targetMemKey: memKey,
       affected: [...affected, memKey],
-      to: { kind: op.kind, ...(objNorm === undefined ? {} : { obj_norm: objNorm }) },
+      // The value belongs in the ledger: a reader asking why a fact says what
+      // it says needs the fact, and `obj_norm` alone is only written for
+      // multi-valued predicates.
+      to: {
+        kind: op.kind,
+        ...(obj === undefined ? {} : { value: obj }),
+        ...(objNorm === undefined ? {} : { obj_norm: objNorm }),
+      },
       reason: tableReason,
     })
     items.push({
@@ -938,15 +1028,18 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
 type AssertResolution =
   | { readonly kind: 'insert'; readonly node: PlannedNode }
   | { readonly kind: 'existing' }
-  | { readonly kind: 'conflict' }
+  | { readonly kind: 'supersede'; readonly node: PlannedNode; readonly live: StoredNode }
+  | { readonly kind: 'refuse'; readonly reason: string }
 
 /**
  * Decide what one assertion does against the live store.
  *
  * A key that is already live either holds this value (nothing to write) or
- * another one (a conflict, because rewriting a memory belongs to 2.3).
+ * another one, which makes the write a rewrite: the live version is retired and
+ * a new one takes its place. A rewrite must carry a value — superseding a known
+ * fact with a blank one is not a rewrite, it is a loss.
  * @param input - the derived identity plus the table context.
- * @returns insert, existing or conflict.
+ * @returns insert, existing, supersede, or the reason to refuse.
  */
 function resolveAssert(input: {
   readonly kind: AssertableKind
@@ -959,30 +1052,34 @@ function resolveAssert(input: {
   readonly caller: 'user' | 'model'
   readonly context: PatchContext
 }): AssertResolution {
-  const live = input.context.lookupLive(input.memKey)
-  if (live !== undefined) {
-    const stored = live.payload
-    const sameValue = input.objNorm === undefined
-      ? payloadValue(stored) === input.obj
-      : payloadObjNorm(stored) === input.objNorm
-    return sameValue ? { kind: 'existing' } : { kind: 'conflict' }
-  }
-  return {
-    kind: 'insert',
-    node: {
+  const newNode = (): PlannedNode => ({
+    memKey: input.memKey,
+    payload: buildAssertPayload({
+      kind: input.kind,
       memKey: input.memKey,
-      payload: buildAssertPayload({
-        kind: input.kind,
-        memKey: input.memKey,
-        subj: input.subj,
-        pred: input.pred,
-        nowIso: input.nowIso,
-        caller: input.caller,
-        ...(input.obj === undefined ? {} : { obj: input.obj }),
-        ...(input.objNorm === undefined ? {} : { objNorm: input.objNorm }),
-      }),
-    },
+      subj: input.subj,
+      pred: input.pred,
+      nowIso: input.nowIso,
+      caller: input.caller,
+      ...(input.obj === undefined ? {} : { obj: input.obj }),
+      ...(input.objNorm === undefined ? {} : { objNorm: input.objNorm }),
+    }),
+  })
+  const live = input.context.lookupLive(input.memKey)
+  if (live === undefined) return { kind: 'insert', node: newNode() }
+  const stored = live.payload
+  const sameValue = input.objNorm === undefined
+    ? payloadValue(stored) === input.obj
+    : payloadObjNorm(stored) === input.objNorm
+  if (sameValue) return { kind: 'existing' }
+  if (input.obj === undefined) {
+    const current = payloadValue(stored)
+    return {
+      kind: 'refuse',
+      reason: `${input.memKey} 已有值「${current ?? '（空）'}」，改写必须给出新的 obj，不能用空值覆盖`,
+    }
   }
+  return { kind: 'supersede', live, node: newNode() }
 }
 
 /**
@@ -1011,14 +1108,43 @@ function payloadObjNorm(payload: Readonly<Record<string, unknown>>): string | un
  * Two promotions inside one millisecond would otherwise write the same
  * `active_slot` twice and collide with the unique index; taking one more than the
  * highest spent slot keeps the sequence monotonic without a clock.
+ * Only slots at or above `nowMs` are read, and that is exact rather than
+ * approximate: a slot below the instant satisfies `slot + 1 <= nowMs`, so it
+ * cannot raise `max(nowMs, …)`. A slot at the instant must bump by one, so the
+ * few versions written inside the current millisecond are the whole answer.
  * @param memKey - the key being retired.
- * @param context - reads the versions already written for that key.
- * @returns `max(nowMs, every spent slot + 1)`.
+ * @param context - reads the slots already spent for that key.
+ * @returns `max(nowMs, every spent slot at or above nowMs + 1)`.
  */
 function retirementSlot(memKey: string, context: PatchContext): number {
-  const highest = context.lookupVersions(memKey).reduce((highest, node) => {
+  const highest = context.lookupSpentSlots(memKey, context.nowMs).reduce((highest, node) => {
     const slot = node.payload['active_slot']
     return typeof slot === 'number' && slot > highest ? slot : highest
   }, 0)
   return Math.max(context.nowMs, highest + 1)
+}
+
+/**
+ * The payload a retired version keeps, plus the three fields retirement writes.
+ *
+ * The old payload is carried over whole — a version is history, and history that
+ * forgot its own fields would be unreadable later. `superseded_at` and
+ * `active_slot` share one number so the store can prove they belong together;
+ * `valid_to` closes the half-open interval AD-5 requires. A live version never
+ * carries `valid_to`, so retirement is the only place that writes it.
+ * @param input - the live payload, the write instant, and the slot it gives up.
+ * @returns the payload to store on the retired node.
+ */
+export function retireVersion(input: {
+  readonly payload: Readonly<Record<string, unknown>>
+  readonly nowMs: number
+  readonly nowIso: string
+  readonly slot: number
+}): Record<string, unknown> {
+  return {
+    ...input.payload,
+    active_slot: input.slot,
+    superseded_at: input.nowMs,
+    valid_to: input.nowIso,
+  }
 }

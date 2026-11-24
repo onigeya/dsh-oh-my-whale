@@ -291,36 +291,63 @@ describe('patch: the predicate registry', () => {
     expect(plan.items[0]?.outcome).toBe('unchanged')
   })
 
-  it('merges vocabulary without a ledger entry when the cardinality holds', () => {
+  it('merges vocabulary by retiring the old entry for a new version', () => {
     const store = fakeStore()
     const live = seedPredicate(store, 'mood', 'single', { aliases: ['feeling'], evidenceCount: 7 })
     const plan = expectOk(planOf({
       ops: [{ op: 'pred', pred: 'mood', cardinality: 'single', aliases: ['vibe'] }],
     }, fakeContext(store, { caller: 'user' })))
 
-    expect(plan.nodes).toHaveLength(0)
-    expect(plan.decisions).toHaveLength(0)
+    const predKey = predicateMemKey('mood')
+    // The retired version keeps the payload it was written with; only the slot
+    // and the retirement stamps change.
     expect(plan.updates).toHaveLength(1)
-    expect(plan.updates[0]).toMatchObject({ nodeId: live.id, memKey: predicateMemKey('mood') })
+    expect(plan.updates[0]).toMatchObject({ nodeId: live.id, memKey: predKey })
     expect(plan.updates[0]?.payload).toMatchObject({
+      status: 'active',
+      decided_by: 'seed',
+      aliases: ['feeling'],
+      evidence_count: 7,
+      active_slot: PLAN_NOW,
+      superseded_at: PLAN_NOW,
+    })
+
+    // The merged vocabulary lives on the new version, which takes the free slot.
+    expect(plan.nodes).toHaveLength(1)
+    expect(plan.nodes[0]?.memKey).toBe(predKey)
+    expect(plan.nodes[0]?.payload).toMatchObject({
       status: 'active',
       decided_by: 'user',
       aliases: ['feeling', 'vibe'],
       evidence_count: 7,
       active_slot: 1,
     })
+
+    expect(plan.decisions).toHaveLength(1)
+    expect(plan.decisions[0]).toMatchObject({
+      decisionKind: 'supersede',
+      targetMemKey: predKey,
+      from: { status: 'active', aliases: ['feeling'], evidence_count: 7 },
+      to: { status: 'active', aliases: ['feeling', 'vibe'], evidence_count: 7 },
+    })
     expect(plan.items[0]?.outcome).toBe('promoted')
   })
 
   it('activates a candidate on the same cardinality, keeping its proof', () => {
     const store = fakeStore()
-    seedPredicate(store, 'mood', 'multi', { status: 'candidate', evidenceCount: 3 })
+    const live = seedPredicate(store, 'mood', 'multi', { status: 'candidate', evidenceCount: 3 })
     const plan = expectOk(planOf({
       ops: [{ op: 'pred', pred: 'mood', cardinality: 'multi' }],
     }, fakeContext(store, { caller: 'user' })))
 
+    // The candidate is retired as it stood; the activation is the new version,
+    // so the proof the model gathered survives the promotion.
     expect(plan.updates).toHaveLength(1)
-    expect(plan.updates[0]?.payload).toMatchObject({ status: 'active', evidence_count: 3, decided_by: 'user' })
+    expect(plan.updates[0]).toMatchObject({ nodeId: live.id })
+    expect(plan.updates[0]?.payload).toMatchObject({ status: 'candidate', evidence_count: 3, decided_by: 'seed' })
+
+    expect(plan.nodes).toHaveLength(1)
+    expect(plan.nodes[0]?.payload).toMatchObject({ status: 'active', evidence_count: 3, decided_by: 'user', active_slot: 1 })
     expect(plan.items[0]?.outcome).toBe('promoted')
   })
 
@@ -354,7 +381,9 @@ describe('patch: the predicate registry', () => {
     expect(plan.decisions[0]?.decisionKind).toBe('supersede')
     expect(plan.decisions[0]?.from).toEqual({ cardinality: 'multi', aliases: ['feeling'], evidence_count: 4 })
     expect(plan.decisions[0]?.to).toEqual({ cardinality: 'single', aliases: ['feeling', 'vibe'], evidence_count: 4 })
-    expect(plan.decisions[0]?.affected).toEqual([predKey, `flag:predicate_rekey:mood:${PLAN_NOW}:1`])
+    // The closure ends with the key the entry is about, so a reader that only
+    // looks at the last element still finds the changed predicate.
+    expect(plan.decisions[0]?.affected).toEqual([`flag:predicate_rekey:mood:${PLAN_NOW}:1`, predKey])
     expect(plan.items[0]?.outcome).toBe('promoted')
   })
 
@@ -370,6 +399,30 @@ describe('patch: the predicate registry', () => {
     expect(plan.updates[0]?.payload['active_slot']).toBe(PLAN_NOW + 6)
     expect(plan.updates[0]?.payload['superseded_at']).toBe(PLAN_NOW)
   })
+
+  it('asks the store only for slots this instant could still have spent', () => {
+    const store = fakeStore()
+    const predKey = predicateMemKey('mood')
+    seedPredicate(store, 'mood', 'multi')
+    // A long history the planner must not need to pay for: every slot below now
+    // is old enough that slot + 1 cannot beat max(now, ...), so asking for them
+    // would be reading the chain to compute a number the chain cannot change.
+    for (let index = 0; index < 50; index += 1) seedRetiredVersion(store, predKey, PLAN_NOW - 1000 + index)
+    const asked: { readonly memKey: string; readonly sinceMs: number }[] = []
+    const context = fakeContext(store, { caller: 'user' })
+    const plan = expectOk(planOf({
+      ops: [{ op: 'pred', pred: 'mood', cardinality: 'single' }],
+    }, {
+      ...context,
+      lookupSpentSlots: (memKey, sinceMs) => {
+        asked.push({ memKey, sinceMs })
+        return context.lookupSpentSlots(memKey, sinceMs)
+      },
+    }))
+
+    expect(asked).toEqual([{ memKey: predKey, sinceMs: PLAN_NOW }])
+    expect(plan.updates[0]?.payload['active_slot']).toBe(PLAN_NOW)
+  })
 })
 describe('patch: an assertion against what is stored', () => {
   it('reports an existing memory instead of writing a second one', () => {
@@ -383,17 +436,57 @@ describe('patch: an assertion against what is stored', () => {
     expect(plan.items[0]).toMatchObject({ outcome: 'existing', memKey: 'assertion:Elliott:likes:coffee', value: 'coffee' })
   })
 
-  it('refuses a different value for a key that is already live', () => {
+  it('rewrites a live value by retiring it for a new version', () => {
+    const store = fakeStore()
+    seedPredicate(store, 'lives_in', 'single')
+    const live = seedNode(store, 'assertion:Elliott:lives_in', {
+      kind: 'assertion', obj: 'Berlin', active_slot: 1, memo: 'kept',
+    })
+    const plan = expectOk(planOf(tableOf(assertOp({ pred: 'lives_in', obj: 'Lisbon' }), '用户搬去了里斯本'), fakeContext(store)))
+
+    const memKey = 'assertion:Elliott:lives_in'
+    // The old version keeps its value and its history; only the retirement
+    // stamps are added, so an explicit history query can still read Berlin.
+    expect(plan.updates).toHaveLength(1)
+    expect(plan.updates[0]).toMatchObject({ memKey, nodeId: live.id })
+    expect(plan.updates[0]?.payload).toMatchObject({
+      obj: 'Berlin',
+      memo: 'kept',
+      active_slot: PLAN_NOW,
+      superseded_at: PLAN_NOW,
+    })
+    expect(typeof plan.updates[0]?.payload['valid_to']).toBe('string')
+
+    expect(plan.nodes).toHaveLength(1)
+    expect(plan.nodes[0]?.memKey).toBe(memKey)
+    expect(plan.nodes[0]?.payload).toMatchObject({ obj: 'Lisbon', active_slot: 1 })
+    expect(plan.nodes[0]?.payload['superseded_at']).toBeUndefined()
+
+    expect(plan.decisions).toHaveLength(1)
+    expect(plan.decisions[0]).toMatchObject({
+      decisionKind: 'supersede',
+      targetMemKey: memKey,
+      affected: [memKey],
+      from: { kind: 'assertion', value: 'Berlin' },
+      to: { kind: 'assertion', value: 'Lisbon' },
+      reason: '用户搬去了里斯本',
+    })
+    expect(plan.items[0]).toMatchObject({ outcome: 'superseded', memKey, value: 'Lisbon' })
+  })
+
+  it('refuses a single-valued rewrite that carries no value', () => {
     const store = fakeStore()
     seedPredicate(store, 'lives_in', 'single')
     seedNode(store, 'assertion:Elliott:lives_in', { kind: 'assertion', obj: 'Berlin', active_slot: 1 })
-    const result = planOf(tableOf(assertOp({ pred: 'lives_in', obj: 'Lisbon' })), fakeContext(store))
+    // A single-valued key takes its value from obj when one is given, but the
+    // same write without one still lands on the live key -- so it has to be
+    // refused here, not silently accepted as a rewrite that erases the fact.
+    const result = planOf(tableOf(assertOp({ pred: 'lives_in', obj: undefined })), fakeContext(store))
 
     expect(result.ok).toBe(false)
     if (result.ok) return
-    expect(result.code).toBe('E_CONFLICT')
     expect(result.field).toBe('ops[0].obj')
-    expect(result.reason).toBe('assertion:Elliott:lives_in 已有不同的值（改写属 2.3）')
+    expect(result.reason).toBe('assertion:Elliott:lives_in 已有值「Berlin」，改写必须给出新的 obj，不能用空值覆盖')
   })
 
   it('accepts the same value twice in one table and writes one node', () => {
@@ -449,19 +542,25 @@ describe('patch: one bad op refuses the whole table', () => {
     })
   })
 
-  it('writes nothing when a later op collides with a live value', () => {
+  it('writes nothing when a later op contradicts an earlier one', () => {
     const store = fakeStore()
     seedPredicate(store, 'likes', 'multi')
     seedPredicate(store, 'lives_in', 'single')
     seedNode(store, 'assertion:Elliott:lives_in', { kind: 'assertion', obj: 'Berlin', active_slot: 1 })
+    // Two different values of one key inside one table is not two versions: the
+    // table was meant to state one thing and states two, so it is refused whole.
     const result = planOf({
-      ops: [assertOp({ pred: 'likes', obj: 'coffee' }), assertOp({ pred: 'lives_in', obj: 'Lisbon' })],
+      ops: [
+        assertOp({ pred: 'lives_in', obj: 'Lisbon' }),
+        assertOp({ pred: 'lives_in', obj: 'Porto' }),
+      ],
     }, fakeContext(store))
 
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.code).toBe('E_CONFLICT')
     expect(result.field).toBe('ops[1].obj')
+    expect(result.reason).toBe('同一张表里 assertion:Elliott:lives_in 有两个不同的值')
   })
 
   it('names the field when an object is refused for its own shape', () => {

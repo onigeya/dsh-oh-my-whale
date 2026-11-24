@@ -1,0 +1,46 @@
+# AD-15 says the delete gate is a required check, not a local reminder; this is
+# what makes it one. `pnpm lint` runs scripts/check-layers.mjs, so a delete
+# literal fails the job before any test runs.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run pointless: cancel it
+# rather than pay for both.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # First setup-node only installs the runtime: caching needs a pnpm
+      # executable to ask for its store path, and corepack has not run yet.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # The pinned package manager comes from package.json rather than from a
+      # second version number that can drift out of step with it.
+      - run: corepack enable
+      # Force corepack to resolve that pinned pnpm here, so a missing or
+      # mismatched version fails with a clear message instead of at install.
+      - run: pnpm --version
+      # Second setup-node, now that pnpm exists, to cache its store.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: lint (type check + layer and delete gates)
+        run: pnpm lint
+      - name: test
+        run: pnpm test

@@ -38,7 +38,7 @@ multi  谓词：assertion:<subj>:<pred>:<obj_norm>
 | `persona_state` | 可变关系状态 | `dims{temperature,trust,intimacy,understanding}, updated_at, last_event?` |
 | `flag` | 待处理或已处理的标记 | `flag_type, severity, status(open\|resolved), detail, resolved_at?, resolved_by(auto\|human)?` |
 | `pred` | 谓词登记：基数、别名与状态 | `pred, cardinality(single\|multi), status(active\|candidate\|deprecated), aliases[], decided_by(user\|seed\|model), decided_at, evidence_count, norm_version` |
-| `decision` | 每次改动的账本 | `ts, actor, kind(insert\|supersede\|arbitrate\|resolve_flag\|migrate\|revert), op_id, affected[], target_mem_key, from?, to?, reason, precedent_id?, contract_version` |
+| `decision` | 每次改动的账本 | `kind`（恒为 `'decision'`，节点判别）+ `decision_kind(insert\|supersede\|arbitrate\|resolve_flag\|migrate\|revert)`, `ts, actor, op_id, affected[], target_mem_key, from?, to?, reason, precedent_id?, contract_version` |
 | `dream_log` | 固化每一步一条，支持断点续跑 | `date, step, seed, diff, tokens, status` |
 | `rejected` | 被校验拒收的补丁 | `patch, reason, at` |
 | `dream_cycle` | 固化周期标记 | `date, steps_completed[], tokens_used, truncated` |
@@ -96,6 +96,7 @@ multi  谓词：assertion:<subj>:<pred>:<obj_norm>
 ## 6. 决策账本与撤销闭包
 
 - 每次改动（写入、自动裁决、人工裁定、迁移）在**同一事务**内写一个 `decision` 节点，字段见 §3；人工裁定可指定 `precedent_id` 复用可撤销先例，先例只影响建议排序、不自动改数据；`decision` 只增、不改、不删。
+- **`kind` 与 `decision_kind` 各司其职**：节点的 `kind` 恒为 `'decision'`（§6 前三行的治理查询全按 `kind` 扫），动作落在 `decision_kind`；AC 与读面看到的 `kind`（`insert` / `supersede` / …）由 `src/core/decisions.ts` 的 `decisionView` 投影得到，`/omw ledger` 输出的十个键与 AC③ 一致。
 - 断言自身也必须带来源：`actor`、`cause`、`prompt_version`，dream 产物另带 `cycle_id`——否则「这条是哪版提示词生成的」永远答不出来。
 - **`affected[]` 闭包** = 该操作写入或改动的全部**状态**节点与边（断言、flag、scene、evidence，以及 `supersedes` / `contradicts` / `part_of` 这些边；边以 `(from_key, label, to_key)` 表达，绝不用节点 id）。账本类（`decision`、`dream_log`、`rejected`、`dream_cycle`）不在闭包内，也永不撤销。
 - 撤销 = 按 `op_id` 反向生成补丁表、在**一个事务**里执行（事务 op 只有整体替换的 `updatePayload`，能 `$unset` 的 `patchPayload` 不是事务 op），并追加一条 `decision(kind=revert, precedent_id=原 op_id)`。
