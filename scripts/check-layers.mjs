@@ -18,6 +18,7 @@
  *   ad15-exempt-header   an exempt module's first non-empty line names its purpose
  *   write-authority    every engine write method only in src/store/commits/** (AD-4)
  *   tql-owner          prepareTql/executePreparedTql only in src/store/templates/**
+ *   tql-literal        prepareTql takes a string literal or a module-level literal const (AD-8)
  *   exists-owner       the only query prefix allowed is `superseded_at: {$exists: false}`, and only in src/store/templates/**
  *
  * Usage: node scripts/check-layers.mjs [--root <dir>] [--json]
@@ -120,6 +121,17 @@ const TQL_OWNER_DIR = join('store', 'templates')
 const TQL_TOKENS = ['prepareTql(', 'executePreparedTql(']
 
 /**
+ * Files the TQL rules do not read, by name.
+ *
+ * Exactly one entry, and it is this file: the tokens above are *data* here, and
+ * `stripStrings` cannot blank them because it is itself defined with a regex
+ * literal that contains quote characters — the lexer desynchronises on its own
+ * source. Exempting the checker is honest (the alternative is a regex that
+ * pretends to parse JavaScript); exempting anything else would not be.
+ */
+const TQL_RULE_EXEMPT = [join('scripts', 'check-layers.mjs')]
+
+/**
  * The one predicate-filter prefix this codebase is allowed to contain.
  *
  * `$exists` cannot be parameterised — TQL takes its filter as a literal — so the
@@ -184,11 +196,48 @@ function sourceFiles(root) {
   return filesUnder(join(root, 'src')).sort()
 }
 
-/** Remove line and block comments so prose cannot trip a token rule. */
+/**
+ * Blank out comments, keeping every line break so line numbers survive.
+ *
+ * A single pass that tracks whether the reader is in code, in a string, or in a
+ * comment, because the regex version could not tell them apart: a fixture that
+ * writes `'/**'` as *data* opened a block comment that swallowed the rest of the
+ * file, and the code after it was reported (or missed) at the wrong lines.
+ * Comments are blanked rather than deleted so the geometry is exact.
+ * @param {string} text
+ * @returns {string} the same text with comment characters replaced by spaces.
+ */
 function stripComments(text) {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+  const out = []
+  let index = 0
+  let state = 'code'
+  while (index < text.length) {
+    const char = text[index]
+    const next = text[index + 1]
+    if (state === 'code') {
+      if (char === '/' && next === '/') { out.push('  '); state = 'line'; index += 2; continue }
+      if (char === '/' && next === '*') { out.push('  '); state = 'block'; index += 2; continue }
+      if (char === "'") { state = 'single'; out.push(char); index += 1; continue }
+      if (char === '"') { state = 'double'; out.push(char); index += 1; continue }
+      if (char === '`') { state = 'template'; out.push(char); index += 1; continue }
+      out.push(char); index += 1; continue
+    }
+    if (state === 'line') {
+      if (char === '\n') { state = 'code'; out.push(char); index += 1; continue }
+      out.push(' '); index += 1; continue
+    }
+    if (state === 'block') {
+      if (char === '*' && next === '/') { out.push('  '); state = 'code'; index += 2; continue }
+      out.push(char === '\n' ? '\n' : ' '); index += 1; continue
+    }
+    // Inside a string: keep its characters, but never let them open a comment.
+    if (char === '\\') { out.push(char); if (index + 1 < text.length) out.push(text[index + 1]); index += 2; continue }
+    if (char === '\n') { out.push(char); index += 1; continue }
+    const closes = (state === 'single' && char === "'") || (state === 'double' && char === '"') || (state === 'template' && char === '`')
+    if (closes) state = 'code'
+    out.push(char); index += 1
+  }
+  return out.join('')
 }
 
 /**
@@ -439,6 +488,73 @@ function callNames(code, names) {
 }
 
 /**
+ * Names bound to a string-literal initialiser in one file.
+ *
+ * AD-8 wants the query text written once, as a literal, and read back without
+ * being assembled at runtime. Templates declare the text as a module constant
+ * and hand that constant to `prepareTql`, so a rule that accepted only inline
+ * literals would forbid the shape the codebase already uses. The constant is
+ * followed one step: its initialiser has to be readable as a literal by
+ * {@link readStringExpression}, which covers `as const`, `+` concatenation and
+ * interpolation-free templates.
+ * @param {Array<object>} tokens token list for the file.
+ * @returns {Set<string>} names whose initialiser is a literal.
+ */
+function literalConstNames(tokens) {
+  const names = new Set()
+  let depth = 0
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (token.kind === 'punct') {
+      if (token.value === '{') depth += 1
+      else if (token.value === '}') depth = Math.max(0, depth - 1)
+      continue
+    }
+    if (token.kind !== 'ident' || token.value !== 'const') continue
+    // Module scope only. A literal const declared inside a function or a block
+    // is not the binding the gate is checking: collecting it flat meant a
+    // `const Q = 'literal'` in one function licence for a same-named runtime
+    // variable passed to prepareTql in another.
+    if (depth !== 0) continue
+    const name = tokens[index + 1]
+    if (name === undefined || name.kind !== 'ident') continue
+    const separator = tokens[index + 2]
+    if (separator === undefined || separator.kind !== 'punct' || separator.value !== '=') continue
+    if (readStringExpression(tokens, index + 3).value === null) continue
+    names.add(name.value)
+  }
+  return names
+}
+
+/**
+ * Line numbers where `prepareTql` is handed something that is not literal text.
+ *
+ * The directory rule above says TQL lives in one folder; this one says it is
+ * text. Together they close AD-8: a template cannot concatenate a filter at
+ * runtime, and a caller cannot pass a query it computed, because either would
+ * mean the query a review read is not the query the engine runs.
+ * @param {string} code source with comments stripped.
+ * @returns {number[]} 1-based line numbers.
+ */
+function tqlLiteralLines(code) {
+  const tokens = tokenize(code)
+  const literals = literalConstNames(tokens)
+  const lines = []
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (token.kind !== 'ident' || token.value !== 'prepareTql') continue
+    const next = tokens[index + 1]
+    if (next === undefined || next.kind !== 'punct' || next.value !== '(') continue
+    const read = readStringExpression(tokens, index + 2)
+    if (read.value !== null) continue
+    const argument = tokens[index + 2]
+    if (argument !== undefined && argument.kind === 'ident' && literals.has(argument.value)) continue
+    lines.push(token.line)
+  }
+  return lines
+}
+
+/**
  * Line numbers where a transaction op literal names a hard delete.
  *
  * Only an object key (or assignment target) named `type` counts, so a
@@ -625,21 +741,6 @@ function checkFile(file, root, violations) {
     }
   }
 
-  const ownsTql = srcRelative === TQL_OWNER_DIR || srcRelative.startsWith(`${TQL_OWNER_DIR}${sep}`)
-  if (!ownsTql) {
-    for (const token of TQL_TOKENS) {
-      const index = findCall(codeOnly, token)
-      if (index >= 0) {
-        violations.push({
-          rule: 'tql-owner',
-          file: relativePath,
-          line: codeOnly.slice(0, index).split('\n').length,
-          message: `TQL 只允许出现在 src/store/templates/：${token}`,
-        })
-      }
-    }
-  }
-
   // `$exists` is scanned in `uncommented`, not in `codeOnly`: the filter lives in a
   // string literal, which is exactly what `stripStrings` erases. Comments are
   // still gone, because the module comment quotes the filter when explaining it.
@@ -672,6 +773,55 @@ function checkFile(file, root, violations) {
 }
 
 /**
+ * The two TQL rules, over one file anywhere in the repository.
+ *
+ * Wider than `checkFile` on purpose: AD-8 is about who may issue a query, and a
+ * rule that stopped at `src/` would let a script or a test reach around the
+ * template directory with one `prepareTql` call. The *ownership* rule reads
+ * `codeOnly`, so a fixture that quarrels about TQL inside a string literal is
+ * not an own call. The *literal* rule reads `uncommented` (its argument is a
+ * string, which `stripStrings` erases) but only after the same `codeOnly` check
+ * proves the file really calls `prepareTql` — otherwise every fixture holding
+ * such text as data would be judged as code.
+ * @param {string} file absolute path.
+ * @param {string} root repository root.
+ * @param {Array<object>} violations - accumulator, appended in place.
+ */
+function checkTql(file, root, violations) {
+  const relativePath = relative(root, file)
+  if (TQL_RULE_EXEMPT.includes(relativePath)) return
+  const text = readFileSync(file, 'utf8')
+  const uncommented = stripComments(text)
+  const codeOnly = stripStrings(uncommented)
+  const srcRelative = relative(join(root, 'src'), file)
+  const ownsTql = srcRelative === TQL_OWNER_DIR || srcRelative.startsWith(`${TQL_OWNER_DIR}${sep}`)
+
+  if (!ownsTql) {
+    for (const token of TQL_TOKENS) {
+      const index = findCall(codeOnly, token)
+      if (index >= 0) {
+        violations.push({
+          rule: 'tql-owner',
+          file: relativePath,
+          line: codeOnly.slice(0, index).split('\n').length,
+          message: `TQL 只允许出现在 src/store/templates/：${token}`,
+        })
+      }
+    }
+  }
+
+  if (!codeOnly.includes('prepareTql')) return
+  for (const line of tqlLiteralLines(uncommented)) {
+    violations.push({
+      rule: 'tql-literal',
+      file: relativePath,
+      line,
+      message: 'prepareTql 的首个实参必须是字符串字面量，或同文件内由字面量初始化的 const（AD-8）',
+    })
+  }
+}
+
+/**
  * Run every rule over a root that contains `src/`.
  * @param {string} root absolute directory holding `src/`.
  * @returns {{ok: boolean, violations: Array<object>, files: number}}
@@ -681,7 +831,10 @@ export function checkLayers(root) {
   const files = sourceFiles(root)
   for (const file of files) checkFile(file, root, violations)
   const scanned = allSourceFiles(root)
-  for (const file of scanned) checkDeletion(file, root, violations)
+  for (const file of scanned) {
+    checkDeletion(file, root, violations)
+    checkTql(file, root, violations)
+  }
   return { ok: violations.length === 0, violations, files: scanned.length }
 }
 

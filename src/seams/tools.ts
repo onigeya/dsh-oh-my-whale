@@ -1,20 +1,22 @@
 /**
  * The model-facing tool surface (AD-25).
  *
- * Four names, fixed: `remember`, `recall`, `forget`, `explain`. Story 2.1 turns
- * `remember` into a real write and leaves the other three answering
- * `E_NOT_IMPLEMENTED`, so the surface stays observable while the behaviour
- * arrives story by story.
+ * Four names, fixed: `remember`, `recall`, `forget`, `explain`. Story 2.1 turned
+ * `remember` into a real write and Story 2.5 turned `recall` into a real bounded
+ * read; `forget` and `explain` still answer `E_NOT_IMPLEMENTED`, so the surface
+ * stays observable while the behaviour arrives story by story.
  *
  * `remember` is registered even when the write side is unavailable, and then
  * refuses with `E_GATE_DOWN` rather than `E_NOT_IMPLEMENTED`: the tool exists, the
- * store does not, and a caller must be able to tell those two apart. When the
- * plugin is in `no-op`, not one of the four is registered — that is what the
- * state means.
+ * store does not, and a caller must be able to tell those two apart. `recall`
+ * follows the same rule for a read side that is absent. When the plugin is in
+ * `no-op`, not one of the four is registered — that is what the state means.
  * @module
  */
 import { ASSERTABLE_KINDS, PATCH_TABLE_MAX_OPS, TEXT_MAX_CODE_POINTS } from '../core/patch.ts'
+import { DEFAULT_CANDIDATE_POOL, DEFAULT_TOP_K, MAX_TOP_K } from '../core/recall.ts'
 import type { JsonSchemaNode } from './json-schema.ts'
+import type { RecallReader } from './recall-reader.ts'
 import type { WriteAnswer, WritePort } from './write-port.ts'
 
 /** Highest event sequence a declared range may name (a sanity bound, not a host limit). */
@@ -82,9 +84,10 @@ export interface NotImplementedAnswer {
 /**
  * Output schema shared by all four tools.
  *
- * The two list fields are optional: a refusal carries neither, and every
- * placeholder answers without them. `additionalProperties: false` still holds, so
- * a write answer that grows a field has to grow it here first.
+ * Every field is optional except the four used by a refusal, because four tools
+ * with different answers share one schema. `additionalProperties: false` still
+ * holds, so an answer that grows a field has to grow it here first — which is why
+ * the recall fields below are declared before any of them is ever set.
  */
 const OUTPUT_SCHEMA: JsonSchemaNode = {
   type: 'object',
@@ -95,6 +98,21 @@ const OUTPUT_SCHEMA: JsonSchemaNode = {
     message: { type: 'string' },
     mem_keys: { type: 'array', items: { type: 'string' } },
     items: { type: 'array', items: { type: 'object' } },
+    // Recall reports its two widths and its timing, so a caller can tell
+    // "only five matched" from "five were kept out of thirty" without a second
+    // call. `degraded` is present from this story on even though nothing
+    // degrades yet: Epic 5 fills the same field, and a field that appears later
+    // is a contract change (AD-20).
+    top_k: { type: 'integer' },
+    candidate_pool: { type: 'integer' },
+    // `candidates` is what entered the pool; `matched` is what matched before
+    // either cut. Both are reported because one number cannot answer "did the
+    // store hold five or five hundred" on its own.
+    candidates: { type: 'integer' },
+    matched: { type: 'integer' },
+    elapsed_ms: { type: 'integer' },
+    degraded: { type: 'boolean' },
+    degraded_reason: { type: 'array', items: { type: 'string' } },
   },
   required: ['ok', 'code', 'tool', 'message'],
   additionalProperties: false,
@@ -179,7 +197,10 @@ const PARAMETERS: Record<PlaceholderToolName, JsonSchemaNode> = {
     type: 'object',
     properties: {
       query: { type: 'string', minLength: 1 },
-      topK: { type: 'integer', minimum: 1, maximum: 8 },
+      // The advertised ceiling is the one the reader enforces, taken from the
+      // same constant. A literal here would let the schema promise a width the
+      // reader refuses (or worse, refuse one the schema allowed).
+      topK: { type: 'integer', minimum: 1, maximum: MAX_TOP_K },
     },
     required: ['query'],
     additionalProperties: false,
@@ -268,18 +289,79 @@ const PARAMETERS: Record<PlaceholderToolName, JsonSchemaNode> = {
 
 /** One-line descriptions; they are prompt text and therefore part of the contract. */
 const DESCRIPTIONS: Record<PlaceholderToolName, string> = {
-  recall: '按需检索长期记忆（本版本占位，调用返回 E_NOT_IMPLEMENTED）。',
+  // Numbers are interpolated from the constants rather than written out: the
+  // description is prompt text read by the model, so a stale literal here is a
+  // contract the implementation no longer honours (AD-26).
+  recall: `按需检索长期记忆：只返回未失效的版本，默认 ${DEFAULT_TOP_K} 条、最多 ${MAX_TOP_K} 条（越界直接拒收，不静默截断）；query 最多 200 个字符。topK 决定返回几条；候选池是更外层的闸门，默认先截到 ${DEFAULT_CANDIDATE_POOL} 条打分结果再取前 topK，两者不互相替代。结果带 candidates、elapsed_ms、degraded 与封闭取值的 degraded_reason。只读，不写库，不支持翻页。`,
   remember: '写入一张记忆补丁表。patch 形如 {"ops":[{"op":"assert","kind":"pref","subj":"Elliott","pred":"reply_style","obj":"concise"}],"reason":"用户明确要求"}：op=assert 必填 kind/subj/pred，obj 缺省即三段键；op=pred 只接受用户调用方。整表要么全成、要么整表拒收。assert 可选 evidence:{seq_from,seq_to} 指明这条事实出自当前会话哪几条事件——只声明区间，引文由写入路径回读原文生成；区间最多覆盖 20 条事件，越宽整表拒收。',
   forget: '按 mem_key 撤销一条记忆（本版本占位，调用返回 E_NOT_IMPLEMENTED）。',
   explain: '解释一条记忆的来龙去脉（本版本占位，调用返回 E_NOT_IMPLEMENTED）。',
 }
 
 /**
+ * Run one recall through the reader, or refuse when there is no store to read.
+ *
+ * The arguments are read here, not passed through: the host does not validate
+ * a call against the advertised schema, so `topK: '5'` or `topK: 9` arrives
+ * intact. Handing the raw values to the reader is deliberate — it refuses them
+ * with a reason that names the offending value, which a generic schema error
+ * could not (AC②).
+ * @param reader - the recall seam, absent when no handle is open.
+ * @param args - the raw argument object the host supplied.
+ * @returns the reader's answer, or a refusal naming the missing store.
+ */
+function recallTool(reader: RecallReader | undefined, args: unknown): unknown {
+  if (reader === undefined) {
+    return {
+      ok: false,
+      code: 'E_GATE_DOWN',
+      tool: 'recall',
+      message: '记忆库本次启动不可读（schema 未就绪或句柄已关闭），本次没有召回任何东西。',
+      mem_keys: [],
+      items: [],
+    }
+  }
+  if (typeof args !== 'object' || args === null) {
+    return {
+      ok: false,
+      code: 'E_BOUNDARY',
+      tool: 'recall',
+      message: '参数必须是对象，且带 query 字段',
+      mem_keys: [],
+      items: [],
+    }
+  }
+  const record = args as { query?: unknown; topK?: unknown }
+  const answer = reader.recall(record.query, record.topK)
+  // Every field is named rather than spread: `...answer` also carried `hits`,
+  // which OUTPUT_SCHEMA does not declare, and `additionalProperties: false`
+  // makes that a contract the host could enforce against us. The flattened
+  // `mem_keys` / `items` are the same information in the shape the schema
+  // states, so spreading would have been a second, undeclared spelling.
+  return {
+    ok: answer.ok,
+    code: answer.code,
+    tool: 'recall',
+    message: answer.message,
+    mem_keys: answer.hits.map(hit => hit.mem_key),
+    items: answer.hits.map(hit => ({ mem_key: hit.mem_key, kind: hit.kind, value: hit.value })),
+    top_k: answer.top_k,
+    candidate_pool: answer.candidate_pool,
+    candidates: answer.candidates,
+    matched: answer.matched,
+    elapsed_ms: answer.elapsed_ms,
+    degraded: answer.degraded,
+    degraded_reason: [...answer.degraded_reason],
+  }
+}
+
+/**
  * Build the four definitions, in the fixed order of AD-25.
  * @param writer - the write service `remember` calls, absent when the store is unusable.
+ * @param recall - the read service `recall` calls, absent when no handle is open.
  * @returns one definition per tool name.
  */
-export function memoryTools(writer?: RememberWriter): ToolDefinitionLike[] {
+export function memoryTools(writer?: RememberWriter, recall?: RecallReader): ToolDefinitionLike[] {
   return PLACEHOLDER_TOOL_NAMES.map(name => ({
     name,
     description: DESCRIPTIONS[name],
@@ -293,6 +375,7 @@ export function memoryTools(writer?: RememberWriter): ToolDefinitionLike[] {
       ],
     },
     execute: async (args: unknown, exec?: unknown): Promise<unknown> => {
+      if (name === 'recall') return recallTool(recall, args)
       if (name !== 'remember') return notImplemented(name)
       if (writer === undefined) return writeUnavailable(name)
       const read = readPatchArgument(args)
@@ -312,17 +395,19 @@ export function memoryTools(writer?: RememberWriter): ToolDefinitionLike[] {
  * the whole surface up, or none of it.
  * @param tools - the host registry, or `undefined` when the surface is absent.
  * @param writer - the write service `remember` calls, absent when the store is unusable.
+ * @param recall - the read service `recall` calls, absent when no handle is open.
  * @returns the names actually registered (empty when `tools` is absent).
  */
 export function registerPlaceholderTools(
   tools: ToolRegistryLike | undefined,
   writer?: RememberWriter,
+  recall?: RecallReader,
 ): string[] {
   if (tools === undefined) return []
   const registered: string[] = []
   const disposers: (() => void)[] = []
   try {
-    for (const definition of memoryTools(writer)) {
+    for (const definition of memoryTools(writer, recall)) {
       disposers.push(tools.register(definition))
       registered.push(definition.name)
     }

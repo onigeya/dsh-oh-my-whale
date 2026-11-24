@@ -177,16 +177,18 @@ function inChainOrder(versions: readonly VersionView[]): readonly VersionView[] 
 /**
  * Sort ledger entries oldest first.
  *
- * The engine returns them in node order, which is insertion order only by
- * accident; the answer promises chain order, so it is imposed here.
- * @param entries - the entries in engine order.
+ * The answer promises time order. Entries that share a timestamp keep the order
+ * they arrived in — the caller passes them sorted by node id — because two
+ * decisions from one write really did happen in that order and nothing in the
+ * payload ranks them. A stable sort is what preserves it: comparing `op_id`
+ * there would order a batch by the random tail of its operation ids.
+ * @param entries - the entries in node order.
  * @returns the entries in time order.
  */
 function inLedgerOrder(entries: readonly DecisionView[]): readonly DecisionView[] {
   return [...entries].sort((left, right) => {
-    if (left.ts !== right.ts) return left.ts < right.ts ? -1 : 1
-    if (left.op_id === right.op_id) return 0
-    return left.op_id < right.op_id ? -1 : 1
+    if (left.ts === right.ts) return 0
+    return left.ts < right.ts ? -1 : 1
   })
 }
 
@@ -277,8 +279,14 @@ export function createVersionReader(deps: VersionReaderDeps): VersionReader {
         return { ok: refused.ok, code: refused.code, mem_key: refused.mem_key, message: refused.message, entries: [] }
       }
       const nodes = gateway.listDecisionsFor(key)
+      // Node ids are the insertion order the engine actually assigned, and two
+      // decisions from one batch share a millisecond. Sorting by id first makes
+      // the timestamp sort below stable for them; without it the tie broke on
+      // the random tail of `op_id`, so a ledger could list a refresh before the
+      // insert that created the value it replaced.
+      const ordered = [...nodes].sort((left, right) => left.id - right.id)
       const entries = inLedgerOrder(
-        nodes
+        ordered
           .map(node => decisionView(node.payload))
           .filter((entry): entry is DecisionView => entry !== undefined),
       )

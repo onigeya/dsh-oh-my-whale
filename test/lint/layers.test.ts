@@ -174,6 +174,57 @@ describe('lint: layer dependencies', () => {
     }
   })
 
+  it('accepts TQL handed over as a literal or as a literal constant', () => {
+    mkdirSync(join(fixture, 'src', 'store', 'templates'), { recursive: true })
+    const file = join(fixture, 'src', 'store', 'templates', 'queries.ts')
+    // AD-8 wants the text written once and read back, so both shapes the
+    // codebase actually uses have to pass: inline, and a module constant whose
+    // initialiser the reader can resolve.
+    const accepted = [
+      "export function a(db: any) {\n  return db.prepareTql('FIND *')\n}",
+      "const Q = 'FIND *'\nexport function b(db: any) {\n  return db.prepareTql(Q)\n}",
+      "const R = ('FIND *' as const)\nexport function c(db: any) {\n  return db.prepareTql(R)\n}",
+      "const S = 'FIND' + ' *'\nexport function d(db: any) {\n  return db.prepareTql(S)\n}",
+    ]
+    for (const body of accepted) {
+      writeFileSync(file, `${body}\n`)
+      try {
+        const result = check(fixture)
+        expect(result.output, body).not.toContain('tql-literal')
+      } finally {
+        rmSync(file, { force: true })
+      }
+    }
+  })
+
+  it('rejects TQL assembled at runtime, in every shape it can take', () => {
+    mkdirSync(join(fixture, 'src', 'store', 'templates'), { recursive: true })
+    const file = join(fixture, 'src', 'store', 'templates', 'queries.ts')
+    const rejected = [
+      ['interpolation', 'export function a(db: any, k: string) {\n  return db.prepareTql(`FIND ${k} *`)\n}'],
+      ['function call', "export function q() {\n  return 'FIND *'\n}\nexport function b(db: any) {\n  return db.prepareTql(q())\n}"],
+      ['parameter', 'export function c(db: any, text: string) {\n  return db.prepareTql(text)\n}'],
+      ['computed constant', 'const Q = read()\nexport function d(db: any) {\n  return db.prepareTql(Q)\n}'],
+      // A literal const inside a block is a different binding from a runtime
+      // variable of the same name elsewhere in the file, so collecting every
+      // `const X = '...'` in the token stream would licence the query below.
+      [
+        'literal constant in a block',
+        'export function d(db: any, text: string) {\n  if (text.length > 0) {\n    const Q = \'FIND *\'\n    void Q\n  }\n  return db.prepareTql(text)\n}',
+      ],
+    ] as const
+    for (const [name, body] of rejected) {
+      writeFileSync(file, `${body}\n`)
+      try {
+        const result = check(fixture)
+        expect(result.status, `${name} was not caught`).toBe(1)
+        expect(result.output, `${name} was not caught`).toContain('tql-literal')
+      } finally {
+        rmSync(file, { force: true })
+      }
+    }
+  })
+
   it('rejects an $exists filter outside the live-version shape', () => {
     mkdirSync(join(fixture, 'src', 'store', 'templates'), { recursive: true })
     const file = join(fixture, 'src', 'store', 'templates', 'loose.ts')
@@ -268,6 +319,51 @@ describe('lint: layer dependencies', () => {
   it('does not complain about an exempt module that does not exist', () => {
     const result = check(fixture)
     expect(result.output).not.toContain('ad15-exempt-header')
+  })
+
+  it('reads TQL in test and script files too, not only under src', () => {
+    // The TQL rules lived inside `checkFile`, which only walks `src`, so a
+    // query prepared in a test or a script was outside the gate entirely.
+    // Both directories are scanned now, and the rule still has to fire there.
+    const spots = [
+      join(fixture, 'test', 'probe.test.ts'),
+      join(fixture, 'scripts', 'probe.mjs'),
+    ]
+    for (const file of spots) {
+      mkdirSync(join(file, '..'), { recursive: true })
+      writeFileSync(file, 'export function q(db: any, text: string) {\n  return db.prepareTql(text)\n}\n')
+      try {
+        const result = check(fixture)
+        expect(result.status, file).toBe(1)
+        expect(result.output, file).toContain('tql-literal')
+      } finally {
+        rmSync(file, { force: true })
+      }
+    }
+  })
+
+  it('reports a violation on the line it is on, past a multi-line comment', () => {
+    // A block comment used to be deleted outright, which shifted every line
+    // number below it: a violation on line 8 was reported on line 4. The
+    // blanked comment keeps the geometry, so the line the caller is sent to is
+    // the line that has to change.
+    const file = join(fixture, 'src', 'ops', 'comment.ts')
+    writeFileSync(file, [
+      '/**',
+      ' * Three lines of prose above the code.',
+      ' */',
+      "export function q(db: any) {",
+      "  return db.prepareTql('FIND *')",
+      '}',
+      '',
+    ].join('\n'))
+    try {
+      const result = check(fixture)
+      expect(result.status).toBe(1)
+      expect(result.output).toContain(':5')
+    } finally {
+      rmSync(file, { force: true })
+    }
   })
 
   it('allows the live-version filter in the template directory', () => {

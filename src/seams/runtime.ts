@@ -47,6 +47,7 @@ import { createWriteAudit, createWritePort, type WritePort } from './write-port.
 import { asSessionQuery, createQuoteSource, type SessionQueryLike } from './evidence-source.ts'
 import { createEvidenceReader, type EvidenceReader } from './evidence-reader.ts'
 import { createVersionReader, type VersionReader } from './version-reader.ts'
+import { createRecallReader, type RecallReader } from './recall-reader.ts'
 
 /**
  * Diagnostic log codes for registration problems.
@@ -152,6 +153,14 @@ export interface Runtime {
    * when this is absent.
    */
   readonly version?: VersionReader
+  /**
+   * The bounded read side: `recall` answers from this handle (AD-8).
+   *
+   * Present whenever the handle is, and deliberately not gated on the write
+   * side: a store that refused the bootstrap still holds memories, and asking
+   * it what it knows writes nothing (AD-18 keeps this a local degradation).
+   */
+  readonly recall?: RecallReader
   /**
    * The plan composed at mount, present once the section was assembled.
    *
@@ -274,6 +283,7 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
   let write: WritePort | undefined
   let evidence: EvidenceReader | undefined
   let version: VersionReader | undefined
+  let recall: RecallReader | undefined
   let injection: InjectionPlan | undefined
   let disposed = false
   let disposing: Promise<void> | undefined
@@ -305,7 +315,7 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
     const registry = resolveToolRegistry(ctx)
     if (registry === undefined) return
     try {
-      tools = registerPlaceholderTools(registry, write)
+      tools = registerPlaceholderTools(registry, write, recall)
     } catch (error) {
       tools = []
       logger.warn(OPERATIONAL_LOG_CODES.toolRegistrationFailed, { reason: describeError(error) })
@@ -324,6 +334,8 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
     evidence = undefined
     version?.dispose()
     version = undefined
+    recall?.dispose()
+    recall = undefined
     disposing = (async () => {
       composer.dispose()
       let closedByPort = false
@@ -508,6 +520,14 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
     // History and the ledger share the same handle and the same read gateway:
     // one command surface, three questions about one key.
     version = createVersionReader({ db })
+    // Recall takes the two configured widths and nothing else; the bounds it
+    // enforces come from `core/recall.ts`, so the configuration and the refusal
+    // above 8 are the same number.
+    recall = createRecallReader({
+      db,
+      topK: config.recall.topK,
+      candidatePool: config.recall.candidatePool,
+    })
   }
   registerTools()
   if (db !== undefined) {
@@ -555,6 +575,7 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
       ...(write === undefined ? {} : { write }),
       ...(evidence === undefined ? {} : { evidence }),
       ...(version === undefined ? {} : { version }),
+      ...(recall === undefined ? {} : { recall }),
       ...(injection === undefined ? {} : { injection }),
       dispose,
     }

@@ -14,12 +14,46 @@ import {
   type ToolRegistryLike,
 } from '../../src/seams/tools.ts'
 import { parsePromote, registerOmwCommand, type DoctorView } from '../../src/seams/commands.ts'
+import { E_OK } from '../../src/core/tool-errors.ts'
+import { DEFAULT_CANDIDATE_POOL, DEFAULT_TOP_K, MAX_TOP_K } from '../../src/core/recall.ts'
+import type { RecallAnswer, RecallReader } from '../../src/seams/recall-reader.ts'
 import type { WritePort, WriteAnswer } from '../../src/seams/write-port.ts'
 
-function byName(name: string, writer?: Parameters<typeof memoryTools>[0]): ToolDefinitionLike {
-  const found = memoryTools(writer).find(tool => tool.name === name)
+function byName(
+  name: string,
+  writer?: Parameters<typeof memoryTools>[0],
+  recall?: Parameters<typeof memoryTools>[1],
+): ToolDefinitionLike {
+  const found = memoryTools(writer, recall).find(tool => tool.name === name)
   if (found === undefined) throw new Error(`no tool named ${name}`)
   return found
+}
+
+/** A recall reader that records the raw arguments it was handed. */
+function stubReader(answer: RecallAnswer): RecallReader & { readonly calls: string[] } {
+  const calls: string[] = []
+  return {
+    calls,
+    recall: (query: unknown, topK?: unknown) => {
+      calls.push(`${JSON.stringify(query)}:${JSON.stringify(topK)}`)
+      return answer
+    },
+    dispose: () => {},
+  }
+}
+
+const RECALL_ANSWER: RecallAnswer = {
+  ok: true,
+  code: E_OK,
+  message: '找到 1 条未失效记忆，全部返回。',
+  top_k: 5,
+  candidate_pool: 12,
+  candidates: 1,
+  matched: 1,
+  hits: [{ mem_key: 'assertion:Elliott:likes:coffee', kind: 'assertion', value: 'coffee' }],
+  elapsed_ms: 3,
+  degraded: false,
+  degraded_reason: [],
 }
 
 function recorder(): ToolRegistryLike & { readonly names: string[] } {
@@ -118,8 +152,8 @@ describe('the remember tool', () => {
     expect(answer.mem_keys).toEqual([])
   })
 
-  it('keeps the other three tools as placeholders', async () => {
-    for (const name of ['recall', 'forget', 'explain']) {
+  it('keeps forget and explain as placeholders', async () => {
+    for (const name of ['forget', 'explain']) {
       const answer = await byName(name).execute({}, {}) as { ok: boolean; code: string; tool: string }
       expect(answer.ok).toBe(false)
       expect(answer.code).toBe('E_NOT_IMPLEMENTED')
@@ -135,11 +169,131 @@ describe('the remember tool', () => {
 
   it('registers all four names or none, in the fixed order', () => {
     const registry = recorder()
-    expect(registerPlaceholderTools(registry)).toEqual(['remember', 'recall', 'forget', 'explain'])
+    expect(registerPlaceholderTools(registry, undefined, stubReader(RECALL_ANSWER))).toEqual(['remember', 'recall', 'forget', 'explain'])
     expect(registry.names).toEqual(['remember', 'recall', 'forget', 'explain'])
     expect(registerPlaceholderTools(undefined)).toEqual([])
   })
 
+  it('hands the recall arguments to the reader unchanged', async () => {
+    // The host does not validate a call against the advertised schema, so an
+    // out-of-range topK arrives intact. Rewriting or clamping it here would move
+    // the boundary into the tool surface, where no test of the reader sees it.
+    const reader = stubReader(RECALL_ANSWER)
+    const recall = byName('recall', undefined, reader)
+
+    const answer = await recall.execute({ query: 'whale', topK: 9 }, {}) as { ok: boolean; tool: string; mem_keys: string[] }
+
+    expect(reader.calls).toEqual(['"whale":9'])
+    expect(answer).toMatchObject({ ok: true, tool: 'recall', mem_keys: ['assertion:Elliott:likes:coffee'] })
+  })
+
+  it('passes a missing query through as missing rather than filling it in', async () => {
+    const reader = stubReader(RECALL_ANSWER)
+    const recall = byName('recall', undefined, reader)
+
+    await recall.execute({}, {})
+
+    expect(reader.calls).toEqual(['undefined:undefined'])
+  })
+
+  it('flattens the hits into mem_keys and items for the transcript', async () => {
+    const recall = byName('recall', undefined, stubReader(RECALL_ANSWER))
+
+    const answer = await recall.execute({ query: 'whale' }, {}) as Record<string, unknown>
+
+    expect(answer['items']).toEqual([
+      { mem_key: 'assertion:Elliott:likes:coffee', kind: 'assertion', value: 'coffee' },
+    ])
+    // The reader's own fields are not swallowed: the caller sees both widths.
+    expect(answer).toMatchObject({ top_k: 5, candidate_pool: 12, candidates: 1, degraded: false })
+  })
+
+  it('refuses non-object arguments without calling the reader', async () => {
+    const reader = stubReader(RECALL_ANSWER)
+    const recall = byName('recall', undefined, reader)
+
+    for (const args of [undefined, null, 'whale', 7]) {
+      const answer = await recall.execute(args, {}) as { ok: boolean; code: string }
+      expect(answer.ok).toBe(false)
+      expect(answer.code).toBe('E_BOUNDARY')
+    }
+    expect(reader.calls).toEqual([])
+  })
+
+  it('says the store is unreadable rather than that the tool is missing', async () => {
+    const recall = byName('recall')
+
+    const answer = await recall.execute({ query: 'whale' }, {}) as { ok: boolean; code: string; message: string }
+
+    expect(answer.ok).toBe(false)
+    expect(answer.code).toBe('E_GATE_DOWN')
+    expect(answer.message).toContain('不可读')
+  })
+
+
+  it('answers with exactly the fields the output schema declares', async () => {
+    // The schema says `additionalProperties: false`, so a field the code returns
+    // but the schema does not declare is a contract violation the host could
+    // enforce. This test exists because it was one: `...answer` leaked the
+    // reader's `hits` array, and a subset match never noticed.
+    const recall = byName('recall', undefined, stubReader(RECALL_ANSWER))
+    const declared = memoryTools()
+      .find(tool => tool.name === 'recall')
+      ?.output.schema as { properties: Record<string, unknown> }
+
+    const answer = await recall.execute({ query: 'whale' }, {}) as Record<string, unknown>
+
+    expect(Object.keys(answer).sort()).toEqual(Object.keys(declared.properties).sort())
+  })
+
+  it('declares every field it returns, including the two counts', async () => {
+    const declared = memoryTools()
+      .find(tool => tool.name === 'recall')
+      ?.output.schema as { properties: Record<string, unknown> }
+    const recall = byName('recall', undefined, stubReader(RECALL_ANSWER))
+
+    const answer = await recall.execute({ query: 'whale' }, {}) as Record<string, unknown>
+
+    // `matched` and `candidates` answer different questions and both are part of
+    // the answer; a schema that declared only one would make the other invisible
+    // to any consumer that validates against it.
+    expect(declared.properties['matched']).toEqual({ type: 'integer' })
+    expect(declared.properties['candidates']).toEqual({ type: 'integer' })
+    expect(answer['matched']).toBe(RECALL_ANSWER.matched)
+    expect(answer['candidates']).toBe(RECALL_ANSWER.candidates)
+  })
+  it('advertises no way to page a recall, and says how wide it can get', () => {
+    // AC⑧ is satisfied by not adding fields, which is exactly the kind of
+    // satisfaction nothing fails when it breaks: a later `offset` added to the
+    // parameters would pass every behavioural test in this suite. The
+    // description is asserted too, because it is the only place a model learns
+    // the two widths before calling.
+    const recall = byName('recall', undefined, stubReader(RECALL_ANSWER))
+    const declared = recall.parameters as {
+      properties: Record<string, unknown>
+    }
+
+    expect(Object.keys(declared.properties).sort()).toEqual(['query', 'topK'])
+    for (const absent of ['offset', 'page', 'cursor']) {
+      expect(declared.properties[absent]).toBeUndefined()
+    }
+    expect(recall.description).toContain(`默认 ${DEFAULT_TOP_K} 条`)
+    expect(recall.description).toContain(`最多 ${MAX_TOP_K} 条`)
+    expect(recall.description).toContain(`默认先截到 ${DEFAULT_CANDIDATE_POOL} 条`)
+  })
+
+  it('keeps the advertised topK ceiling equal to the one the reader enforces', () => {
+    // Three places name the ceiling: the core constant, the parameter schema and
+    // the description. A hard-coded 8 in the schema would pass every test that
+    // only calls the reader, which is how the drift survived the first review.
+    const recall = byName('recall', undefined, stubReader(RECALL_ANSWER))
+    const declared = recall.parameters as {
+      properties: { topK: { minimum?: number; maximum?: number } }
+    }
+
+    expect(declared.properties.topK.maximum).toBe(MAX_TOP_K)
+    expect(declared.properties.topK.minimum).toBe(1)
+  })
   it('stores the write answer schema once, for every tool', () => {
     const schemas = memoryTools().map(tool => JSON.stringify(tool.output.schema))
     expect(new Set(schemas).size).toBe(1)

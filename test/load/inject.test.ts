@@ -174,19 +174,33 @@ describe('load: stderr confirmation', () => {
 })
 
 describe('load: tool surface', () => {
-  it('registers the four placeholders by name', () => {
+  it('registers the four tools by name', () => {
     const { sections } = load()
     expect(sections.tools).toEqual(['remember', 'recall', 'forget', 'explain'])
   })
 
-  it('answers every call with a structured not-implemented error', async () => {
+  it('answers a recall call from the mounted store, not with a placeholder', async () => {
     const { sections } = load()
     const recall = sections.definitions.find(definition => definition.name === 'recall')
     const answer = await recall?.execute({ query: 'hi' }, {}) as Record<string, unknown>
-    expect(answer).toMatchObject({ ok: false, code: 'E_NOT_IMPLEMENTED', tool: 'recall' })
+    expect(answer).toMatchObject({ ok: true, tool: 'recall' })
+    // The reader sorts by `hits`; the tool surface flattens it into mem_keys and
+    // items, because the output schema declares its fields and `hits` is not one.
+    expect(Array.isArray(answer['items'])).toBe(true)
+    expect(Array.isArray(answer['mem_keys'])).toBe(true)
+    expect(answer['hits']).toBeUndefined()
+    expect(answer['top_k']).toBe(5)
+  })
+
+  it('keeps forget and explain as structured not-implemented answers', async () => {
+    const { sections } = load()
+    for (const name of ['forget', 'explain']) {
+      const tool = sections.definitions.find(definition => definition.name === name)
+      const answer = await tool?.execute({ query: 'hi' }, {}) as Record<string, unknown>
+      expect(answer).toMatchObject({ ok: false, code: 'E_NOT_IMPLEMENTED', tool: name })
+    }
   })
 })
-
 describe('load: host seams', () => {
   it('throws for an invalid config, names the key, and registers nothing', () => {
     const home = tempHome()

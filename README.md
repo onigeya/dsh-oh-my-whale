@@ -1,6 +1,6 @@
 # dsh-oh-my-whale（鲸鲸）
 
-DSH 记忆插件。**本版本只有底座**：可被宿主加载、可用一条命令体检、坏掉时可以整档退场或只关向量路径。记忆语义（记住、想起、遗忘、解释）属于后续 epic，四个工具名在此只注册占位，调用返回 `E_NOT_IMPLEMENTED`。
+DSH 记忆插件。可被宿主加载、可用一条命令体检、坏掉时可以整档退场或只关向量路径。记忆语义按故事逐步落地：`remember`（写入、追源、版本链）与 `recall`（只读有界召回）已实现，`forget` 与 `explain` 仍是占位，调用返回 `E_NOT_IMPLEMENTED`。
 
 ## 启用三步
 
@@ -106,6 +106,44 @@ stderr 的加载行由插件自己写，不走 `ctx.logger`：宿主只把插件
 
 两条命令的分工是刻意的：版本回答「它以前说什么」，账本回答「为什么变成现在这样」。账本条目（`decision:` / `rejected:`）本身没有版本链，查它们会被拒并说明原因——审计记录不参与记忆的版本演化。
 
+
+## 召回：`recall`（模型按需调用）
+
+记忆不常驻提示词。模型需要翻旧账时自己调 `recall(query, topK?)`，这是唯一的召回入口。
+
+**只给未失效的版本。** 被改写过的旧值留在库里但不再出现——默认读只看 `superseded_at` 缺席的那一版。要旧值请走 `/omw history`。
+
+**两道闸门，不是一个数字的两种叫法。** 候选池（`recall.candidatePool`，默认 12）截的是打分之后的候选，`topK`（默认 5、硬上限 8）截的是最终交给你的条数。30 条命中、池 12、`topK` 5 时，进池 12 条、返回 5 条，答案里 `matched: 30`、`candidates: 12`、`items.length: 5` 三个数分开报，你能看出到底是「库里只有 5 条」还是「被截到 5 条」。
+
+**越界就拒，不静默夹取。** `topK` 给 9、0、-1、5.5、`'5'`、`null`，一律 `E_BOUNDARY` 并在打开任何查询之前拒掉——库访问计数为 0。旧实现用 `Math.min` 把越界悄悄变成「少给几条」，调用方没法区分「只有 8 条命中」和「要了 30 条被砍到 8 条」。
+
+**只返回能叫得出名字的记忆。** 六个记忆类 kind（`assertion` / `entity` / `episode` / `scene` / `pref` / `persona_state`）会被召回；`evidence`（指针，只能经它支持的断言抵达）、`pred`（谓词词表）、`decision` / `dream_log` / `rejected` / `dream_cycle`（只增账本）、`flag`（治理队列）、`whatif` 不进召回。理由不是分类洁癖：决策节点的 `reason` 是一句关于某次改动的散文，拿查询词去匹配它，等于把可调试的账本记录当成一条记忆报给你。没有 `mem_key` 的节点也不返回——报不出来的键，之后也没法追问。
+
+**排序完全确定。** 分数降序 → `mem_key` 升序 → 节点 id 升序。同一份数据跑两次得到同一个键序列，不靠哈希顺序。
+
+**只读。** 一次成功召回对库的写方法调用次数为 0（含 `updatePayload` 与 `flush`，测试用计数代理盯着句柄）。热度、稳定性、计数一律不写回；时间衰减这类因子如果将来要加，也只作读时排序。
+
+```ts
+recall(query: string, topK?: number) -> {
+  ok, code, tool, message,
+  top_k, candidate_pool, candidates,  // 两道闸门各自的门槛
+  matched,                            // 过了过滤与打分、进入门槛之前有多少条
+  mem_keys: string[],                 // 与 items 一一对应，便于只取键
+  items: [{ mem_key, kind, value }],
+  elapsed_ms, degraded, degraded_reason[]
+}
+```
+
+工具面不回 `hits`：读取器内部用它排过序，工具把它摊成 `mem_keys` 与 `items`。输出 schema 是 `additionalProperties: false`，多出来的键会让声明与实现对不上。
+
+`degraded` 在本版本恒为 `false`，这是事实不是省事：还没有重排、没有向量路径、没有线程超时，能发生的失败只有「库不可用」（`E_GATE_DOWN`）与「拒收」（`E_BOUNDARY`），两者都不是降级。字段与封闭词表随本故事一起交付，是为了让 Epic 5 填 `rerank_unavailable` 一类理由时不必改契约。
+
+**没有翻页。** 没有 `offset` / `page` / `cursor`。取不满就少给，不凑数、不补空条目、不报错。
+
+**只读库照样召回。** 库以 `readOnly` 打开、或 schema 未就绪导致写面没有装配时，召回回答得和可写库一样——它依赖的是句柄，不是写面。
+
+召回这一档在注入预算里仍留 0（见下文），因为把召回结果接进宿主通道是 Epic 5 的事；本故事的 recall 只到工具面。
+
 ## 注入：两段，一个出口
 
 提示词只从两处进来，且两处调用都只写在 `src/seams/prompt-composer.ts` 里（静态门 `prompt-seam-owner` 会拦下别处的调用）：
@@ -129,7 +167,7 @@ stderr 的加载行由插件自己写，不走 `ctx.logger`：宿主只把插件
 
 三档的预算各守各的，不互相借：尾巴没用满的额度不会转给召回，否则召回的上限会随宿主状态漂移，「每档各有预算」就变成了「一个池子三家分」。`estimateTokens` 的换算是中日韩一字一 token、拉丁词按空格切、其余非空白各算一个；`RECALL_ITEM_BUDGET_TOKENS`（60）是**每条召回的估值输入**，不是硬上限——一条长记忆会一次吃掉几条的额度，所以召回按「装得下的前缀」取，不是按条数硬塞，也不因为某条太大就跳过去取后面更小的。
 
-召回这一档本版本还没有通道可走（Story 2.5 才有），所以运行时根本不组装召回：真实挂载下 `recall.kept` 恒为空、`tokens` 记 0，而不是去数模型看不到的文本。
+召回这一档在注入里还没有通道可走（Story 2.5 交付的是 `recall` 工具，不是注入通道），所以运行时根本不组装召回：真实挂载下 `recall.kept` 恒为空、`tokens` 记 0，而不是去数模型看不到的文本。召回的结果由模型显式调用工具取得，见下节。
 
 注入也不读库。场景（`scene`）这类记忆按需召回，永不常驻：库里有场景节点与库里没有，组装出来的提示词逐字节相同。
 
@@ -198,10 +236,11 @@ OMW_E2E=1 pnpm test -- test/e2e   # 真实 dsh 会话（临时 DSH_HOME，不动
 
 ## 本版本的边界
 
-- `remember` 已实现（Story 2.1）：整张补丁表规划后一次事务写入，冲突整表拒收并补写一条 `rejected`；`recall` / `forget` / `explain` 仍是占位。
+- `remember` 已实现（Story 2.1）：整张补丁表规划后一次事务写入，冲突整表拒收并补写一条 `rejected`；`forget` / `explain` 仍是占位。
 - 追源已实现（Story 2.2）：`remember` 的补丁表可带 `evidence: {seq_from, seq_to}`，`/omw evidence <mem_key>` 读回指针。文本检索跳过 `kind: 'evidence'` 节点——引文是宿主原话的引述，不是我们的记忆，扫它会同一句说两次。
 - 改写与账本已实现（Story 2.3）：同键改值走版本链（旧版本退役，不删除），`/omw history` 读版本、`/omw ledger` 读决策。
-- 写入的节点 `vec_state` 恒为 `pending`：向量补算属于 Story 2.5，在那之前新记忆不进向量召回。
+- 召回已实现（Story 2.5）：`recall(query, topK?)` 只返回未失效版本，默认 5 条、上限 8 条，越界拒收而不是静默夹取；候选池（默认 12）与 `topK` 是两道独立闸门。契约见下节。
+- 写入的节点 `vec_state` 恒为 `pending`：向量补算还没做，在那之前新记忆不进向量召回，只走文本路径。
 - 谓词基数只能由用户通过 `/omw pred promote <名> --single|--multi --reason <理由>` 修改。
 - `/omw doctor` 只读：不建索引、不写种子、不写审计行。
 - 不做抽取、不做 dream 八步、不做 tier/rerank/预算裁剪、不做审计轮转、不做迁移与卸载。

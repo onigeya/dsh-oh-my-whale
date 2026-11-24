@@ -10,6 +10,7 @@ import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { apply, type ApplyContext } from '../../src/index.ts'
+import { E_OK } from '../../src/core/tool-errors.ts'
 import type { CommandDefinitionLike } from '../../src/seams/commands.ts'
 import { DEFAULT_TAIL_MAX_TOKENS, DEFAULT_TOP_K, parseConfig, RECALL_ITEM_BUDGET_TOKENS, type Config } from '../../src/seams/config.ts'
 import { createLogger, createMemorySink, type MemorySink } from '../../src/seams/logger.ts'
@@ -53,17 +54,33 @@ function homeWithTopK(topK: number): { home: TempHome; config: Config } {
   return { home, config: parsed.config }
 }
 
+/** A configuration that narrows the candidate pool, to prove the wiring reaches the reader. */
+function homeWithCandidatePool(candidatePool: number): { home: TempHome; config: Config } {
+  const home = tempHome('omw-runtime-')
+  homes.push(home)
+  const parsed = parseConfig({ db: { dim: TEST_DIM }, recall: { candidatePool } })
+  if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues))
+  return { home, config: parsed.config }
+}
+
 /** Boot one runtime over a temp home, keeping the log sink. */
-function boot(options: { readonly dim?: number; readonly maxNewPredsPerDay?: number; readonly topK?: number } = {}): {
+function boot(options: {
+  readonly dim?: number
+  readonly maxNewPredsPerDay?: number
+  readonly topK?: number
+  readonly candidatePool?: number
+} = {}): {
   readonly runtime: Runtime
   readonly sink: MemorySink
   readonly home: TempHome
 } {
   const { home, config } = options.topK !== undefined
     ? homeWithTopK(options.topK)
-    : options.maxNewPredsPerDay === undefined
-      ? homeAt(options.dim ?? TEST_DIM)
-      : homeWithCap(options.maxNewPredsPerDay)
+    : options.candidatePool !== undefined
+      ? homeWithCandidatePool(options.candidatePool)
+      : options.maxNewPredsPerDay === undefined
+        ? homeAt(options.dim ?? TEST_DIM)
+        : homeWithCap(options.maxNewPredsPerDay)
   const sink = createMemorySink()
   const recorder = createRecordingContext({ home: home.dir })
   const runtime = startRuntime({
@@ -471,6 +488,125 @@ describe('runtime: the host session log (AD-6)', () => {
     const json = JSON.parse(text.split('\n').at(-1) ?? '{}') as { pointers: { quote: string }[] }
     expect(json.pointers[0]?.quote).toBe('命令行里也读得到。')
     await cleanup?.()
+  })
+})
+
+describe('runtime: the recall reader (Story 2.5)', () => {
+  it('is assembled beside the write side and answers from the same handle', async () => {
+    const { runtime } = boot()
+    expect(runtime.recall).toBeDefined()
+    await runtime.write?.remember({
+      ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'likes', obj: 'whale watching' }],
+    }, 'model', 'remember')
+
+    const answer = runtime.recall?.recall('whale')
+
+    expect(answer?.ok).toBe(true)
+    expect(answer?.hits.map(hit => hit.mem_key)).toEqual(['assertion:Elliott:likes:whale watching'])
+    // The widths come from the configuration, so a narrowed contract is visible
+    // here rather than only inside the composer.
+    expect(answer?.top_k).toBe(DEFAULT_TOP_K)
+  })
+
+
+  it('takes the candidate pool from the configuration too, not just the width', async () => {
+    // The pool is the outer cut, and it was the one key nothing read: a mutation
+    // that hard-coded it to 12 left the whole suite green. Five memories and a
+    // pool of three makes the wiring visible in three numbers at once.
+    const { runtime } = boot({ candidatePool: 3 })
+    for (let index = 0; index < 5; index += 1) {
+      await runtime.write?.remember({
+        ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'likes', obj: `whale note ${index}` }],
+      }, 'model', 'remember')
+    }
+
+    const answer = runtime.recall?.recall('whale')
+
+    expect(answer?.candidate_pool).toBe(3)
+    expect(answer?.matched).toBe(5)
+    expect(answer?.candidates).toBe(3)
+    // Default topK is five and the pool is three, so the pool is the binding cut
+    // — and the sentence has to name it rather than report three as a shortfall.
+    expect(answer?.hits).toHaveLength(3)
+    expect(answer?.message).toBe('找到 5 条未失效记忆，其中 3 条进入候选池，返回前 3 条。')
+  })
+  it('keeps answering while the write side is down', () => {
+    // Two live versions of one key already in the file: the bootstrap cannot
+    // build the unique index, so the write port is never built. Recall depends on
+    // the handle, not on the registry (AD-18 keeps the halves independent).
+    const { home } = homeAt()
+    const opened = openDatabase({ file: join(home.dir, 'oh-my-whale', 'oh-my-whale.tdb'), dim: TEST_DIM, memoryLimitMb: 256 })
+    if (!opened.ok) throw new Error(opened.reason)
+    const zero = new Array<number>(TEST_DIM).fill(0)
+    const iso = new Date().toISOString()
+    opened.db.insert(zero, { kind: 'assertion', mem_key: 'dup:key', active_slot: 1, obj: 'whale one', valid_from: iso, recorded_at: iso })
+    opened.db.insert(zero, { kind: 'assertion', mem_key: 'dup:key', active_slot: 1, obj: 'whale two', valid_from: iso, recorded_at: iso })
+    closeDatabase(opened.db)
+
+    const recorder = createRecordingContext({ home: home.dir })
+    const parsed = parseConfig({ db: { dim: TEST_DIM } })
+    if (!parsed.ok) throw new Error('config')
+    const runtime = startRuntime({
+      ctx: recorder.ctx,
+      config: parsed.config,
+      logger: createLogger(createMemorySink()),
+      personaText: 'You are the whale.',
+    })
+    runtimes.push(runtime)
+
+    expect(runtime.write).toBeUndefined()
+    const answer = runtime.recall?.recall('whale')
+    expect(answer?.ok).toBe(true)
+    // Both live versions of that key come back: the store holds a state the
+    // index forbids, and recall reports what is there rather than guessing.
+    expect(answer?.candidates).toBe(2)
+  })
+
+  it('reaches the model through a real apply() mount instead of E_NOT_IMPLEMENTED', async () => {
+    const { home } = homeAt()
+    const recorder = createRecordingContext({ home: home.dir, withTools: true })
+    let cleanup: (() => Promise<void>) | undefined
+    apply({
+      ...recorder.ctx,
+      effect: (callback) => {
+        cleanup = callback() as (() => Promise<void>) | undefined
+      },
+    }, { db: { dim: TEST_DIM } })
+
+    const remember = recorder.definitions.find(definition => definition.name === 'remember')
+    if (remember === undefined) throw new Error('remember was not registered')
+    await remember.execute({
+      patch: { ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'likes', obj: 'whale watching' }] },
+    }, { agent: { id: 'session-alpha' } })
+
+    const recall = recorder.definitions.find(definition => definition.name === 'recall')
+    if (recall === undefined) throw new Error('recall was not registered')
+    // The tool answer is the schema's shape, not the reader's: `hits` is the
+    // reader's own view and the tool flattens it to `mem_keys` / `items`.
+    const answer = await recall.execute({ query: 'whale' }, {}) as { ok: boolean; code: string; mem_keys: string[]; matched: number }
+    expect(answer.ok).toBe(true)
+    expect(answer.code).toBe(E_OK)
+    expect(answer.mem_keys).toEqual(['assertion:Elliott:likes:whale watching'])
+
+    // The same call one step out of bounds is refused, and refuses without
+    // reading: the boundary is the reader's, not the host schema's.
+    const refused = await recall.execute({ query: 'whale', topK: 9 }, {}) as { ok: boolean; code: string; mem_keys: unknown[]; matched: number }
+    expect(refused.ok).toBe(false)
+    expect(refused.code).toBe('E_BOUNDARY')
+    expect(refused.mem_keys).toEqual([])
+    expect(refused.matched).toBe(0)
+    await cleanup?.()
+  })
+
+  it('does not answer from a closed handle after dispose', async () => {
+    const { runtime } = boot()
+    const reader = runtime.recall
+    expect(reader).toBeDefined()
+    await runtime.dispose()
+    runtimes.length = 0
+    const answer = reader?.recall('whale')
+    expect(answer?.ok).toBe(false)
+    expect(answer?.code).toBe('E_GATE_DOWN')
   })
 })
 

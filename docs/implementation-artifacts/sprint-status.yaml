@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-23-2026 12:43
-last_updated: 11-24-2026 20:01
+last_updated: 11-24-2026 22:25
 project: DSH哦鲸鲸
 project_key: NOKEY
 tracking_system: file-system
@@ -48,7 +48,7 @@ development_status:
   2-2-每条记忆追得到来源-且引文不夹带隐私: done
   2-3-改写留旧版本-每次写留一条决策: done
   2-4-注入只有一个出口-两段各有预算: done
-  2-5-召回只读-有界-只给未失效版本: backlog
+  2-5-召回只读-有界-只给未失效版本: done
   2-6-每次注入与召回都留一行审计: backlog
   epic-2-retrospective: optional
 
