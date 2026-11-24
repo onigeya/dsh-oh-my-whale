@@ -17,6 +17,9 @@ import { ASSERTABLE_KINDS, PATCH_TABLE_MAX_OPS, TEXT_MAX_CODE_POINTS } from '../
 import type { JsonSchemaNode } from './json-schema.ts'
 import type { WriteAnswer, WritePort } from './write-port.ts'
 
+/** Highest event sequence a declared range may name (a sanity bound, not a host limit). */
+const MAX_SEQ = 1_000_000_000
+
 /** The four fixed tool names. Renaming one is a breaking change (AD-25). */
 export const PLACEHOLDER_TOOL_NAMES = ['remember', 'recall', 'forget', 'explain'] as const
 
@@ -32,7 +35,20 @@ export interface ToolDefinitionLike {
   readonly description: string
   readonly parameters: JsonSchemaNode
   readonly output: { readonly schema: JsonSchemaNode }
-  execute(args: unknown, exec: unknown): Promise<unknown>
+  execute(args: unknown, exec?: unknown): Promise<unknown>
+}
+
+/**
+ * The slice of the host's tool-run context this module reads.
+ *
+ * `agent.id` is the session id: the agent runs inside this one session, and the
+ * evidence pointer has to name the session its sentences came from. Declared
+ * structurally like every other host type here — the plugin does not import
+ * host packages — so an older host that passes nothing simply yields no
+ * session id, and the pointer degrades instead of the write failing.
+ */
+export interface ToolRunContextLike {
+  readonly agent?: { readonly id?: unknown }
 }
 
 /** The slice of `ctx.tools` this module needs. */
@@ -107,6 +123,23 @@ function writeUnavailable(tool: string): WriteAnswer {
 }
 
 /**
+ * Pick the session id out of a tool-run context.
+ *
+ * The host passes a live object; a test may pass nothing at all. An id of the
+ * wrong type is treated as absent rather than stringified: a pointer naming
+ * "[object Object]" would look resolvable and never be.
+ * @param exec - the second argument the host hands to `execute`.
+ * @returns the session id, or `undefined` when the host supplied none.
+ */
+function sessionIdOf(exec: unknown): string | undefined {
+  if (typeof exec !== 'object' || exec === null) return undefined
+  const agent = (exec as ToolRunContextLike).agent
+  if (typeof agent !== 'object' || agent === null) return undefined
+  const id = agent.id
+  return typeof id === 'string' && id.length > 0 ? id : undefined
+}
+
+/**
  * Normalise the one argument `remember` takes.
  *
  * The host hands us whatever the model produced; a patch that is not an object
@@ -159,6 +192,18 @@ const PARAMETERS: Record<PlaceholderToolName, JsonSchemaNode> = {
                     subj: { type: 'string', minLength: 1, maxLength: TEXT_MAX_CODE_POINTS },
                     pred: { type: 'string', minLength: 1 },
                     obj: { type: 'string', minLength: 1, maxLength: TEXT_MAX_CODE_POINTS },
+                    // The pointer is declared, not inferred: the writer cannot
+                    // guess which sentences a fact came from, and a wrong
+                    // guess would make AD-6 traceability a lie.
+                    evidence: {
+                      type: 'object',
+                      properties: {
+                        seq_from: { type: 'integer', minimum: 1 },
+                        seq_to: { type: 'integer', minimum: 1, maximum: MAX_SEQ },
+                      },
+                      required: ['seq_from', 'seq_to'],
+                      additionalProperties: false,
+                    },
                   },
                   required: ['op', 'kind', 'subj', 'pred'],
                   additionalProperties: false,
@@ -209,7 +254,7 @@ const PARAMETERS: Record<PlaceholderToolName, JsonSchemaNode> = {
 /** One-line descriptions; they are prompt text and therefore part of the contract. */
 const DESCRIPTIONS: Record<PlaceholderToolName, string> = {
   recall: '按需检索长期记忆（本版本占位，调用返回 E_NOT_IMPLEMENTED）。',
-  remember: '写入一张记忆补丁表。patch 形如 {"ops":[{"op":"assert","kind":"pref","subj":"Elliott","pred":"reply_style","obj":"concise"}],"reason":"用户明确要求"}：op=assert 必填 kind/subj/pred，obj 缺省即三段键；op=pred 只接受用户调用方。整表要么全成、要么整表拒收。',
+  remember: '写入一张记忆补丁表。patch 形如 {"ops":[{"op":"assert","kind":"pref","subj":"Elliott","pred":"reply_style","obj":"concise"}],"reason":"用户明确要求"}：op=assert 必填 kind/subj/pred，obj 缺省即三段键；op=pred 只接受用户调用方。整表要么全成、要么整表拒收。assert 可选 evidence:{seq_from,seq_to} 指明这条事实出自当前会话哪几条事件——只声明区间，引文由写入路径回读原文生成；区间最多覆盖 20 条事件，越宽整表拒收。',
   forget: '按 mem_key 撤销一条记忆（本版本占位，调用返回 E_NOT_IMPLEMENTED）。',
   explain: '解释一条记忆的来龙去脉（本版本占位，调用返回 E_NOT_IMPLEMENTED）。',
 }
@@ -225,14 +270,14 @@ export function memoryTools(writer?: RememberWriter): ToolDefinitionLike[] {
     description: DESCRIPTIONS[name],
     parameters: PARAMETERS[name],
     output: { schema: OUTPUT_SCHEMA },
-    execute: async (args: unknown): Promise<unknown> => {
+    execute: async (args: unknown, exec?: unknown): Promise<unknown> => {
       if (name !== 'remember') return notImplemented(name)
       if (writer === undefined) return writeUnavailable(name)
       const read = readPatchArgument(args)
       if (!read.ok) {
         return { ok: false, code: 'E_BOUNDARY', tool: name, message: read.reason, mem_keys: [], items: [] }
       }
-      return writer.remember(read.patch, 'model', name)
+      return writer.remember(read.patch, 'model', name, sessionIdOf(exec))
     },
   }))
 }

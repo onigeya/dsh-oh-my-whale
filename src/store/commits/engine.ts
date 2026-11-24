@@ -212,6 +212,13 @@ export function createCommitEngine(db: Database, dim: number): CommitEngine {
   }
 }
 
+/** One edge a plan wants to draw, between two nodes the same batch writes. */
+export interface PlannedLink {
+  readonly src: number
+  readonly dst: number
+  readonly label: string
+}
+
 /**
  * Build the write operations for one planned batch.
  *
@@ -219,20 +226,34 @@ export function createCommitEngine(db: Database, dim: number): CommitEngine {
  * assertion that needs them, and a superseded version is retired before the
  * replacement is inserted, so the unique index never sees two live versions of
  * one key inside the batch.
- * @param input - the nodes and updates a plan produced.
+ *
+ * An insert carrying an explicit `id` becomes `insertWithId`, and every link is
+ * appended last: an edge may only name ids the same batch creates, so the nodes
+ * have to be in the batch before the edge between them. The engine validates the
+ * batch's final state rather than its operation order, which is why the edge can
+ * be last even though it is written as if order mattered.
+ * @param input - the nodes, id assignments and edges a plan produced.
  * @returns the engine batch.
  */
 export function toTransactionOperations(input: {
   readonly zeroVector: Vector;
-  readonly inserts: readonly { readonly payload: Record<string, unknown> }[];
+  readonly inserts: readonly { readonly id?: number; readonly payload: Record<string, unknown> }[];
   readonly updates: readonly { readonly nodeId: number; readonly payload: Record<string, unknown> }[];
+  readonly links?: readonly PlannedLink[];
 }): TransactionOperation[] {
   const operations: TransactionOperation[] = []
   for (const update of input.updates) {
     operations.push({ type: 'updatePayload', id: update.nodeId, payload: update.payload })
   }
   for (const insert of input.inserts) {
-    operations.push({ type: 'insert', vector: [...input.zeroVector], payload: insert.payload })
+    if (insert.id === undefined) {
+      operations.push({ type: 'insert', vector: [...input.zeroVector], payload: insert.payload })
+    } else {
+      operations.push({ type: 'insertWithId', id: insert.id, vector: [...input.zeroVector], payload: insert.payload })
+    }
+  }
+  for (const link of input.links ?? []) {
+    operations.push({ type: 'link', src: link.src, dst: link.dst, label: link.label })
   }
   return operations
 }

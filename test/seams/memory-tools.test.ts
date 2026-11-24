@@ -41,8 +41,8 @@ function stubPort(answer: WriteAnswer): WritePort & { readonly calls: string[] }
   const calls: string[] = []
   return {
     calls,
-    remember: async (raw: unknown, caller, tool) => {
-      calls.push(`remember:${caller}:${tool}:${JSON.stringify(raw)}`)
+    remember: async (raw: unknown, caller, tool, sessionId) => {
+      calls.push(`remember:${caller}:${tool}:${JSON.stringify(raw)}:${sessionId ?? '-'}`)
       return answer
     },
     promote: async (name, cardinality, reason) => {
@@ -70,9 +70,31 @@ describe('the remember tool', () => {
     const answer = await remember.execute({ patch }, {})
 
     expect(answer).toEqual(OK_ANSWER)
-    expect(port.calls).toEqual([`remember:model:remember:${JSON.stringify(patch)}`])
+    expect(port.calls).toEqual([`remember:model:remember:${JSON.stringify(patch)}:-`])
   })
 
+  it('hands the session id of the start to the store', async () => {
+    const port = stubPort(OK_ANSWER)
+    const remember = byName('remember', port)
+    const patch = { ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'likes', obj: 'coffee' }] }
+    // The host passes the whole execution context; the session id lives on its agent.
+    await remember.execute({ patch }, { agent: { id: 'session-alpha' } })
+
+    expect(port.calls).toEqual([`remember:model:remember:${JSON.stringify(patch)}:session-alpha`])
+  })
+
+  it('writes without a session when the execution context carries none', async () => {
+    const port = stubPort(OK_ANSWER)
+    const remember = byName('remember', port)
+    const patch = { ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'likes', obj: 'coffee' }] }
+    for (const exec of [{}, { agent: {} }, { agent: { id: '' } }, { agent: { id: 7 } }, undefined]) {
+      await remember.execute({ patch }, exec)
+    }
+
+    // An id that is not a non-empty string is no session at all, never a stringified object.
+    expect(port.calls.every(call => call.endsWith(':-'))).toBe(true)
+    expect(port.calls).toHaveLength(5)
+  })
   it('refuses arguments that carry no patch, without calling the store', async () => {
     const port = stubPort(OK_ANSWER)
     const remember = byName('remember', port)

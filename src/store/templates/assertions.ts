@@ -14,6 +14,7 @@
  * absent and write a second live version of it.
  * @module
  */
+import { toStoredNode, type StoredNode } from './rows.ts'
 import type { Database } from '../db.ts'
 
 /** The single live version of one business key. */
@@ -43,53 +44,8 @@ export function predicateMemKey(name: string): string {
   return `pred:${name}`
 }
 
-/** One unwrapped store row: the node id plus its payload. */
-export interface StoredNode {
-  readonly id: number
-  readonly payload: Readonly<Record<string, unknown>>
-}
-
-/** Decimals only: `Number('')` is 0, `Number('0x10')` is 16 and `Number('1e3')` is 1000. */
-const DECIMAL = /^(?:0|[1-9]\d*)$/
-
-/**
- * Read a row's node id, rejecting every shape `Number()` would silently accept.
- * @param raw - the `_ .id` value as the engine returned it.
- * @param query - the template that produced the row, for the failure message.
- * @returns the id as a number.
- * @throws when the id is not a plain decimal integer.
- */
-function toNodeId(raw: unknown, query: string): number {
-  if (typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 0) return raw
-  if (typeof raw === 'string' && DECIMAL.test(raw)) {
-    const parsed = Number(raw)
-    if (Number.isSafeInteger(parsed)) return parsed
-  }
-  throw new Error(`omw: 模板返回的节点 id 不是十进制整数：${JSON.stringify(raw)}（${query}）`)
-}
-
-/**
- * Unwrap one engine row, or throw.
- * @param row - one element of the engine's result array.
- * @param query - the template that produced it.
- * @returns the id and payload.
- * @throws when the row does not carry `_ .id` and `_ .payload`.
- */
-function toStoredNode(row: unknown, query: string): StoredNode {
-  if (typeof row !== 'object' || row === null) {
-    throw new Error(`omw: 模板返回的行不是对象：${JSON.stringify(row)}（${query}）`)
-  }
-  const meta = (row as { _?: unknown })._
-  if (typeof meta !== 'object' || meta === null) {
-    throw new Error(`omw: 模板返回的行缺少 _ 元数据：${JSON.stringify(row)}（${query}）`)
-  }
-  const id = toNodeId((meta as { id?: unknown }).id, query)
-  const payload = (meta as { payload?: unknown }).payload
-  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-    throw new Error(`omw: 模板返回的行缺少 _ .payload 对象：${JSON.stringify(row)}（${query}）`)
-  }
-  return { id, payload: payload as Record<string, unknown> }
-}
+/** Re-exported so callers of this module need not know where rows are unwrapped. */
+export type { StoredNode }
 
 /** The four reads the write path needs, each over one literal template. */
 export interface AssertionTemplates {

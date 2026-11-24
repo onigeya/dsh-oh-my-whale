@@ -15,6 +15,11 @@
  * the only way a predicate becomes single-valued (AD-27). It goes through the
  * same write service as `remember`, so the queue, the ledger and the audit row
  * are the same ones — a promotion is not a side door.
+ *
+ * Story 2.2 adds `/omw evidence`: the user's own way to ask where a fact came
+ * from. It reads the pointers stored with the key and reports them verbatim,
+ * plus whether the host can still resolve them. It writes nothing, and it is
+ * not part of recall — asking a question is not remembering an answer.
  * @module
  */
 import type { Config, Paths } from './config.ts'
@@ -25,6 +30,7 @@ import { databaseDim, nodeCount } from '../store/db.ts'
 import { PERSONA_SECTION_NAME } from './prompt-composer.ts'
 import type { Logger } from './logger.ts'
 import type { WritePort } from './write-port.ts'
+import type { EvidenceReadAnswer, EvidenceReader } from './evidence-reader.ts'
 
 /** Outcome of one invocation, as the host's command registry expects it. */
 export type CommandResultLike =
@@ -246,6 +252,7 @@ export function inspectInProcess(view: DoctorView): DoctorReport {
 /** Usage text for `/omw` with no or an unknown subcommand. */
 export const OMW_USAGE = `/omw doctor — 在本进程内跑五项体检（库、快照、维度、凭据、注入段），复用当前实例的库句柄
 /omw pred promote <谓词名> --single|--multi --reason <理由> — 把谓词提升为单值或多值（只有用户能做这件事）
+/omw evidence <mem_key> — 列出该业务键的证据指针（会话、区间、引文、是否截断、是否脱敏）
 /omw help — 显示这段说明`
 
 /** One parsed `/omw pred promote` invocation. */
@@ -318,11 +325,12 @@ export function registerOmwCommand(
   registry: CommandRegistryLike,
   view: () => DoctorView,
   write?: () => WritePort | undefined,
+  evidence?: () => EvidenceReader | undefined,
 ): () => void {
   return registry.register({
     name: 'omw',
-    description: '哦鲸鲸体检：/omw doctor 在当前进程内跑五项检查；/omw pred promote 提升谓词基数',
-    input: { hint: 'doctor | pred promote <名> --single|--multi --reason <理由>' },
+    description: '哦鲸鲸体检：/omw doctor 在当前进程内跑五项检查；/omw pred promote 提升谓词基数；/omw evidence 查一条记忆的证据指针',
+    input: { hint: 'doctor | pred promote <名> --single|--multi --reason <理由> | evidence <mem_key>' },
     handler: async (invocation: CommandInvocationLike): Promise<CommandResultLike> => {
       const sub = invocation.rawInput.trim().toLowerCase()
       if (sub === 'doctor') {
@@ -334,6 +342,11 @@ export function registerOmwCommand(
       // command the user never typed.
       if (sub === 'pred' || sub.startsWith('pred ')) {
         return promote(invocation.rawInput, write)
+      }
+      // `evidence` reads a business key, which is case-sensitive: the dispatch
+      // test above lowercases, so the key is cut from the raw text instead.
+      if (sub === 'evidence' || sub.startsWith('evidence ')) {
+        return readEvidence(invocation.rawInput, evidence)
       }
       if (sub === '' || sub === 'help' || sub === '--help') {
         return { kind: 'success', text: OMW_USAGE }
@@ -365,4 +378,121 @@ async function promote(raw: string, write?: () => WritePort | undefined): Promis
   const answer = await port.promote(parsed.request.name, parsed.request.cardinality, parsed.request.reason)
   const head = answer.ok ? '已更新谓词登记表' : `未能更新谓词登记表（${answer.code}）`
   return { kind: answer.ok ? 'success' : 'error', text: `${head}：${answer.message}` }
+}
+
+/** What an `evidence` invocation asked for, or why it cannot be read. */
+export type EvidenceKeyParse =
+  | { readonly ok: true; readonly key: string }
+  | { readonly ok: false; readonly reason: string }
+
+/**
+ * Cut the business key out of an `evidence` invocation.
+ *
+ * Keys are case-sensitive and may contain any non-space character, so the key
+ * is the token after the subcommand of the raw text — not the lowercased
+ * dispatch string, which would silently rewrite `assertion:Elliott:lives_in`
+ * into a key that does not exist.
+ *
+ * A key never contains whitespace, so a second token is always a mistake. It
+ * is reported rather than dropped: keeping only the first token used to turn
+ * `/omw evidence assertion:x:y please` into a confident "not found" about a
+ * key the user never typed.
+ * @param raw - the command text after `/omw`.
+ * @returns the key as typed, or the reason it cannot be taken.
+ */
+export function parseEvidenceKey(raw: string): EvidenceKeyParse {
+  const tokens = raw.trim().split(/\s+/u)
+  const key = tokens[1] ?? ''
+  if (key === '') return { ok: true, key }
+  if (tokens.length > 2) {
+    return {
+      ok: false,
+      reason: `一次只查一个业务键，后面这些多写的词没有当作键：${tokens.slice(2).join(' ')}`,
+    }
+  }
+  return { ok: true, key }
+}
+
+/**
+ * Render one pointer as a single human-readable line.
+ *
+ * Every field the user asked about is present in the line, and no node id is:
+ * AD-6 and AR-4 keep ids inside the store.
+ * @param pointer - one pointer.
+ * @param index - its position in the list.
+ * @returns one line.
+ */
+function renderPointer(pointer: EvidenceReadAnswer['pointers'][number], index: number): string {
+  const quote = pointer.quote === '' ? '（引文为空，原文不可解引用）' : `「${pointer.quote}」`
+  const flags = [
+    pointer.quote_truncated ? '已截断' : '未截断',
+    pointer.deidentified ? '已脱敏' : '未脱敏',
+  ].join('、')
+  const range = pointer.seq_from === undefined || pointer.seq_to === undefined
+    ? '#?-?'
+    : `#${pointer.seq_from}-${pointer.seq_to}`
+  return `${index + 1}. ${pointer.session_id} ${range} ${quote}（${flags}）`
+}
+
+/**
+ * Run one `evidence` read and render it.
+ *
+ * The JSON line is not decoration: it is the machine-readable half of the same
+ * answer, so a script can check what the human line says without parsing prose.
+ * @param raw - the command text after `/omw`.
+ * @param evidence - reads the reader at invocation time, or `undefined` when the store is unusable.
+ * @returns the command result.
+ */
+async function readEvidence(
+  raw: string,
+  evidence?: () => EvidenceReader | undefined,
+): Promise<CommandResultLike> {
+  const parsed = parseEvidenceKey(raw)
+  if (!parsed.ok) {
+    return { kind: 'error', text: `${parsed.reason}\n\n${OMW_USAGE}` }
+  }
+  const memKey = parsed.key
+  if (memKey === '') {
+    return { kind: 'error', text: `需要给出一个业务键：/omw evidence <mem_key>\n\n${OMW_USAGE}` }
+  }
+  const reader = evidence?.()
+  if (reader === undefined) {
+    return { kind: 'error', text: '记忆库本次启动不可读（schema 未就绪或句柄已关闭），没有可查的证据指针。' }
+  }
+  let answer: EvidenceReadAnswer
+  try {
+    answer = await reader.read(memKey)
+  } catch (error) {
+    // The reader is documented not to throw, but a handler that lets a
+    // rejection escape takes the whole command surface down with it.
+    const reason = error instanceof Error ? error.message : String(error)
+    return { kind: 'error', text: `读取证据指针时出错：${reason}` }
+  }
+  if (answer.code === 'E_BOUNDARY') {
+    return { kind: 'error', text: answer.message }
+  }
+  if (answer.code === 'E_GATE_DOWN') {
+    return { kind: 'error', text: answer.message }
+  }
+  const lines = [answer.message]
+  if (answer.pointers.length === 0) {
+    lines.push('这条记忆没有证据指针（写入时没有声明来源区间）。')
+  } else {
+    lines.push(...answer.pointers.map((pointer, index) => renderPointer(pointer, index)))
+  }
+  if (answer.degraded !== undefined) {
+    lines.push(`降级：${answer.degraded}（原文此刻未能全部回读，引文保持写入时的样子，未伪造）`)
+  }
+  // The degraded marker goes into the JSON too: a reader that only looked at
+  // the structured half would otherwise believe the pointers resolve.
+  const payload = {
+    ok: answer.ok,
+    code: answer.code,
+    mem_key: answer.mem_key,
+    message: answer.message,
+    pointers: answer.pointers,
+    ...(answer.degraded === undefined ? {} : { degraded: answer.degraded }),
+  }
+  lines.push(JSON.stringify(payload))
+  return { kind: 'success', text: lines.join('\n') }
 }

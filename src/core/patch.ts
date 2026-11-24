@@ -22,6 +22,7 @@ import {
 } from '../store/tbox.ts'
 import type { StoredNode } from '../store/templates/assertions.ts'
 import type { DecisionKind } from './decisions.ts'
+import { checkEvidenceRange } from './evidence.ts'
 
 /** Every kind a patch op may assert. */
 export const ASSERTABLE_KINDS = ['assertion', 'pref', 'persona_state'] as const
@@ -147,6 +148,21 @@ export function deriveMemKey(
   return objNorm === undefined ? `${kind}:${subj}:${pred}` : `${kind}:${subj}:${pred}:${objNorm}`
 }
 
+/**
+ * The source range one assertion declares.
+ *
+ * Only the range is declared, never the text: the session id comes from the
+ * host, and the quote is read from the host's log by the write path. A table
+ * that could carry its own quote would be a table that can store text nobody
+ * ever said.
+ */
+export const evidenceRangeSchema = z
+  .object({
+    seq_from: z.number().int(),
+    seq_to: z.number().int(),
+  })
+  .strict()
+
 /** One `op:'assert'` entry. */
 export const assertOpSchema = z
   .object({
@@ -155,6 +171,7 @@ export const assertOpSchema = z
     subj: z.string(),
     pred: z.string(),
     obj: z.string().optional(),
+    evidence: evidenceRangeSchema.optional(),
   })
   .strict()
 
@@ -238,6 +255,16 @@ export interface DecisionDraft {
   readonly reason: string
 }
 
+/** One declared source range, tied to the assertion it belongs to. */
+export interface EvidenceDraft {
+  /** 1-based position of the assert op that declared it. */
+  readonly index: number
+  /** Business key of the assertion the pointer supports. */
+  readonly assertionMemKey: string
+  readonly seqFrom: number
+  readonly seqTo: number
+}
+
 /** What one op did, as the tool reports it back. */
 export interface PlanItemResult {
   /** 1-based position in the table. */
@@ -256,6 +283,8 @@ export interface PlanOk {
   readonly updates: readonly PlannedUpdate[]
   readonly decisions: readonly DecisionDraft[]
   readonly items: readonly PlanItemResult[]
+  /** Source ranges to store alongside the assertions this table creates. */
+  readonly evidence: readonly EvidenceDraft[]
   /** Whether any op was downgraded to a `scene` node by the daily cap. */
   readonly downgraded: boolean
 }
@@ -509,6 +538,21 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
   const updates: PlannedUpdate[] = []
   const decisions: DecisionDraft[] = []
   const items: PlanItemResult[] = []
+  const evidence: EvidenceDraft[] = []
+
+  // One declaration, one pointer — whichever branch ends up handling the op.
+  // An `existing` assertion still gets a pointer: the write path links it to
+  // the node that is already there, so "where did this come from" never
+  // depends on whether the fact happened to be new this time.
+  const pushEvidence = (index: number, assertionMemKey: string, op: AssertOp): void => {
+    if (op.evidence === undefined) return
+    evidence.push({
+      index: index + 1,
+      assertionMemKey,
+      seqFrom: op.evidence.seq_from,
+      seqTo: op.evidence.seq_to,
+    })
+  }
   /**
    * Live key -> the value this table already pinned it to.
    *
@@ -706,6 +750,15 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
       obj = checked.text
     }
 
+    // A declared range is checked here, before anything is planned for it: a
+    // pointer to events that cannot exist is a broken table, not a degraded one.
+    // Whether those events *do* exist is the host's question and is answered by
+    // the read-back, not here.
+    if (op.evidence !== undefined) {
+      const range = checkEvidenceRange(op.evidence.seq_from, op.evidence.seq_to)
+      if (!range.ok) return refuse(`ops[${index}].evidence`, range.reason)
+    }
+
     let state = planned.get(pred.name)
     /** Nodes this op wrote, so its single ledger entry names all of them. */
     const affected: string[] = []
@@ -736,10 +789,12 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
             return { ok: false, code: 'E_CONFLICT', field: `ops[${index}].obj`, reason: `同一张表里 ${scene.memKey} 有两个不同的值` }
           }
           items.push({ index: index + 1, op: 'assert', outcome: 'existing', memKey: scene.memKey, kind: 'scene', value: obj })
+          pushEvidence(index, scene.memKey, op)
           continue
         }
         seen.set(scene.memKey, obj)
         nodes.push({ memKey: scene.memKey, payload: scene.payload })
+        pushEvidence(index, scene.memKey, op)
         decisions.push({
           index: index + 1,
           decisionKind: 'insert',
@@ -813,6 +868,7 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
           kind: op.kind,
           ...(obj === undefined ? {} : { value: obj }),
         })
+        pushEvidence(index, memKey, op)
         continue
       }
       return {
@@ -852,9 +908,11 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
         kind: op.kind,
         ...(obj === undefined ? {} : { value: obj }),
       })
+      pushEvidence(index, memKey, op)
       continue
     }
     nodes.push(resolution.node)
+    pushEvidence(index, memKey, op)
     decisions.push({
       index: index + 1,
       decisionKind: 'insert',
@@ -873,7 +931,7 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
     })
   }
 
-  return { ok: true, nodes, updates, decisions, items, downgraded }
+  return { ok: true, nodes, updates, decisions, items, evidence, downgraded }
 }
 
 /** The reserved value negotiation outcome of one assert op. */

@@ -44,6 +44,8 @@ import { PromptComposer, type PersonaState, type SystemPromptLike } from './prom
 import { registerPlaceholderTools, type ToolRegistryLike } from './tools.ts'
 import { createVectorPolicy, type VectorPolicy } from './vector.ts'
 import { createWriteAudit, createWritePort, type WritePort } from './write-port.ts'
+import { asSessionQuery, createQuoteSource, type SessionQueryLike } from './evidence-source.ts'
+import { createEvidenceReader, type EvidenceReader } from './evidence-reader.ts'
 
 /**
  * Diagnostic log codes for registration problems.
@@ -133,6 +135,14 @@ export interface Runtime {
    * writable — that combination is a bug, not a degraded mode.
    */
   readonly write?: WritePort
+  /**
+   * The read side of the same store, present whenever the handle is readable.
+   *
+   * Unlike the write side this does not depend on the seed registry having
+   * installed: asking where a stored fact came from is a read, and a read-only
+   * store still answers it. `/omw evidence` refuses only when this is absent.
+   */
+  readonly evidence?: EvidenceReader
   /**
    * Drain the write queue, then close the database and release both injection
    * registrations. Idempotent, and returns a promise the caller must await:
@@ -234,6 +244,7 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
   let tools: readonly string[] = []
   let vector: VectorPolicy | undefined
   let write: WritePort | undefined
+  let evidence: EvidenceReader | undefined
   let disposed = false
   let disposing: Promise<void> | undefined
 
@@ -266,6 +277,8 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
     // before the handle goes away, so an accepted write is never dropped.
     const port = write
     write = undefined
+    evidence?.dispose()
+    evidence = undefined
     disposing = (async () => {
       composer.dispose()
       let closedByPort = false
@@ -417,6 +430,19 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
   }
 
   registerSection()
+  // The host's session log is optional (AD-6): a harness without it still writes
+  // assertions, they simply carry pointers that cannot be resolved. Resolving it
+  // never fails the start — an absent capability is a degradation of one field,
+  // not of the plugin.
+  const sessionQuery: SessionQueryLike | undefined = (() => {
+    if (typeof ctx.get !== 'function') return undefined
+    try {
+      return asSessionQuery(ctx.get('sessionQuery'))
+    } catch {
+      return undefined
+    }
+  })()
+  const readQuote = createQuoteSource(sessionQuery)
   // The write side is a single switch: either the store took the registry and we
   // can hand a port to the tools, or we hand them nothing and they refuse.
   if (db !== undefined && schemaWritable) {
@@ -427,7 +453,13 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
       maxNewPredsPerDay: config.tbox.maxNewPredsPerDay,
       contractVersion: SUPPORTED_CONTRACT_VERSION,
       now: nowMs,
+      readQuote,
     })
+  }
+  // The read side needs the handle, not the seed registry: a store that refused
+  // the bootstrap still answers questions about what is in it.
+  if (db !== undefined) {
+    evidence = createEvidenceReader({ db, readQuote })
   }
   registerTools()
   if (db !== undefined) {
@@ -473,6 +505,7 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
       },
       ...(vector === undefined ? {} : { vector }),
       ...(write === undefined ? {} : { write }),
+      ...(evidence === undefined ? {} : { evidence }),
       dispose,
     }
   }

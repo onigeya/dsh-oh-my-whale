@@ -45,7 +45,7 @@ development_status:
 
   epic-2: in-progress
   2-1-用-remember-写下一条断言-立刻能按业务键读回: done
-  2-2-每条记忆追得到来源-且引文不夹带隐私: backlog
+  2-2-每条记忆追得到来源-且引文不夹带隐私: done
   2-3-改写留旧版本-每次写留一条决策: backlog
   2-4-注入只有一个出口-两段各有预算: backlog
   2-5-召回只读-有界-只给未失效版本: backlog

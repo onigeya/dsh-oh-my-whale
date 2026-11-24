@@ -20,19 +20,30 @@
  *   rather than "one node".
  * @module
  */
-import { databaseDim, type Database } from '../db.ts'
+import { databaseDim, hasNode, type Database } from '../db.ts'
 import { startOfLocalDayIso } from '../tbox.ts'
 import { createAssertionTemplates, type StoredNode } from '../templates/assertions.ts'
+import { createEvidenceTemplates } from '../templates/evidence.ts'
 import {
   createCommitEngine,
   toTransactionOperations,
   type CommitEngine,
+  type PlannedLink,
   type WriteFailure,
   type WriteOutcome,
 } from './engine.ts'
 
 /** One node a plan wants inserted, with its complete payload. */
 export interface PlannedInsert {
+  /**
+   * The id this node must take, when the same batch has to name it.
+   *
+   * An edge needs both ends to have ids, and the engine hands out ids only as it
+   * inserts. A plan that draws an edge therefore assigns ids itself, through
+   * {@link WriteGateway.allocateIds}, and every other insert keeps the engine's
+   * own numbering.
+   */
+  readonly id?: number
   readonly payload: Record<string, unknown>
 }
 
@@ -48,6 +59,8 @@ export interface PlannedCommit {
   readonly inserts: readonly PlannedInsert[]
   /** Live nodes to rewrite; a retirement lands here, before any insert. */
   readonly updates: readonly PlannedRewrite[]
+  /** Edges between nodes this same batch writes. */
+  readonly links?: readonly PlannedLink[]
 }
 
 /** A failure the gateway noticed about itself rather than about a write. */
@@ -91,11 +104,33 @@ export interface WriteGateway {
    */
   countModelPredicatesToday(nowMs: number): number
   /**
+   * The node id of one evidence pointer, or `undefined` when the range is new.
+   *
+   * Evidence is immutable and carries no `active_slot`, so the unique key index
+   * does not police it: a second pointer to one range would be a second node
+   * under one key, and only this lookup prevents that.
+   * @param memKey - the evidence business key.
+   * @returns its node id, or `undefined`.
+   */
+  findEvidenceId(memKey: string): number | undefined
+  /**
    * Commit one plan, whole or not at all.
    * @param plan - the nodes and rewrites the planner produced.
    * @returns the node ids the engine assigned, or why nothing was written.
    */
   commit(plan: PlannedCommit): WriteOutcome<readonly number[]>
+  /**
+   * Reserve ids the caller can name in the same batch it commits.
+   *
+   * The engine has no id reservation: ids are handed out as nodes are inserted,
+   * and an edge can only name ids that exist by the end of its batch. A plan that
+   * needs both therefore has to choose ids before it commits — inside the write
+   * queue, where one write runs at a time, so two plans can never choose the
+   * same one.
+   * @param count - how many ids the plan needs.
+   * @returns the first `count` unused ids, ascending.
+   */
+  allocateIds(count: number): readonly number[]
   /**
    * Record one refusal in its own transaction.
    *
@@ -112,6 +147,19 @@ export interface WriteGateway {
 }
 
 /**
+ * The largest node id currently in the store.
+ * @param ids - every id the store holds.
+ * @returns the highest id, or 0 for an empty store.
+ */
+function highestNodeIdOf(ids: readonly number[]): number {
+  let highest = 0
+  for (const id of ids) {
+    if (id > highest) highest = id
+  }
+  return highest
+}
+
+/**
  * Wire the gateway around one open, writable handle.
  *
  * The templates and the engine are prepared once per handle: both compile or
@@ -125,8 +173,11 @@ export function createWriteGateway(
   options: { readonly reporter?: GatewayReporter } = {},
 ): WriteGateway {
   const templates = createAssertionTemplates(db)
+  const evidence = createEvidenceTemplates(db)
   const engine: CommitEngine = createCommitEngine(db, databaseDim(db))
   const reporter = options.reporter
+  /** Highest id already in use, read once per reservation. */
+  const highestNodeId = (): number => highestNodeIdOf(db.allNodeIds())
 
   /**
    * Turn one plan into engine operations.
@@ -141,6 +192,7 @@ export function createWriteGateway(
       zeroVector: engine.zeroVector,
       inserts: plan.inserts,
       updates: plan.updates,
+      ...(plan.links === undefined ? {} : { links: plan.links }),
     })
 
   return {
@@ -156,10 +208,27 @@ export function createWriteGateway(
     countModelPredicatesToday(nowMs: number): number {
       return templates.findModelPredsSince(startOfLocalDayIso(new Date(nowMs))).length
     },
+    findEvidenceId(memKey: string): number | undefined {
+      return evidence.findByKey(memKey)?.id
+    },
+
+    allocateIds(count: number): readonly number[] {
+      if (count <= 0) return []
+      // The engine's next automatic id is "highest in use, plus one", so a block
+      // starting there and stepping over ids already present can collide with
+      // neither an explicit nor a following automatic insert.
+      let candidate = highestNodeId() + 1
+      const reserved: number[] = []
+      while (reserved.length < count) {
+        if (!hasNode(db, candidate)) reserved.push(candidate)
+        candidate += 1
+      }
+      return reserved
+    },
     commit(plan: PlannedCommit): WriteOutcome<readonly number[]> {
       // A plan with nothing to write is a success, not an empty transaction: a
       // table that resolved to "everything already exists" did what it promised.
-      if (plan.inserts.length === 0 && plan.updates.length === 0) {
+      if (plan.inserts.length === 0 && plan.updates.length === 0 && (plan.links ?? []).length === 0) {
         return { ok: true, value: [] }
       }
       return engine.commit(batch(plan))

@@ -90,6 +90,27 @@ omw doctor [--home <DSH_HOME>] [--profile <名字>] [--json]
 
 > 第 5 项会用录制式假 ctx 加载 `lib/index.js` 并调用 `apply`，因此你会在这条命令的 stderr 里也看到一次 `[omw] loaded`。那正是它验的东西。该次挂载跑在 `mkdtemp` 出来的临时数据目录里（`db.path` 指向其中），因此宿主运行中也能拿到 `state=ok` 与真实工具数，既不会碰用户的库、也不会产生快照或第二行 `omw.log`；临时目录在返回前删除。
 
+## 追源：`/omw evidence <mem_key>`（聊天里）
+
+每条记忆都能回答「你从哪儿知道的」。写的时候在补丁表的 `evidence` 里给出区间，读的时候按业务键问：
+
+```
+/omw evidence assertion:Elliott:likes:coffee
+```
+
+输出先是人读的几行，末行是同一次回答的 JSON（`pointers` 与 `degraded` 都在里面），脚本不必解析散文。
+
+写入侧把来源做成**指针节点**，而不是消息副本：payload 只有 `session_id` / `seq_from` / `seq_to` / `quote` / `quote_truncated` / `deidentified` 六个业务键（外加 `kind` 与 `mem_key`），整段消息体一律不进库。指针与它支持的断言在同一事务里落库，边是 `supports`（指针 → 断言）。
+
+引文的两条硬规则，都在写入路径上一次做完，不能事后补：
+
+- **先脱敏，再截断。** 手机号、身份证、邮箱、银行卡命中后替换成 `[手机号]` 这类标记并置 `deidentified: true`；替换会让文本变长，所以顺序反了就可能截出一个没被遮住的号码再截掉标记。截断按**码点**计，上限 200：恰好 200 不截断，201 截断并置 `quote_truncated: true`。
+- **指不到就给空，绝不伪造。** 宿主没有回读能力或回读拿不到那段文本时，指针照常落库、`quote` 留空串，读取面报 `degraded: 'evidence-unresolvable'`。空引文分两种来源，读取面会说明是哪一种：写入时就没读到（库内已记录），或本次启动没接入回读。
+
+导出的默认规则（FR-24）：`listEvidenceFor(key)` 只给未脱敏的指针，`listEvidenceFor(key, { includeSensitive: true })` 才给全部。这条规则只落在 `src/store/commits/reads.ts` 一处——新读面直接用它，就不会漏。直接 `/omw evidence` 问一条键时看得到存着的那条（含脱敏版），因为那是「我自己库里的东西」，不是导出。
+
+区间上限 20 条事件（超过报 `E_BOUNDARY`，不会去白读宿主）。一次只查一个业务键；多写一个词会被点名，而不是被默默当成键的一部分。
+
 ## 降级：只有三档，没有中间态
 
 状态封闭为 `ok` / `no-op` / `vector-off`，由单一状态机持有；`no-op` 是终点，进程内**不自愈、不重试**，恢复一律靠重载插件。
@@ -132,6 +153,7 @@ OMW_E2E=1 pnpm test -- test/e2e   # 真实 dsh 会话（临时 DSH_HOME，不动
 ## 本版本的边界
 
 - `remember` 已实现（Story 2.1）：整张补丁表规划后一次事务写入，冲突整表拒收并补写一条 `rejected`；`recall` / `forget` / `explain` 仍是占位。
+- 追源已实现（Story 2.2）：`remember` 的补丁表可带 `evidence: {seq_from, seq_to}`，`/omw evidence <mem_key>` 读回指针。文本检索跳过 `kind: 'evidence'` 节点——引文是宿主原话的引述，不是我们的记忆，扫它会同一句说两次。
 - 写入的节点 `vec_state` 恒为 `pending`：向量补算属于 Story 2.5，在那之前新记忆不进向量召回。
 - 谓词基数只能由用户通过 `/omw pred promote <名> --single|--multi --reason <理由>` 修改。
 - `/omw doctor` 只读：不建索引、不写种子、不写审计行。

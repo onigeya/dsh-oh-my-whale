@@ -42,6 +42,23 @@ export interface TextSearchOptions {
 const DEFAULT_TOP_K = 5
 const MAX_TOP_K = 8
 
+/**
+ * Node kinds this scan never returns.
+ *
+ * An evidence pointer is reached through the assertion it supports (AD-6 keeps
+ * the edge as the only way in), and its text is a quotation of a host event,
+ * not one of our memories. Scanning it would do two things at once: return the
+ * same sentence twice — once as the assertion, once as its pointer — and put a
+ * quoted message on a read path where the export rule (FR-24) is not applied.
+ */
+const UNSEARCHABLE_KINDS: ReadonlySet<string> = new Set(['evidence'])
+
+/** Whether this payload may appear as a hit. */
+function searchable(record: Record<string, unknown>): boolean {
+  const kind = record['kind']
+  return typeof kind !== 'string' || !UNSEARCHABLE_KINDS.has(kind)
+}
+
 /** Collect the textual values of a payload, one level deep. */
 function textFields(payload: unknown): string[] {
   if (typeof payload !== 'object' || payload === null) return []
@@ -84,12 +101,13 @@ export function searchText(db: Database, query: string, options: TextSearchOptio
   for (const id of allNodeIds(db)) {
     const payload = readPayload(db, id)
     if (typeof payload !== 'object' || payload === null) continue
+    const record = payload as Record<string, unknown>
+    if (!searchable(record)) continue
     const haystack = textFields(payload).join(' ').toLowerCase()
     const score = tokens.length === 0
       ? 1
       : tokens.reduce((total, token) => total + (haystack.includes(token) ? 1 : 0), 0)
     if (score === 0) continue
-    const record = payload as Record<string, unknown>
     const memKey = typeof record['mem_key'] === 'string' ? record['mem_key'] : null
     scored.push({ id, memKey, payload: record, score })
   }

@@ -29,9 +29,22 @@ import {
   planPatchTable,
   parsePatchTable,
   type DecisionDraft,
+  type EvidenceDraft,
   type PatchContext,
   type PlanItemResult,
 } from '../core/patch.ts'
+import {
+  buildEvidencePayload,
+  checkEvidenceRange,
+  EVIDENCE_LOG_CODES,
+  evidenceMemKey,
+  extractQuoteSource,
+  prepareQuote,
+  UNREADABLE_QUOTE,
+  type PreparedQuote,
+} from '../core/evidence.ts'
+import type { QuoteSource } from './evidence-source.ts'
+import { SUPPORTS_LABEL } from '../store/templates/evidence.ts'
 import {
   sanitizeEngineText,
   writeFailureError,
@@ -42,8 +55,10 @@ import type { Database } from '../store/db.ts'
 import {
   createWriteGateway,
   type PlannedCommit,
+  type PlannedInsert,
   type WriteGateway,
 } from '../store/commits/assertions.ts'
+import type { PlannedLink } from '../store/commits/engine.ts'
 import { createWriteQueue, WriteQueueError, type WriteQueue } from '../store/commits/queue.ts'
 import type { WriteFailure, WriteOutcome } from '../store/commits/engine.ts'
 
@@ -69,6 +84,29 @@ export interface WriteItem {
   readonly value?: string
 }
 
+/**
+ * What one write did about the sources it declared.
+ *
+ * The model is told this for the same reason it is told how many facts landed:
+ * "the fact is stored" and "its source is stored, with an empty quote because
+ * this host could not read it back" are different sentences, and only this
+ * answer can say which one happened.
+ */
+export interface WriteEvidenceSummary {
+  /** How many distinct ranges the table declared. */
+  readonly declared: number
+  /** Pointers this write created. */
+  readonly created: number
+  /** Pointers that already existed and only gained a supporting edge. */
+  readonly reused: number
+  /** Pointers whose quote was redacted before storage. */
+  readonly redacted: number
+  /** Pointers stored with an empty quote because the host could not read them. */
+  readonly unreadable: number
+  /** Declared ranges this write could not store at all, because it had no session to key them by. */
+  readonly dropped: number
+}
+
 /** The answer one write returns, shaped like the tool output schema. */
 export interface WriteAnswer {
   /** Whether anything the caller asked for failed. */
@@ -83,6 +121,8 @@ export interface WriteAnswer {
   readonly mem_keys: readonly string[]
   /** Per-op results; empty for a refusal. */
   readonly items: readonly WriteItem[]
+  /** What happened to the declared sources; absent when the table declared none. */
+  readonly evidence?: WriteEvidenceSummary
 }
 
 /** The write surface the seams above use. */
@@ -94,7 +134,7 @@ export interface WritePort {
    * @param tool - the tool name to answer with.
    * @returns the structured answer.
    */
-  remember(raw: unknown, caller: 'user' | 'model', tool: string): Promise<WriteAnswer>
+  remember(raw: unknown, caller: 'user' | 'model', tool: string, sessionId?: string): Promise<WriteAnswer>
   /**
    * Promote or demote one predicate's cardinality.
    *
@@ -122,6 +162,14 @@ export interface WritePortDeps {
   readonly maxNewPredsPerDay: number
   /** The contract version written into every ledger row. */
   readonly contractVersion: number
+  /**
+   * Where an evidence pointer reads the sentence it points at.
+   *
+   * Absent when the host exposes no read-back service. That is a degraded
+   * pointer, not a refused write (AD-6, AD-18): the pointer is stored with an
+   * empty quote and the caller still gets the assertion it came from.
+   */
+  readonly readQuote?: QuoteSource
   /** Clock override, for tests. */
   readonly now?: () => number
 }
@@ -141,6 +189,20 @@ export const WRITE_OUTPUT_SCHEMA: JsonSchemaNode = {
     message: { type: 'string' },
     mem_keys: { type: 'array', items: { type: 'string' } },
     items: { type: 'array', items: { type: 'object' } },
+    evidence: {
+      type: 'object',
+      description: '写入怎么处理了补丁表声明的来源；表里没有声明来源时不出现。',
+      properties: {
+        declared: { type: 'number' },
+        created: { type: 'number' },
+        reused: { type: 'number' },
+        redacted: { type: 'number' },
+        unreadable: { type: 'number' },
+        dropped: { type: 'number' },
+      },
+      required: ['declared', 'created', 'reused', 'redacted', 'unreadable', 'dropped'],
+      additionalProperties: false,
+    },
   },
   required: ['ok', 'code', 'tool', 'message'],
   additionalProperties: false,
@@ -182,6 +244,10 @@ export function createWritePort(deps: WritePortDeps): WritePort {
   const queue: WriteQueue = createWriteQueue({ reporter })
   const gateway: WriteGateway = createWriteGateway(deps.db, { reporter })
   let disposed = false
+  // Writes that were admitted before `dispose` closed the door. Each one is still
+  // reading or still queued; closing the queue under them would turn an accepted
+  // write into a refusal the caller never asked for.
+  const admitted: Promise<WriteAnswer>[] = []
   /**
    * How many refusals this port has recorded.
    *
@@ -285,6 +351,128 @@ export function createWritePort(deps: WritePortDeps): WritePort {
     }).payload)
   }
 
+/** One pointer a table needs, with the quote and the assertions it supports. */
+interface ResolvedEvidence {
+  /** The pointer's business key. */
+  readonly key: string
+  /** First event the pointer covers. */
+  readonly seqFrom: number
+  /** Last event the pointer covers. */
+  readonly seqTo: number
+  /** The exact quote, already masked and cut. */
+  readonly quote: PreparedQuote
+  /** The assertions of this table the pointer supports. */
+  readonly assertions: readonly { readonly memKey: string; readonly index: number }[]
+}
+
+  /**
+   * Read every range a table declares, before the write ever queues.
+   *
+   * The read is host IO and belongs outside the queue task: a queue task that
+   * awaits a session service would hold the write lane open for a reader that
+   * may be slow or absent, and the write itself does not depend on it. What
+   * comes back is text or nothing; a range that reads back nothing is not a
+   * refusal (AD-18), it is a pointer that says so.
+   * @param raw - the caller's patch table, unparsed.
+   * @param sessionId - the host session the ranges live in, when known.
+   * @returns one entry per declared range, keyed by `<from>-<to>`.
+   */
+  const readDeclaredRanges = async (
+    raw: unknown,
+    sessionId: string | undefined,
+  ): Promise<ReadonlyMap<string, PreparedQuote>> => {
+    const quotes = new Map<string, PreparedQuote>()
+    const parsed = parsePatchTable(raw)
+    if (!parsed.ok) return quotes
+    const ranges = new Map<string, { readonly from: number; readonly to: number }>()
+    for (const op of parsed.table.ops) {
+      if (op.op !== 'assert' || op.evidence === undefined) continue
+      // A range the planner will refuse is never worth a host read, and the
+      // refusal itself belongs to the planner, not to this pre-pass.
+      if (!checkEvidenceRange(op.evidence.seq_from, op.evidence.seq_to).ok) continue
+      const key = `${op.evidence.seq_from}-${op.evidence.seq_to}`
+      ranges.set(key, { from: op.evidence.seq_from, to: op.evidence.seq_to })
+    }
+    if (ranges.size === 0) return quotes
+    if (sessionId === undefined) {
+      // The table says where the fact came from, but the write has no session
+      // to look in. The pointer is still written — dropping it would lose the
+      // declaration — and saying out loud that it could not be read is the
+      // whole difference between a degraded pointer and a silent one.
+      for (const key of ranges.keys()) {
+        deps.logger.warn(EVIDENCE_LOG_CODES.noSession, { range: key })
+        quotes.set(key, UNREADABLE_QUOTE)
+      }
+      return quotes
+    }
+    const source = deps.readQuote
+    await Promise.all([...ranges].map(async ([key, range]) => {
+      const texts: string[] = []
+      for (let seq = range.from; seq <= range.to; seq += 1) {
+        const event = source === undefined
+          ? undefined
+          : await source.readQuote({ sessionId, seq })
+        // Undefined means the host could not hand this event back at all — a
+        // missing seq, a read error, or no session service. An event that is
+        // there but carries no text (a tool call, a step boundary) is normal
+        // inside a range and simply contributes nothing.
+        if (event === undefined) {
+          deps.logger.warn(EVIDENCE_LOG_CODES.unreadable, { range: key, seq })
+          quotes.set(key, UNREADABLE_QUOTE)
+          return
+        }
+        const text = extractQuoteSource(event)
+        if (text !== '') texts.push(text)
+      }
+      const joined = texts.join('\n')
+      if (joined === '') {
+        deps.logger.warn(EVIDENCE_LOG_CODES.unreadable, { range: key })
+        quotes.set(key, UNREADABLE_QUOTE)
+        return
+      }
+      quotes.set(key, prepareQuote(joined))
+    }))
+    return quotes
+  }
+
+  /**
+   * Resolve the pointers one planned table needs, reusing what is already stored.
+   *
+   * Two ops may name the same range, and so may two tables. One range is one
+   * node: the second reference contributes an edge and nothing else, which is
+   * what keeps a pointer from multiplying every time a fact is restated.
+   * @param drafts - what the planner asked for.
+   * @param sessionId - the session those ranges live in.
+   * @param quotes - the ranges as already read.
+   * @returns one entry per distinct range.
+   */
+  const resolveEvidence = (
+    drafts: readonly EvidenceDraft[],
+    sessionId: string,
+    quotes: ReadonlyMap<string, PreparedQuote>,
+  ): ResolvedEvidence[] => {
+    const gathered = new Map<string, ResolvedEvidence & { assertions: { memKey: string; index: number }[] }>()
+    const ordered: (ResolvedEvidence & { assertions: { memKey: string; index: number }[] })[] = []
+    for (const draft of drafts) {
+      const key = evidenceMemKey(sessionId, draft.seqFrom, draft.seqTo)
+      const known = gathered.get(key)
+      if (known !== undefined) {
+        known.assertions.push({ memKey: draft.assertionMemKey, index: draft.index })
+        continue
+      }
+      const entry = {
+        key,
+        seqFrom: draft.seqFrom,
+        seqTo: draft.seqTo,
+        quote: quotes.get(`${draft.seqFrom}-${draft.seqTo}`) ?? UNREADABLE_QUOTE,
+        assertions: [{ memKey: draft.assertionMemKey, index: draft.index }],
+      }
+      gathered.set(key, entry)
+      ordered.push(entry)
+    }
+    return ordered
+  }
+
   /**
    * The whole write, as one queue task.
    * @param raw - the caller's patch table.
@@ -292,7 +480,7 @@ export function createWritePort(deps: WritePortDeps): WritePort {
    * @param tool - the tool name to answer with.
    * @returns the answer.
    */
-  const submit = async (raw: unknown, caller: 'user' | 'model', tool: string): Promise<WriteAnswer> => {
+  const submit = async (raw: unknown, caller: 'user' | 'model', tool: string, sessionId: string | undefined, quotes: ReadonlyMap<string, PreparedQuote>): Promise<WriteAnswer> => {
     const startedAt = now()
     const parsed = parsePatchTable(raw)
     if (!parsed.ok) {
@@ -317,12 +505,117 @@ export function createWritePort(deps: WritePortDeps): WritePort {
       audit({ outcome: 'rejected', code: plan.code, memKeys: [], elapsedMs: now() - startedAt, atMs })
       return { ok: false, code: plan.code, tool, message: `${plan.field}：${plan.reason}`, mem_keys: [], items: [] }
     }
+    const ledger = ledgerRows(plan, caller, atMs)
+    const pointers = sessionId === undefined
+      ? []
+      : resolveEvidence(plan.evidence, sessionId, quotes)
+    // A stored pointer is reused, never rewritten: evidence is immutable, so the
+    // second reference to one range only adds the edge that says which assertion
+    // this pointer now supports as well.
+    const resolved = pointers.map(entry => ({ entry, id: gateway.findEvidenceId(entry.key) }))
+    const fresh = resolved.filter(item => item.id === undefined)
+    // Ranges are counted before they are resolved: a table may declare one range
+    // twice, and a range that is dropped still has to appear in the answer, or a
+    // caller who declared a source would read a silent write as a stored source.
+    const declaredRanges = new Set(plan.evidence.map(draft => `${draft.seqFrom}-${draft.seqTo}`)).size
+    const evidenceSummary: WriteEvidenceSummary | undefined = declaredRanges === 0
+      ? undefined
+      : {
+          declared: declaredRanges,
+          created: fresh.length,
+          reused: resolved.length - fresh.length,
+          redacted: pointers.filter(entry => entry.quote.deidentified).length,
+          unreadable: pointers.filter(entry => entry.quote.quote === '').length,
+          dropped: declaredRanges - pointers.length,
+        }
+    // An evidence batch needs ids before it is built: the edge names both ends,
+    // and the engine allocates ids only at commit time, when it is too late to
+    // point an edge at them. A batch without evidence keeps automatic ids.
+    const explicitIds = pointers.length > 0
+    const allocated = explicitIds
+      ? gateway.allocateIds(plan.nodes.length + fresh.length + ledger.length)
+      : []
+    let cursor = 0
+    /**
+     * Take the next reserved id.
+     *
+     * The reservation is sized from the same counts this loop walks, so the
+     * guard never fires; it exists because an id that silently became
+     * `undefined` would write a node under an engine-chosen id and break the
+     * edge that was supposed to point at it.
+     * @returns the next id.
+     */
+    const takeId = (): number => {
+      const id = allocated[cursor]
+      cursor += 1
+      if (id === undefined) throw new IdReservationError('omw: 预留的节点 id 不够本次提交使用')
+      return id
+    }
+    const assertionIds = new Map<string, number>()
+    const inserts: PlannedInsert[] = []
+    for (const node of plan.nodes) {
+      if (!explicitIds) {
+        inserts.push({ payload: node.payload })
+        continue
+      }
+      const id = takeId()
+      assertionIds.set(node.memKey, id)
+      inserts.push({ id, payload: node.payload })
+    }
+    const evidenceIds = new Map<string, number>()
+    for (const item of fresh) {
+      const id = takeId()
+      evidenceIds.set(item.entry.key, id)
+      inserts.push({
+        id,
+        payload: buildEvidencePayload({
+          memKey: item.entry.key,
+          sessionId: sessionId ?? '',
+          seqFrom: item.entry.seqFrom,
+          seqTo: item.entry.seqTo,
+          quote: item.entry.quote.quote,
+          quoteTruncated: item.entry.quote.truncated,
+          deidentified: item.entry.quote.deidentified,
+        }),
+      })
+    }
+    for (const payload of ledger) {
+      inserts.push(explicitIds ? { id: takeId(), payload } : { payload })
+    }
+    // A fact that already existed contributed no node, so its id has to come
+    // from the store instead: the pointer is new even when the fact is not, and
+    // a pointer nobody can trace back to its assertion is only half a pointer.
+    for (const item of resolved) {
+      if (item.id !== undefined) continue
+      for (const assertion of item.entry.assertions) {
+        if (assertionIds.has(assertion.memKey)) continue
+        const stored = gateway.findLive(assertion.memKey)
+        if (stored !== undefined) assertionIds.set(assertion.memKey, stored.id)
+      }
+    }
+    const links: PlannedLink[] = []
+    for (const item of resolved) {
+      const src = item.id ?? evidenceIds.get(item.entry.key)
+      if (src === undefined) {
+        // A stored pointer whose id could not be named: the pointer exists, so
+        // this is not a refusal — but an edge that quietly vanishes would make
+        // 'trace it back' fail for a reason nobody can see later.
+        deps.logger.warn(EVIDENCE_LOG_CODES.linkSkipped, { pointer: item.entry.key })
+        continue
+      }
+      for (const assertion of item.entry.assertions) {
+        const dst = assertionIds.get(assertion.memKey)
+        if (dst === undefined) {
+          deps.logger.warn(EVIDENCE_LOG_CODES.linkSkipped, { pointer: item.entry.key, assertion: assertion.memKey })
+          continue
+        }
+        links.push({ src, dst, label: SUPPORTS_LABEL })
+      }
+    }
     const commit: PlannedCommit = {
-      inserts: [
-        ...plan.nodes.map(node => ({ payload: node.payload })),
-        ...ledgerRows(plan, caller, atMs).map(payload => ({ payload })),
-      ],
+      inserts,
       updates: plan.updates.map(update => ({ nodeId: update.nodeId, payload: update.payload })),
+      ...(links.length === 0 ? {} : { links }),
     }
     const outcome: WriteOutcome<readonly number[]> = gateway.commit(commit)
     if (!outcome.ok) {
@@ -345,25 +638,47 @@ export function createWritePort(deps: WritePortDeps): WritePort {
       ok: true,
       code: plan.downgraded ? 'E_DEGRADED' : E_OK,
       tool,
-      message: describeSuccess(items, plan.downgraded),
+      message: describeSuccess(items, plan.downgraded, evidenceSummary),
       mem_keys: memKeys,
       items,
+      ...(evidenceSummary === undefined ? {} : { evidence: evidenceSummary }),
     }
   }
 
   /**
    * Run one submission through the queue, translating queue failures.
+   *
+   * The declared ranges are read here, outside the task: reading a session is
+   * host IO with its own timeout, and a queue task that awaited it would spend
+   * the write lane's time budget on a reader. The text in hand is what the task
+   * stores, so the pointer and the fact still commit together.
    * @param raw - the patch table.
    * @param caller - who is writing.
    * @param tool - the tool name.
+   * @param sessionId - the host session the declared ranges live in.
    * @returns the answer; never throws for a write problem.
    */
-  const run = async (raw: unknown, caller: 'user' | 'model', tool: string): Promise<WriteAnswer> => {
+  const run = async (raw: unknown, caller: 'user' | 'model', tool: string, sessionId?: string): Promise<WriteAnswer> => {
     try {
-      return await queue.run({ lane: WRITE_LANE, run: () => submit(raw, caller, tool) })
+      const quotes = await readDeclaredRanges(raw, sessionId)
+      return await queue.run({ lane: WRITE_LANE, run: () => submit(raw, caller, tool, sessionId, quotes) })
     } catch (error) {
       // A queue error already speaks the closed vocabulary; anything else is a
       // handle that did not survive, which the caller sees as a closed gate.
+      if (error instanceof IdReservationError) {
+        // A guard, not a caller mistake and not a closed gate: the reservation
+        // is sized from the same counts the loop walks, so this only fires if
+        // that accounting is wrong. Nothing was written; say so precisely.
+        deps.logger.warn(EVIDENCE_LOG_CODES.idReservation, {})
+        return {
+          ok: false,
+          code: 'E_GATE_DOWN',
+          tool,
+          message: '本次写入没有落库：内部节点 id 预留不足（这是实现缺陷，已写入日志）。',
+          mem_keys: [],
+          items: [],
+        }
+      }
       if (error instanceof WriteQueueError) {
         const closed = writeQueueError(error)
         return { ok: false, code: closed.code, tool, message: sanitizeEngineText(closed.message), mem_keys: [], items: [] }
@@ -372,23 +687,37 @@ export function createWritePort(deps: WritePortDeps): WritePort {
     }
   }
 
+  /** Track one admitted write until it settles, so shutdown can wait for it. */
+  const admit = (work: Promise<WriteAnswer>): Promise<WriteAnswer> => {
+    const tracked = work.finally(() => {
+      const at = admitted.indexOf(tracked)
+      if (at >= 0) admitted.splice(at, 1)
+    })
+    admitted.push(tracked)
+    return tracked
+  }
+
   return {
-    remember(raw: unknown, caller: 'user' | 'model', tool: string): Promise<WriteAnswer> {
+    remember(raw: unknown, caller: 'user' | 'model', tool: string, sessionId?: string): Promise<WriteAnswer> {
       // A raising handle means the gate is down, not that the table was wrong;
       // saying E_CONFLICT here would blame the caller for our broken store.
       if (disposed) return Promise.resolve(gateDown(tool))
-      return run(raw, caller, tool)
+      return admit(run(raw, caller, tool, sessionId))
     },
     promote(name: string, cardinality: 'single' | 'multi', reason: string): Promise<WriteAnswer> {
       if (disposed) return Promise.resolve(gateDown('omw'))
-      return run({
+      return admit(run({
         ops: [{ op: 'pred', pred: name, cardinality, reason }],
         reason,
-      }, 'user', 'omw')
+      }, 'user', 'omw'))
     },
     async dispose(): Promise<void> {
       if (disposed) return
+      // Stop accepting new work, then let every accepted write finish: the read
+      // of a declared range happens before the queue task, so closing the queue
+      // first would discard a write the caller already handed over.
       disposed = true
+      await Promise.allSettled([...admitted])
       queue.close()
       await queue.idle()
       const failure = gateway.close()
@@ -398,6 +727,16 @@ export function createWritePort(deps: WritePortDeps): WritePort {
     },
   }
 }
+
+/**
+ * The reserved-id guard fired.
+ *
+ * Kept apart from an ordinary throw because `run()` translates anything else
+ * into a closed gate: an accounting bug inside the write path is not the same
+ * event as a handle that did not survive, and the caller should not be told
+ * the store is shut when it is open and simply did not get written to.
+ */
+class IdReservationError extends Error {}
 
 /** The answer a call gets once the port is closed. */
 function gateDown(tool: string): WriteAnswer {
@@ -417,7 +756,11 @@ function gateDown(tool: string): WriteAnswer {
  * @param downgraded - whether a fact was kept in a weaker shape.
  * @returns the sentence.
  */
-function describeSuccess(items: readonly WriteItem[], downgraded: boolean): string {
+function describeSuccess(
+  items: readonly WriteItem[],
+  downgraded: boolean,
+  evidence: WriteEvidenceSummary | undefined,
+): string {
   const created = items.filter(item => item.outcome === 'created').length
   const existing = items.filter(item => item.outcome === 'existing').length
   const promoted = items.filter(item => item.outcome === 'promoted').length
@@ -429,6 +772,16 @@ function describeSuccess(items: readonly WriteItem[], downgraded: boolean): stri
   if (promoted > 0) parts.push(`${promoted} 条谓词登记已更新`)
   if (unchanged > 0) parts.push(`${unchanged} 条无需改动`)
   if (downgraded) parts.push('有新谓词被降级为场景文本')
+  // A source the caller declared and did not get is the one thing that must
+  // never be silent: the message is the model's only view of the write, and a
+  // pointer that was dropped would otherwise look like a write that had none.
+  if (evidence !== undefined) {
+    const stored = evidence.created + evidence.reused
+    parts.push(`来源指针落库 ${stored} 条`)
+    if (evidence.redacted > 0) parts.push(`${evidence.redacted} 条引文已脱敏`)
+    if (evidence.unreadable > 0) parts.push(`${evidence.unreadable} 条引文未能回读（保持为空）`)
+    if (evidence.dropped > 0) parts.push(`${evidence.dropped} 条来源没有落库（本次写入拿不到会话 id）`)
+  }
   return `${parts.join('，')}。`
 }
 

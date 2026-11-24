@@ -289,3 +289,109 @@ describe('runtime: letting go of the handle', () => {
     await expect(runtime.dispose()).resolves.toBeUndefined()
   })
 })
+describe('runtime: the host session log (AD-6)', () => {
+  /** A host service that answers every read with one quotable sentence. */
+  function hostLog(text: string, asked: { sessionId: string; seq: number }[]): { readEvent(request: { sessionId: string; seq: number }): Promise<unknown> } {
+    return {
+      async readEvent(request: { sessionId: string; seq: number }) {
+        asked.push(request)
+        return { target: { data: { content: [{ type: 'text', text }] } } }
+      },
+    }
+  }
+
+  it('resolves sessionQuery through ctx.get and lands the sentence on the pointer', async () => {
+    const { home } = homeAt()
+    const asked: { sessionId: string; seq: number }[] = []
+    const recorder = createRecordingContext({ home: home.dir })
+    const parsed = parseConfig({ db: { dim: TEST_DIM } })
+    if (!parsed.ok) throw new Error('config')
+    const runtime = startRuntime({
+      ctx: {
+        ...recorder.ctx,
+        get: (name: string) => (name === 'sessionQuery' ? hostLog('我更喜欢浅烘焙。', asked) : undefined),
+      },
+      config: parsed.config,
+      logger: createLogger(createMemorySink()),
+      personaText: 'You are the whale.',
+    })
+    runtimes.push(runtime)
+
+    const answer = await runtime.write?.remember({
+      ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'likes', obj: 'coffee', evidence: { seq_from: 5, seq_to: 5 } }],
+    }, 'model', 'remember', 'session-alpha')
+    expect(answer?.ok).toBe(true)
+    // The host was asked about exactly the declared range.
+    expect(asked).toEqual([{ sessionId: 'session-alpha', seq: 5 }])
+
+    const reader = runtime.evidence
+    expect(reader).toBeDefined()
+    const read = await reader?.read('assertion:Elliott:likes:coffee')
+    expect(read?.ok).toBe(true)
+    expect(read?.pointers).toHaveLength(1)
+    expect(read?.pointers[0]).toMatchObject({
+      session_id: 'session-alpha',
+      seq_from: 5,
+      seq_to: 5,
+      quote: '我更喜欢浅烘焙。',
+      quote_truncated: false,
+      deidentified: false,
+    })
+    // Resolvable, so nothing is marked degraded.
+    expect(read?.degraded).toBeUndefined()
+  })
+
+  it('still stores the pointer when the host exposes no session log', async () => {
+    const { runtime } = boot()
+    const answer = await runtime.write?.remember({
+      ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'likes', obj: 'coffee', evidence: { seq_from: 7, seq_to: 7 } }],
+    }, 'model', 'remember', 'session-alpha')
+    expect(answer?.ok).toBe(true)
+    const read = await runtime.evidence?.read('assertion:Elliott:likes:coffee')
+    expect(read?.pointers[0]).toMatchObject({ quote: '', deidentified: false })
+    expect(read?.degraded).toBe('evidence-unresolvable')
+  })
+
+  it('answers /omw evidence through a real apply() mount', async () => {
+    const { home } = homeAt()
+    const asked: { sessionId: string; seq: number }[] = []
+    const commands: CommandDefinitionLike[] = []
+    const registry = {
+      register(definition: CommandDefinitionLike): () => void {
+        commands.push(definition)
+        return () => {}
+      },
+    }
+    const recorder = createRecordingContext({ home: home.dir })
+    let cleanup: (() => Promise<void>) | undefined
+    apply({
+      ...recorder.ctx,
+      get: (name: string) => (name === 'commands' ? registry : name === 'sessionQuery' ? hostLog('命令行里也读得到。', asked) : undefined),
+      effect: (callback) => {
+        cleanup = callback() as (() => Promise<void>) | undefined
+      },
+    }, { db: { dim: TEST_DIM } })
+
+    const remember = recorder.definitions.find(definition => definition.name === 'remember')
+    expect(remember).toBeDefined()
+    if (remember === undefined) return
+    const written = await remember.execute({
+      patch: {
+        ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'likes', obj: 'coffee', evidence: { seq_from: 11, seq_to: 11 } }],
+      },
+    }, { agent: { id: 'session-alpha' } }) as { ok: boolean }
+    expect(written.ok).toBe(true)
+
+    const command = commands.find(entry => entry.name === 'omw')
+    expect(command).toBeDefined()
+    if (command === undefined) return
+    const result = await command.handler({ rawInput: ' evidence assertion:Elliott:likes:coffee' }) as { kind: string; text?: string }
+    expect(result.kind).toBe('success')
+    const text = result.text ?? ''
+    expect(text).toContain('session-alpha #11-11')
+    expect(text).toContain('命令行里也读得到。')
+    const json = JSON.parse(text.split('\n').at(-1) ?? '{}') as { pointers: { quote: string }[] }
+    expect(json.pointers[0]?.quote).toBe('命令行里也读得到。')
+    await cleanup?.()
+  })
+})
