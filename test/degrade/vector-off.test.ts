@@ -14,7 +14,8 @@ import {
 import { assertClosedReasons, createAudit, createMemoryAuditSink } from '../../src/ops/audit.ts'
 import { closeDatabase, openDatabase, type Database } from '../../src/store/db.ts'
 import { embed } from '../../src/store/embedding.ts'
-import { searchText } from '../../src/store/search.ts'
+import { createTextSearch } from '../../src/store/search.ts'
+import { createRecallTemplates } from '../../src/store/templates/recall.ts'
 import { tempHome, type TempHome } from '../support/fake-ctx.ts'
 
 const homes: TempHome[] = []
@@ -139,9 +140,14 @@ describe('vector-off: recall still returns text hits', () => {
     return opened.db
   }
 
+  /** The searcher the recall path uses: templates decide what is visible. */
+  function searcher(db: Database) {
+    return createTextSearch(createRecallTemplates(db))
+  }
+
   it('returns a non-empty result with the vector path closed', () => {
     const db = seeded()
-    const result = searchText(db, 'whale')
+    const result = searcher(db).search('whale')
     expect(result.hits.length).toBeGreaterThan(0)
     expect(result.hits[0]?.payload).toMatchObject({ text: 'the whale remembers the sea' })
   })
@@ -158,9 +164,34 @@ describe('vector-off: recall still returns text hits', () => {
     }
     opened.db.insert([0, 0, 0, 0], { kind: 'assertion', text: 'the last whale' })
 
-    const result = searchText(opened.db, 'whale')
+    const result = searcher(opened.db).search('whale')
 
     expect(result.hits.map(hit => hit.payload?.['text'])).toContain('the last whale')
+  })
+
+  it('never returns a superseded version alongside its replacement', () => {
+    const home = tempHome('omw-vec-')
+    homes.push(home)
+    const opened = openDatabase({ file: home.path('oh-my-whale.tdb'), dim: 4, memoryLimitMb: 256 })
+    expect(opened.ok).toBe(true)
+    if (!opened.ok) throw new Error(opened.reason)
+    handles.push(opened.db)
+    const now = Date.UTC(2026, 10, 24, 4, 0, 0)
+    const iso = new Date(now).toISOString()
+    // The retired version carries the same words: before Story 2.5 the scan saw
+    // both and answered with a value the store had already replaced.
+    opened.db.insert([0, 0, 0, 0], {
+      kind: 'assertion', mem_key: 'assertion:Elliott:lives_in', obj: 'the whale city',
+      active_slot: 1, superseded_at: now - 3_600_000, valid_from: iso, recorded_at: iso,
+    })
+    opened.db.insert([0, 0, 0, 0], {
+      kind: 'assertion', mem_key: 'assertion:Elliott:lives_in', obj: 'whale harbour',
+      active_slot: 1_700_000_000_000, valid_from: iso, recorded_at: iso,
+    })
+
+    const hits = searcher(opened.db).search('whale').hits
+
+    expect(hits.map(hit => hit.payload['obj'])).toEqual(['whale harbour'])
   })
 
   it('accepts only the closed degraded_reason vocabulary in audit rows', () => {
@@ -170,8 +201,9 @@ describe('vector-off: recall still returns text hits', () => {
     const row = {
       ts: new Date().toISOString(),
       kind: 'recall' as const,
+      session_id: 'session-1',
       query_hash: 'abc',
-      topK: 5,
+      top_k: 5,
       hits: ['flag:contract_version'],
       elapsed_ms: 3,
       degraded: true,

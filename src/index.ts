@@ -47,8 +47,14 @@ export interface ApplySeams {
 
 /** The context slice `apply` relies on. */
 export interface ApplyContext extends RuntimeContext {
-  /** Cordis effect registrar; used to tie the runtime to the plugin fiber. */
-  effect?: (callback: () => (() => void) | undefined) => unknown
+  /**
+   * Cordis effect registrar; used to tie the runtime to the plugin fiber.
+   *
+   * The disposer may return a promise: shutting the runtime down drains queued
+   * writes before the handle closes, and a host that honours the return value
+   * waits for that.
+   */
+  effect?: (callback: () => (() => void | Promise<void>) | undefined) => unknown
 }
 
 /**
@@ -108,16 +114,20 @@ export function apply(ctx: ApplyContext, config?: unknown, seams?: ApplySeams): 
         sectionRegistered: runtime.loaded.sectionRegistered,
         sectionChars: runtime.sectionChars,
         tools: runtime.loaded.tools,
-      }))
+      }), () => runtime.write, () => runtime.evidence, () => runtime.version)
     } catch {
       return undefined
     }
   })()
 
   if (typeof ctx.effect === 'function') {
+    // The cleanup returns the drain promise on purpose: disposing while a write
+    // is still queued must not close the handle underneath it. A host that
+    // awaits its effect disposers therefore waits for the queue, and one that
+    // does not still gets the same ordering inside the promise.
     ctx.effect(() => () => {
       disposeCommand?.()
-      runtime.dispose()
+      return runtime.dispose()
     })
   }
 }

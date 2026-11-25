@@ -13,6 +13,7 @@
  */
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
+import { DEFAULT_CANDIDATE_POOL, DEFAULT_TOP_K, MAX_CANDIDATE_POOL, MAX_TOP_K } from '../core/recall.ts'
 
 /** Default vector dimension of the single-file database. */
 export const DEFAULT_DIM = 1024
@@ -36,8 +37,22 @@ export const DEFAULT_API_KEY_ENV = 'SILICONFLOW_API_KEY'
  * of the box and the failure invisible.
  */
 export const DEFAULT_EMBEDDING_ENDPOINT = 'https://api.siliconflow.cn/v1/embeddings'
-/** Default recall result count (AD-8). */
-export const DEFAULT_TOP_K = 5
+// The three recall widths have one declaration, in `core/recall.ts`: `store`
+// may not import `seams`, so a copy here would be a second source of truth for
+// the same number (AD-26). Re-exported to keep existing import sites working.
+export { DEFAULT_TOP_K } from '../core/recall.ts'
+/**
+ * Estimated tokens one recalled item is budgeted for, used only to derive the
+ * injection pool (AD-7).
+ *
+ * AD-7 and NFR-9 bound the recall tier by item count ("≤5 条"), never by tokens, so the pool
+ * needs a per-item estimate before the three tiers can be added up. 60 is the
+ * conservative side of a one-sentence memory plus its label; it is a derivation
+ * input, not a fourth budget the other documents have to agree with.
+ */
+export const RECALL_ITEM_BUDGET_TOKENS = 60
+/** Most predicates a model may introduce in one local day (AD-27). */
+export const DEFAULT_MAX_NEW_PREDS_PER_DAY = 20
 
 const dbSchema = z.object({
   /** Explicit database file; when set, its directory becomes `<dataDir>`. */
@@ -71,8 +86,26 @@ const injectSchema = z.object({
 })
 
 const recallSchema = z.object({
-  topK: z.number().int().min(1).max(8).default(DEFAULT_TOP_K),
-  candidatePool: z.number().int().min(1).default(12),
+  /**
+   * Result count. The bound is `MAX_TOP_K`, the same number the reader refuses
+   * above, so configuration cannot accept a width the runtime would reject.
+   */
+  topK: z.number().int().min(1).max(MAX_TOP_K).default(DEFAULT_TOP_K),
+  /**
+   * How many scored nodes reach the reranker's input (AD-8 tier ①). Bounded for
+   * the same reason `topK` is: the reader no longer clamps a bad width, so the
+   * only place a wrong one can be caught is here, at load.
+   */
+  candidatePool: z.number().int().min(1).max(MAX_CANDIDATE_POOL).default(DEFAULT_CANDIDATE_POOL),
+})
+
+const tboxSchema = z.object({
+  /**
+   * Predicates the model may introduce per local day before new facts degrade to
+   * scene text. Reaching the cap is not an error: the assertion is still kept,
+   * it just stops creating registry entries (AD-27).
+   */
+  maxNewPredsPerDay: z.number().int().min(1).default(DEFAULT_MAX_NEW_PREDS_PER_DAY),
 })
 
 /** The complete configuration schema: keys, defaults and bounds. */
@@ -84,6 +117,7 @@ const DEFAULT_SNAPSHOT = snapshotSchema.parse({})
 const DEFAULT_EMBEDDING = embeddingSchema.parse({})
 const DEFAULT_INJECT = injectSchema.parse({})
 const DEFAULT_RECALL = recallSchema.parse({})
+const DEFAULT_TBOX = tboxSchema.parse({})
 
 export const configSchema = z.object({
   db: dbSchema.default(DEFAULT_DB),
@@ -91,6 +125,7 @@ export const configSchema = z.object({
   embedding: embeddingSchema.default(DEFAULT_EMBEDDING),
   inject: injectSchema.default(DEFAULT_INJECT),
   recall: recallSchema.default(DEFAULT_RECALL),
+  tbox: tboxSchema.default(DEFAULT_TBOX),
 })
 
 /** Validated configuration, with any host-supplied unknown keys preserved. */

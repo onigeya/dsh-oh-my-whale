@@ -8,21 +8,27 @@
  */
 import { join } from 'node:path'
 import type { HomePath } from '../../src/seams/config.ts'
-import type { SystemPromptLike } from '../../src/seams/prompt-composer.ts'
+import type { PromptAssemblyContext, SystemPromptLike } from '../../src/seams/prompt-composer.ts'
 import type { ToolDefinitionLike, ToolRegistryLike } from '../../src/seams/tools.ts'
 
 /** One recorded `systemPrompt.section` call. */
 export interface RecordedSection {
   readonly name: string
   readonly order: number
+  /** The text as a host would read it at registration time. */
   readonly text: string
+  /** The raw registration value, when it is a provider. */
+  readonly render?: (context?: PromptAssemblyContext) => string
 }
 
 /** One recorded `systemPrompt.context` call. */
 export interface RecordedContext {
   readonly name: string
   readonly order: number
+  /** The text as a host would read it at registration time. */
   readonly text: string
+  /** The raw registration value, when it is a provider. */
+  readonly render?: (context?: PromptAssemblyContext) => string
 }
 
 /** Options for {@link createRecordingContext}. */
@@ -41,6 +47,14 @@ export interface RecordingContextOptions {
    * observe exactly that path.
    */
   readonly toolsViaGet?: boolean
+  /**
+   * Extra host services, resolvable through `get(name)`.
+   *
+   * The plugin reads `sessions` and `sessionProjections` behind `ctx.get` so an
+   * absent service degrades instead of throwing. Providing them here is how a
+   * test exercises the branch that reads a real cache reading.
+   */
+  readonly services?: Readonly<Record<string, unknown>>
 }
 
 /** A context that records instead of rendering. */
@@ -64,13 +78,37 @@ export interface RecordingContext {
   readonly definitions: readonly ToolDefinitionLike[]
   /** How many disposers have run. */
   readonly disposed: number
-  /** Run every recorded disposer, newest first. */
-  dispose(): void
+  /**
+   * Render the prompt the way a host would for one session.
+   *
+   * Sections and contexts registered as providers are called with
+   * `{ session: { id } }`, in registration order; string ones read back as-is.
+   * This is the only way a test can drive the injection audit row, because the
+   * session id is handed over at assembly time and nowhere else.
+   * @param sessionId - the session the host is assembling for.
+   * @returns every rendered entry and their concatenation.
+   */
+  assemble(sessionId: string): { sections: RenderedEntry[]; text: string }
+  /**
+   * Run every recorded disposer, newest first.
+   *
+   * Awaited, because a disposer may drain a write queue before its handle goes
+   * away: a caller that only fires and forgets would delete a scratch
+   * directory while a transaction is still being written into it.
+   */
+  dispose(): Promise<void>
 }
 
-/** Resolve the text a host would see (the composer passes a string). */
-function textOf(value: string | (() => string)): string {
-  return typeof value === 'function' ? value() : value
+/** A section or context as it reads for one assembly. */
+export interface RenderedEntry {
+  readonly name: string
+  readonly order: number
+  readonly text: string
+}
+
+/** Resolve the text a host would see for one assembly context. */
+function textOf(value: string | ((context?: PromptAssemblyContext) => string), context?: PromptAssemblyContext): string {
+  return typeof value === 'function' ? value(context) : value
 }
 
 /**
@@ -84,7 +122,7 @@ export function createRecordingContext(options: RecordingContextOptions = {}): R
   const contexts: RecordedContext[] = []
   const tools: string[] = []
   const definitions: ToolDefinitionLike[] = []
-  const disposers: Array<() => void> = []
+  const disposers: Array<() => void | Promise<void>> = []
   let disposed = 0
 
   /** Register a disposer that removes one recorded entry by identity. */
@@ -106,10 +144,22 @@ export function createRecordingContext(options: RecordingContextOptions = {}): R
 
   const systemPrompt: SystemPromptLike = {
     section(section) {
-      return track(sections, { name: section.name, order: section.order, text: textOf(section.text) })
+      const render = typeof section.text === 'function' ? section.text : undefined
+      return track(sections, {
+        name: section.name,
+        order: section.order,
+        text: textOf(section.text),
+        ...(render === undefined ? {} : { render }),
+      })
     },
     context(context) {
-      return track(contexts, { name: context.name, order: context.order, text: textOf(context.text) })
+      const render = typeof context.text === 'function' ? context.text : undefined
+      return track(contexts, {
+        name: context.name,
+        order: context.order,
+        text: textOf(context.text),
+        ...(render === undefined ? {} : { render }),
+      })
     },
   }
 
@@ -130,8 +180,20 @@ export function createRecordingContext(options: RecordingContextOptions = {}): R
       systemPrompt,
       effect,
       ...(options.toolsViaGet === true
-        ? { get: (name: string) => (name === 'tools' ? registry : undefined) }
-        : options.withTools === false ? {} : { tools: registry }),
+        ? {
+            get: (name: string) => {
+              if (name === 'tools') return registry
+              return options.services?.[name]
+            },
+          }
+        : {
+            ...(options.withTools === false ? {} : { tools: registry }),
+            // Services are reached through `get` in the plugin, so a test that
+            // provides them must also provide the accessor.
+            ...(options.services === undefined
+              ? {}
+              : { get: (name: string) => (name === 'tools' ? registry : options.services?.[name]) }),
+          }),
       ...(options.withHomePath === false ? {} : { dshHomePath: (...segments: string[]) => join(home, ...segments) }),
     },
     sections,
@@ -141,8 +203,20 @@ export function createRecordingContext(options: RecordingContextOptions = {}): R
     get disposed() {
       return disposed
     },
-    dispose() {
-      while (disposers.length > 0) disposers.pop()?.()
+    assemble(sessionId: string) {
+      const context: PromptAssemblyContext = { session: { id: sessionId } }
+      const entries = [...sections, ...contexts]
+        .slice()
+        .sort((left, right) => left.order - right.order)
+        .map(entry => ({
+          name: entry.name,
+          order: entry.order,
+          text: entry.render === undefined ? entry.text : entry.render(context),
+        }))
+      return { sections: entries, text: entries.map(entry => entry.text).join('\n\n') }
+    },
+    async dispose() {
+      while (disposers.length > 0) await disposers.pop()?.()
       disposed += 1
     },
   }

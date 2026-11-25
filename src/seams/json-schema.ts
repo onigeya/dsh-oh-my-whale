@@ -20,6 +20,10 @@ export interface JsonSchemaNode {
   readonly maximum?: number
   readonly minLength?: number
   readonly maxLength?: number
+  /** Lower bound of an array's length (`ops` must carry at least one entry). */
+  readonly minItems?: number
+  /** Upper bound of an array's length (a patch table is capped at 50 ops). */
+  readonly maxItems?: number
   readonly additionalProperties?: boolean | JsonSchemaNode
   readonly anyOf?: readonly JsonSchemaNode[]
   readonly oneOf?: readonly JsonSchemaNode[]

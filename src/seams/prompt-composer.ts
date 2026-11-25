@@ -16,9 +16,17 @@
  * Identity is decoupled from the database on purpose: when the store is unusable
  * the identity section still appears, byte for byte identical to a healthy
  * profile (AD-11, AD-13).
+ *
+ * {@link PromptComposer.compose} is the one place the three tiers meet. It returns
+ * an {@link InjectionPlan} — what goes in, how much it costs, and which tier lost
+ * something — so "what did this turn inject" is an assertable value rather than a
+ * log line. The audit row that records it belongs to Story 2.6.
  * @module
  */
 import { createHash } from 'node:crypto'
+// AD-26: the numbers live in `config.ts`. Repeating their values here would let
+// the two drift, and a drift would give the budget two disagreeing inputs.
+import { DEFAULT_TOP_K, RECALL_ITEM_BUDGET_TOKENS } from './config.ts'
 
 /**
  * Name of the identity section: the host's own opening section.
@@ -44,12 +52,32 @@ export const PERSONA_SECTION_ORDER = -1000
 /** Where the state tail sorts among host runtime contexts. */
 export const PERSONA_STATE_CONTEXT_ORDER = 130
 
-/** The two host calls this module is allowed to make. */
+/**
+ * The slice of the host's `AssembleContext` this composer reads (AD-20).
+ *
+ * Declared structurally rather than imported: the plugin never depends on a host
+ * package (AD-1), and the only fact it needs is which session is being assembled.
+ * Everything else the host passes along is allowed and ignored.
+ */
+export interface PromptAssemblyContext {
+  /** The session this assembly is for, when the host has one. */
+  readonly session?: { readonly id: string }
+}
+
+/**
+ * The two host calls this module is allowed to make.
+ *
+ * `text` may be a provider: the host calls it once per assembly and hands over
+ * its own `AssembleContext`, which is the only moment a section can learn which
+ * session it is being assembled for. The identity section is registered that way
+ * because an audit row needs a `session_id` (Story 2.6); a plain string stays
+ * accepted for the state tail, whose text the composer already owns.
+ */
 export interface SystemPromptLike {
   /** Register a system section; returns the disposer. */
-  section(section: { name: string; order: number; text: string | (() => string) }): () => void
+  section(section: { name: string; order: number; text: string | ((context?: PromptAssemblyContext) => string) }): () => void
   /** Register a runtime-context contribution; returns the disposer. */
-  context(context: { name: string; order: number; text: string | (() => string) }): () => void
+  context(context: { name: string; order: number; text: string | ((context?: PromptAssemblyContext) => string) }): () => void
 }
 
 /** The mutable tail's inputs. Every field is optional: absent means "say nothing". */
@@ -69,20 +97,171 @@ export interface ComposedPersona {
   readonly text: string
   /** SHA-256 of `text`; equal hashes mean byte-identical text. */
   readonly hash: string
+  /** Code points in `text` — what the audit row's `chars` reports. */
+  readonly chars: number
   /** Whether the source exceeded the character budget and was cut. */
   readonly truncated: boolean
 }
 
+/** One recalled memory the caller wants injected. */
+export interface RecallItem {
+  /** Business key, kept so the audit row can name what went in. */
+  readonly memKey: string
+  /** The text the model would read. */
+  readonly text: string
+}
+
+/** The tail's three segments, in retention-priority order. */
+export type TailSegment = 'relationship' | 'preference' | 'flag'
+
+/**
+ * Why a tier lost something, as a closed vocabulary.
+ *
+ * A boolean could only say "something was cut"; a reader of the audit row needs
+ * to know which tier, and for the tail which segment. Only a *budget* loss is
+ * listed: keeping fewer recalled items than the caller offered because `topK`
+ * is the contract working, not something being cut.
+ */
+export type TruncatedItem = 'identity' | `state:${TailSegment}` | 'recall'
+
+/** What the state tail kept, dropped, and cost. */
+export interface TailPlan {
+  /** The joined tail, or `undefined` when nothing survived. */
+  readonly text: string | undefined
+  /**
+   * Names of the segments kept, in relationship → preference → flag order.
+   *
+   * Names rather than text, and the same vocabulary `dropped` uses: an audit row
+   * says *which* tier lost something, and a reader comparing kept with dropped
+   * must not find text on one side and identifiers on the other.
+   */
+  readonly kept: readonly TailSegment[]
+  /** Names of the segments dropped for the token budget, in the order they lost. */
+  readonly dropped: readonly TailSegment[]
+  /** Code points in {@link text} — what the audit row's `chars` reports. */
+  readonly chars: number
+  /** Estimated tokens of {@link text} (0 when absent). */
+  readonly tokens: number
+  /** Whether the token budget cut a segment. */
+  readonly truncated: boolean
+}
+
+/** What the recall tier kept and cost. */
+export interface RecallPlan {
+  /** Items that fit the token pool, in the caller's order (a prefix). */
+  readonly kept: readonly RecallItem[]
+  /** Code points across `kept` — what the audit row's `chars` reports. */
+  readonly chars: number
+  /**
+   * Items beyond `topK`.
+   *
+   * Not a truncation: "at most five" is the tier's own bound (AD-8 ③), and a
+   * reader who saw this counted as a cut would learn that a normal recall was
+   * over budget.
+   */
+  readonly overCount: number
+  /** Items that did not fit the token pool. This *is* a truncation. */
+  readonly overBudget: number
+  /** Estimated tokens of {@link kept}. */
+  readonly tokens: number
+  /** Whether the token pool cut an item. */
+  readonly truncated: boolean
+}
+
+/**
+ * Everything one assembly decided.
+ *
+ * The three `*Tokens` fields are per-tier so an audit row can be written per
+ * tier; `tokens` is the whole injection and never exceeds `budget`.
+ */
+export interface InjectionPlan {
+  /** The identity section as it will be registered. */
+  readonly persona: ComposedPersona
+  /** The state tail, already bounded by its own cap. */
+  readonly tail: TailPlan
+  /** The recalled memories that fit. */
+  readonly recall: RecallPlan
+  /** Estimated tokens of the identity section. */
+  readonly identityTokens: number
+  /** The shared budget, derived from the three caps (see the module notes). */
+  readonly budget: number
+  /**
+   * Estimated tokens of everything this plan composed.
+   *
+   * A tier is only in here when something could carry it into the prompt. The
+   * identity section and the tail each have a host channel; recall does not until
+   * Story 2.5 wires one, and `runtime.ts` therefore composes no recall at all —
+   * so a real mount reports 0 here for that tier rather than counting text the
+   * model never saw.
+   */
+  readonly tokens: number
+  /** Which tiers lost something, in the order the losses happened. */
+  readonly truncatedItems: readonly TruncatedItem[]
+  /**
+   * Whether anything was cut at all.
+   *
+   * Redundant with `truncatedItems.length > 0` on purpose: the audit row carries
+   * a boolean `truncated` (AD-20) beside its own item list, and a reader must
+   * never have to infer one shape from the other.
+   */
+  readonly truncated: boolean
+  /**
+   * Whether this text is byte-identical to what was last registered.
+   *
+   * `false` on the first assembly of a process (nothing is registered yet) and
+   * `true` from the second identical one onwards, which is exactly the moment
+   * "the prefix did not change" becomes true.
+   */
+  readonly prefixUnchanged: boolean
+}
+
 /** Options for {@link PromptComposer}. */
 export interface PromptComposerOptions {
-  /** Raw identity text, as read from `assets/persona.md`. */
-  readonly personaText: string
+  /**
+   * Raw identity text, as read from `assets/persona.md`.
+   *
+   * A function is accepted for one reason: with a fixed string the hash can never
+   * differ inside one composer, so the "text changed, re-register" path would be
+   * unreachable — and an unreachable branch is one no test can hold to account.
+   * `runtime.ts` passes the text it loaded, which is what makes the identity
+   * byte-stable across rounds (FR-15, I9).
+   */
+  readonly personaText: string | (() => string)
   /** Identity character budget (AD-7: 1200). */
   readonly personaMaxChars: number
   /** State-tail token budget (AD-7: 30). */
   readonly tailMaxTokens: number
-  /** Current tail inputs, evaluated on each registration. Defaults to no tail. */
+  /** Recall item count used to derive the shared budget (AD-8: 5). */
+  readonly topK?: number
+  /** Estimated tokens one recalled item is budgeted for; derives the budget. */
+  readonly recallItemBudgetTokens?: number
+  /** Current tail inputs, evaluated on each assembly. Defaults to no tail. */
   readonly readState?: () => PersonaState | undefined
+  /**
+   * Current recall inputs, evaluated on each assembly.
+   *
+   * Absent in a real mount until Story 2.5 wires the recall channel: this class
+   * composes what a tier *would* inject and reports its cost, but the channel
+   * that carries recalled text into the prompt does not exist yet.
+   */
+  readonly readRecall?: () => readonly RecallItem[] | undefined
+  /**
+   * Called when a tier's reader throws, instead of letting the throw escape.
+   *
+   * The tier then contributes nothing. Reporting it is the caller's job because
+   * only the caller knows where a log line goes; silent swallowing would hide a
+   * broken store behind an empty prompt.
+   */
+  readonly onReaderFailure?: (tier: string, error: unknown) => void
+  /**
+   * Called once per assembly of the identity section, with the plan behind it.
+   *
+   * The host invokes the section provider on every assembly; that is the only
+   * place a `session_id` exists, so it is where the audit row is produced (AD-20).
+   * A throw here is caught and ignored: a bookkeeping failure must never cost the
+   * prompt its identity (FR-15).
+   */
+  readonly onInject?: (plan: InjectionPlan, context: PromptAssemblyContext | undefined) => void
 }
 
 /**
@@ -136,43 +315,92 @@ export function estimateTokens(text: string): number {
   return tokens
 }
 
+/** The tail segments in retention-priority order. */
+const TAIL_SEGMENTS: readonly TailSegment[] = ['relationship', 'preference', 'flag']
+
 /**
- * Compose the state tail within budget.
+ * Plan the state tail within budget.
  *
  * Priority is relationship, then preference, then flag: the least important
  * segment is dropped first, and a segment is never cut mid-way (a half-sentence
  * about a relationship is worse than no sentence).
  * @param state - available segments.
  * @param maxTokens - token budget.
+ * @returns what was kept, what was dropped, and the cost.
+ */
+export function planStateTail(state: PersonaState | undefined, maxTokens: number): TailPlan {
+  if (state === undefined) {
+    return { text: undefined, kept: [], dropped: [], chars: 0, tokens: 0, truncated: false }
+  }
+  // Two parallel lists: the names go out in the plan, the texts build the tail.
+  // Mixing them in one array is how a caller ends up rendering "preference" as
+  // if it were something the user said.
+  const kept: TailSegment[] = []
+  const keptTexts: string[] = []
+  const dropped: TailSegment[] = []
+  for (const field of TAIL_SEGMENTS) {
+    const segment = state[field]?.trim()
+    if (segment === undefined || segment.length === 0) continue
+    const nextText = [...keptTexts, segment].join(' · ')
+    // Everything after the first miss also misses: a dropped segment followed by
+    // a kept one would silently promote the less important text.
+    if (dropped.length > 0 || estimateTokens(nextText) > maxTokens) {
+      dropped.push(field)
+      continue
+    }
+    kept.push(field)
+    keptTexts.push(segment)
+  }
+  const text = keptTexts.length === 0 ? undefined : keptTexts.join(' · ')
+  return {
+    text,
+    kept,
+    dropped,
+    chars: text === undefined ? 0 : [...text].length,
+    tokens: text === undefined ? 0 : estimateTokens(text),
+    truncated: dropped.length > 0,
+  }
+}
+
+/**
+ * Compose the state tail within budget.
+ *
+ * Thin wrapper over {@link planStateTail} for callers that only want the text.
+ * @param state - available segments.
+ * @param maxTokens - token budget.
  * @returns the joined tail, or `undefined` when nothing fits or nothing is known.
  */
 export function composeStateTail(state: PersonaState | undefined, maxTokens: number): string | undefined {
-  if (state === undefined) return undefined
-  const segments = [state.relationship, state.preference, state.flag]
-    .map(segment => segment?.trim())
-    .filter((segment): segment is string => segment !== undefined && segment.length > 0)
-  const kept: string[] = []
-  for (const segment of segments) {
-    if (estimateTokens([...kept, segment].join(' · ')) > maxTokens) break
-    kept.push(segment)
-  }
-  return kept.length === 0 ? undefined : kept.join(' · ')
+  return planStateTail(state, maxTokens).text
 }
+
+/** Which host channel a registration attempt was made on. */
+export type HostChannel = 'section' | 'context'
 
 /** What {@link PromptComposer.register} produced. */
 export interface RegisterOutcome {
-  /** The composed identity section. */
+  /** The full assembly decision, including the audit fields. */
+  readonly plan: InjectionPlan
+  /** The composed identity section (also on `plan`; kept for existing callers). */
   readonly persona: ComposedPersona
-  /** Whether the host was actually asked to register (false when the hash was unchanged). */
+  /** Whether a new identity registration was made (false when the hash was unchanged). */
   readonly personaRegistered: boolean
   /** Whether a state tail was registered. */
   readonly tailRegistered: boolean
+  /**
+   * Host channels that threw, in the order they were tried.
+   *
+   * A refused registration is a degraded mount, not a failed one: the tail may
+   * still land when the section did not, and the caller needs to know which
+   * happened rather than receive a throw that hides the surviving half.
+   */
+  readonly failed: readonly HostChannel[]
   /** Release everything this call owns. */
   readonly dispose: () => void
 }
 
 /**
- * Owns the two injection channels.
+ * Owns the two injection channels and the three-tier budget.
  *
  * One instance per `apply` call. The hash cache is the mechanism behind
  * "unchanged text is not rewritten": registering the same bytes twice is a
@@ -181,20 +409,202 @@ export interface RegisterOutcome {
 export class PromptComposer {
   readonly #options: PromptComposerOptions
   #personaRegistration: { hash: string; dispose: () => void } | undefined
-  #tailRegistration: { text: string; dispose: () => void } | undefined
+  #tailRegistration: { text: string; plan: TailPlan; dispose: () => void } | undefined
+  readonly #onReaderFailure: ((tier: string, error: unknown) => void) | undefined
+  readonly #onInject: ((plan: InjectionPlan, context: PromptAssemblyContext | undefined) => void) | undefined
+  /**
+   * The plan the prompt actually carries, kept current by `register`.
+   *
+   * The identity section is a provider, so the host may render it at any moment,
+   * including while `register()` is still running. Whatever the provider reports
+   * has to be the prompt that exists, not the plan this iteration composed: a
+   * refused tail registration leaves the previous tail in place, and a row that
+   * described the composed tail would name text the model never saw (AD-20).
+   */
+  #livePlan: InjectionPlan | undefined
+
+  //
+  // The plan a registration call is currently offering the host. The provider
+  // reads it while `systemPrompt.section()` runs, because a host may render the
+  // section eagerly before that call returns; it is cleared once the attempt
+  // settles, and only a successful one is promoted to `#livePlan`. Keeping the
+  // two apart is what stops a refused replacement from changing the text the
+  // host is still holding (AD-20: the row describes the prompt that was sent).
+  //
+  #offeredPlan: InjectionPlan | undefined
+
+  /**
+   * The tail this prompt actually carries, expressed as a tail plan.
+   *
+   * The tail the host renders is the *registered* string, which is not always the
+   * tail this `compose()` produced: a host that refused the new context keeps
+   * serving the old one. So the answer is built from the registration, and the
+   * plan recorded alongside it, never from `plan.tail` alone.
+   *
+   * The tail plan travels with the text for one reason: `tier` says whether a tail
+   * is present and `items` says which segments it carries, so a tail plan with
+   * text but no segments would publish `identity+state` over an `items` list that
+   * names no state. That combination cannot arise here because the plan and the
+   * text are recorded together.
+   *
+   * @param plan - the plan this `register()` call composed.
+   * @returns the tail plan that matches what is registered.
+   */
+  /**
+   * Put the tail registration back the way it was before the current call.
+   * @param systemPrompt - the host seam.
+   * @param before - the registration this call replaced, if any.
+   * @returns whether the prompt is back to that state.
+   */
+  #restoreTail(
+    systemPrompt: SystemPromptLike,
+    before: { text: string; plan: TailPlan; dispose: () => void } | undefined,
+  ): boolean {
+    this.#tailRegistration?.dispose()
+    this.#tailRegistration = undefined
+    if (before === undefined) return true
+    try {
+      const dispose = systemPrompt.context({
+        name: PERSONA_STATE_CONTEXT_NAME,
+        order: PERSONA_STATE_CONTEXT_ORDER,
+        text: before.text,
+      })
+      this.#tailRegistration = { text: before.text, plan: before.plan, dispose }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  #registeredTail(plan: InjectionPlan): TailPlan {
+    const registered = this.#tailRegistration
+    if (registered === undefined) {
+      return plan.tail.text === undefined
+        ? plan.tail
+        : { ...plan.tail, text: undefined, kept: [], chars: 0, tokens: 0 }
+    }
+    if (plan.tail.text === registered.text) return plan.tail
+    return registered.plan
+  }
 
   constructor(options: PromptComposerOptions) {
     this.#options = options
+    this.#onReaderFailure = options.onReaderFailure
+    this.#onInject = options.onInject
+  }
+
+  /**
+   * Assemble all three tiers without touching the host.
+   *
+   * Retention priority is identity > state > recall, which shows up as *who loses*
+   * when the shared budget binds: recall gives way first and completely, the tail
+   * is bounded only by its own cap, and the identity section is bounded only by its
+   * own character cap. Cutting the identity section to make room would break the
+   * byte stability that the prefix cache depends on (FR-15, I9), so it never
+   * yields to another tier.
+   * @returns the plan.
+   */
+  compose(): InjectionPlan {
+    // Identity first, and it cannot fail: FR-15 says an unusable store must not
+    // cost the prompt its identity, so nothing that reads the store may run
+    // before this line or be allowed to throw past it.
+    const persona = this.composePersona()
+    const identityTokens = estimateTokens(persona.text)
+    const tailCap = this.#options.tailMaxTokens
+    const topK = this.#options.topK ?? DEFAULT_TOP_K
+    const perItem = this.#options.recallItemBudgetTokens ?? RECALL_ITEM_BUDGET_TOKENS
+    const recallCap = topK * perItem
+    // The shared budget is the three caps added up, never a fourth number: AD-7
+    // and NFR-9 bound each tier separately, and inventing a total would make this
+    // implementation the only place that number exists.
+    const budget = identityTokens + tailCap + recallCap
+    const tail = planStateTail(this.#readOrNothing(this.#options.readState, 'state'), tailCap)
+    const truncatedItems: TruncatedItem[] = []
+    if (persona.truncated) truncatedItems.push('identity')
+    for (const field of tail.dropped) truncatedItems.push(`state:${field}`)
+    // Each tier guards its own cap. Recall is bounded by `recallCap` alone: an
+    // unused tail does not hand its slack to recall, because that would make the
+    // recall bound depend on the host's state and turn "each tier has a budget"
+    // into "there is one pool split three ways". `tokens <= budget` still holds
+    // without needing to be enforced: every tier is already inside its own cap.
+    const recalled = this.#readOrNothing(this.#options.readRecall, 'recall') ?? []
+    const kept: RecallItem[] = []
+    let recallTokens = 0
+    let recallChars = 0
+    let overCount = 0
+    let overBudget = 0
+    // Ranked order is the caller's order, so the items that lose are always the
+    // last ones: the loop stops at the first item that does not fit rather than
+    // skipping it and admitting a smaller item from further down the list. The
+    // two reasons stay apart — running past `topK` is the tier working, running
+    // past the token pool is a cut, and only the second one is reported.
+    for (const item of recalled) {
+      if (kept.length >= topK) {
+        overCount = recalled.length - kept.length
+        break
+      }
+      const cost = estimateTokens(item.text)
+      if (recallTokens + cost > recallCap) {
+        overBudget = recalled.length - kept.length
+        break
+      }
+      kept.push(item)
+      recallTokens += cost
+      recallChars += [...item.text].length
+    }
+    if (overBudget > 0) truncatedItems.push('recall')
+    return {
+      persona,
+      tail,
+      recall: {
+        kept,
+        chars: recallChars,
+        overCount,
+        overBudget,
+        tokens: recallTokens,
+        truncated: overBudget > 0,
+      },
+      identityTokens,
+      budget,
+      tokens: identityTokens + tail.tokens + recallTokens,
+      truncatedItems,
+      truncated: truncatedItems.length > 0,
+      prefixUnchanged: this.#personaRegistration?.hash === persona.hash,
+    }
+  }
+
+  /**
+   * Evaluate a tier's reader, treating a failure as "nothing to say".
+   *
+   * A throwing reader is how an unusable store shows up here. Letting it escape
+   * would abort the whole assembly — including the identity section that FR-15
+   * requires to survive exactly that case — so the tier contributes nothing and
+   * the rest of the plan is still composed.
+   * @param reader - the tier's source, if it has one.
+   * @param tier - which tier, used in the log line.
+   * @returns the reader's value, or `undefined` when it threw or is absent.
+   */
+  #readOrNothing<T>(reader: (() => T | undefined) | undefined, tier: string): T | undefined {
+    if (reader === undefined) return undefined
+    try {
+      return reader()
+    } catch (error) {
+      this.#onReaderFailure?.(tier, error)
+      return undefined
+    }
   }
 
   /** Compose the identity section without touching the host. */
   composePersona(): ComposedPersona {
-    const { text, truncated } = normalizePersona(this.#options.personaText, this.#options.personaMaxChars)
+    const source = this.#options.personaText
+    const raw = typeof source === 'function' ? source() : source
+    const { text, truncated } = normalizePersona(raw, this.#options.personaMaxChars)
     return {
       name: PERSONA_SECTION_NAME,
       order: PERSONA_SECTION_ORDER,
       text,
       hash: createHash('sha256').update(text, 'utf8').digest('hex'),
+      chars: [...text].length,
       truncated,
     }
   }
@@ -205,45 +615,108 @@ export class PromptComposer {
    * @returns what was registered and how to undo it.
    */
   register(systemPrompt: SystemPromptLike): RegisterOutcome {
-    const persona = this.composePersona()
-    let personaRegistered = false
-    if (this.#personaRegistration?.hash !== persona.hash) {
-      this.#personaRegistration?.dispose()
-      this.#personaRegistration = {
-        hash: persona.hash,
-        dispose: systemPrompt.section({
-          name: PERSONA_SECTION_NAME,
-          order: PERSONA_SECTION_ORDER,
-          text: persona.text,
-        }),
-      }
-      personaRegistered = true
-    }
-    const tail = composeStateTail(this.#options.readState?.(), this.#options.tailMaxTokens)
+    const plan = this.compose()
+    const { persona } = plan
+    const failed: HostChannel[] = []
+    //
+    // The tail is registered before the identity section on purpose: the section
+    // is a provider, and a host that renders registrations eagerly calls it
+    // before this method returns. Registering the tail first means that very
+    // first render already reports the prompt it is being asked to produce.
+    //
+    const tail = plan.tail.text
+    const tailBefore = this.#tailRegistration
     let tailRegistered = false
     if (tail !== undefined && this.#tailRegistration?.text !== tail) {
-      this.#tailRegistration?.dispose()
-      this.#tailRegistration = {
-        text: tail,
-        dispose: systemPrompt.context({
+      const previous = this.#tailRegistration
+      try {
+        const dispose = systemPrompt.context({
           name: PERSONA_STATE_CONTEXT_NAME,
           order: PERSONA_STATE_CONTEXT_ORDER,
           text: tail,
-        }),
+        })
+        previous?.dispose()
+        this.#tailRegistration = { text: tail, plan: plan.tail, dispose }
+        tailRegistered = true
+      } catch {
+        failed.push('context')
       }
-      tailRegistered = true
     } else if (tail === undefined && this.#tailRegistration !== undefined) {
       // "No state" means "no tail": leaving the old registration in place would
       // keep injecting a tail the current turn no longer supports.
       this.#tailRegistration.dispose()
       this.#tailRegistration = undefined
     }
+    const nextPlan = { ...plan, tail: this.#registeredTail(plan) }
+    const tailsDiffer = this.#tailRegistration !== tailBefore
+    let personaRegistered = false
+    let personaRefused = false
+    if (this.#personaRegistration?.hash !== persona.hash) {
+      // The old registration is only released once the new call succeeded: a host
+      // that refuses the replacement must not cost the prompt the section it has.
+      const previous = this.#personaRegistration
+      this.#offeredPlan = nextPlan
+      try {
+        const dispose = systemPrompt.section({
+          name: PERSONA_SECTION_NAME,
+          order: PERSONA_SECTION_ORDER,
+          //
+          // A provider, not a string: the host calls it once per assembly and
+          // hands over the only `session_id` this plugin ever sees. The plan it
+          // reports is the plan whose text it returns, so an audit row can never
+          // describe a prompt that was not sent (AD-20).
+          //
+          // It replays the registered plan instead of composing again: composing
+          // here would read the state store on the injection path, which this
+          // story forbids, and would report a tail the host may never receive.
+          //
+          text: (context?: PromptAssemblyContext) => {
+            const assembled = this.#offeredPlan ?? this.#livePlan ?? plan
+            try {
+              this.#onInject?.(assembled, context)
+            } catch {
+              // Bookkeeping failure must never cost the prompt its identity.
+              //
+              // Deliberately silent as well as deliberately swallowing: the
+              // composer is given one callback and has no logger, so the
+              // mounting side is where the warning belongs. `runtime` wraps
+              // this callback and logs `OMW_AUDIT_WRITE_FAILED`; this catch is
+              // the guard for the case where it does not, which is why the two
+              // layers are not redundant.
+            }
+            return assembled.persona.text
+          },
+        })
+        previous?.dispose()
+        this.#personaRegistration = { hash: persona.hash, dispose }
+        personaRegistered = true
+      } catch {
+        personaRefused = true
+        failed.push('section')
+        // The rejected section and the tail accepted above would otherwise
+        // disagree: the host would assemble the new tail around the old identity
+        // and the row would describe a prompt nobody was sent. Undo the tail too,
+        // so a refused registration leaves the prompt exactly as it was.
+        if (tailsDiffer) {
+          if (!this.#restoreTail(systemPrompt, tailBefore)) failed.push('context')
+        }
+      } finally {
+        this.#offeredPlan = undefined
+      }
+    }
+    if (!personaRefused) this.#livePlan = nextPlan
     return {
+      plan,
       persona,
       personaRegistered,
       tailRegistered,
+      failed,
       dispose: () => this.dispose(),
     }
+  }
+  /** Whether an identity registration is currently live. */
+  get hasSection(): boolean {
+    return this.#personaRegistration !== undefined
   }
 
   /** Release both registrations. Idempotent. */

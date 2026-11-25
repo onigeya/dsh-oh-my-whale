@@ -118,6 +118,11 @@ export function allNodeIds(db: Database): number[] {
   return db.allNodeIds()
 }
 
+/** Whether a node with this id exists. */
+export function hasNode(db: Database, id: number): boolean {
+  return db.contains(id)
+}
+
 /** Read one node's payload, or `null` when the id is absent. */
 export function readPayload(db: Database, id: number): unknown {
   const payload = db.getPayload(id)
