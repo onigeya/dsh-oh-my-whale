@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-23-2026 12:43
-last_updated: 11-23-2026 16:30
+last_updated: 11-25-2026 21:35
 project: DSH哦鲸鲸
 project_key: NOKEY
 tracking_system: file-system
@@ -43,14 +43,14 @@ development_status:
   1-5-每天一份已校验快照-留-7-份: done
   epic-1-retrospective: done
 
-  epic-2: backlog
-  2-1-用-remember-写下一条断言-立刻能按业务键读回: backlog
-  2-2-每条记忆追得到来源-且引文不夹带隐私: backlog
-  2-3-改写留旧版本-每次写留一条决策: backlog
-  2-4-注入只有一个出口-两段各有预算: backlog
-  2-5-召回只读-有界-只给未失效版本: backlog
-  2-6-每次注入与召回都留一行审计: backlog
-  epic-2-retrospective: optional
+  epic-2: done
+  2-1-用-remember-写下一条断言-立刻能按业务键读回: done
+  2-2-每条记忆追得到来源-且引文不夹带隐私: done
+  2-3-改写留旧版本-每次写留一条决策: done
+  2-4-注入只有一个出口-两段各有预算: done
+  2-5-召回只读-有界-只给未失效版本: done
+  2-6-每次注入与召回都留一行审计: done
+  epic-2-retrospective: done
 
   epic-3: backlog
   3-1-一条命令答清三个问题: backlog
@@ -58,6 +58,9 @@ development_status:
   3-3-冲突分三级-只有自动档动数据: backlog
   3-4-撤销是一个操作单元-不是一条字段: backlog
   3-5-全量导出为纯文本-jsonl: backlog
+  3-6-每条推导都留得下证明坐标-邻域不一致就先不给答案: backlog
+  3-7-事实要升成契约先过三关-置信度靠证据算: backlog
+  3-8-每天一份只读简报-自己写的字先过检查: backlog
   epic-3-retrospective: optional
 
   epic-4: backlog
@@ -65,6 +68,7 @@ development_status:
   4-2-只记该记的-判定口径: backlog
   4-3-读取边界可审计: backlog
   4-4-评测集与运行脚本: backlog
+  4-5-同一件事不记两遍-内容没变不写版本-偏好攒够了才进尾巴: backlog
   epic-4-retrospective: optional
 
   epic-5: backlog
@@ -72,6 +76,8 @@ development_status:
   5-2-重排挂了只降级-不返空: backlog
   5-3-四类日上限命中后各自降级: backlog
   5-4-成本与延迟可看: backlog
+  5-5-结论只有三种-不确定时先说不确定: backlog
+  5-6-热度只算不写回-还原成可复算的排序因子: backlog
   epic-5-retrospective: optional
 
   epic-6: backlog
@@ -80,6 +86,7 @@ development_status:
   6-3-断点续跑与-dream_log: backlog
   6-4-触发条件与预算三层: backlog
   6-5-推断必须可结算: backlog
+  6-6-该退休的只归档不删-同样的实体只留一条链-推演要能被判对错: backlog
   epic-6-retrospective: optional
 
   epic-7: backlog
@@ -87,17 +94,30 @@ development_status:
   7-2-越界在工具执行前被拒: backlog
   7-3-把-mnemon-迁进来-且可以重来: backlog
   7-4-回滚开关只恢复-legacy-注入: backlog
+  7-5-白名单之外改不动-阶段只往上走-降级了她还是她: backlog
   epic-7-retrospective: optional
+
+  epic-8: backlog
+  8-1-不花模型就把没用的工具输出折掉-同时把我说过的约束钉住: backlog
+  8-2-折过的原文永远找得回来-状态与展开只有两个入口: backlog
+  8-3-坏了自己降档不牵连别人-每折一次都算得清是赚是亏: backlog
+  8-4-唯一有损的那一步-五道守门全开才放行: backlog
+  epic-8-retrospective: optional
+
+  epic-9: backlog
+  9-1-二十条固定探针-定期跑出一条能比的趋势: backlog
+  9-2-不讨好-不自评-只报告不设线的地方说清楚: backlog
+  epic-9-retrospective: optional
 action_items:
   - id: "epic-1-retro-item-1-下一个-epic-起一故事一-spec-或提交主题带故事号-恢复按故事归因"
     epic: 1
     action: "下一个 epic 起一故事一 spec，或提交主题带故事号，恢复按故事归因"
     owner: "Epic 2 planning"
-    status: open
+    status: done
     ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-1-retro-2026-11-23.md"
   - id: "epic-1-retro-item-2-g0-4-写入-注入-召回闭环-在-epic-2-首条故事交付并通过闸门"
     epic: 1
-    action: "G0-4（写入→注入→召回闭环）在 Epic 2 首条故事交付并通过闸门"
+    action: "G0-4（写入→注入→召回闭环）在 Epic 2 首条故事交付并通过闸门——**结论已由 epics-2 回顾改判**：闭环第三环（装配文本含记忆内容）结构性缺失，记为 blocked 而非通过，见 epic-2-retro-item-2（本条不再代表「已通过」）"
     owner: "Epic 2"
     status: open
     ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-1-retro-2026-11-23.md"
@@ -105,11 +125,11 @@ action_items:
     epic: 1
     action: "接入 vitest 覆盖率并在 Epic 2 的 DoD 设阈值"
     owner: "Epic 2"
-    status: open
+    status: done
     ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-1-retro-2026-11-23.md"
   - id: "epic-1-retro-item-4-omw-doctor-home-指向不像-dsh-home-的目录时给出警告"
     epic: 1
-    action: "omw doctor --home 指向不像 DSH home 的目录时给出警告"
+    action: "`/omw doctor` 在 home 目录不像 DSH home 时给出警告（原写作 `omw doctor --home`；进程外 CLI 已于 2026-11-25 移除，命令面只剩聊天内 `/omw doctor`，动作按新形态改述，要求本身不变）"
     owner: "Epic 2"
     status: open
     ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-1-retro-2026-11-23.md"
@@ -119,3 +139,65 @@ action_items:
     owner: "Epic 2 planning"
     status: open
     ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-1-retro-2026-11-23.md"
+  - id: "epic-2-retro-item-1-召回通道契约归位"
+    epic: 2
+    action: "召回通道契约归位：在 ARCHITECTURE-SPINE.md 的 AD-7 写明召回段何时进注入通道，改掉 spec-2-4 与 spec-2-5
+      里互相矛盾的那一句，并定下 RuntimeDeps 是否需要 readRecall"
+    owner: "架构文档（AD-7）"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-2-retro-2026-11-25.md"
+  - id: "epic-2-retro-item-2-g0-4-记未闭合"
+    epic: 2
+    action: "G0-4 记为 blocked 而非通过：在 gates/g0-4.json 写一份 status: blocked 的记录，内容为本轮闭环探针实测（写入
+      ok、召回 ok、装配文本只有身份段）与缺失的第三环"
+    owner: "Epic 2 收尾"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-2-retro-2026-11-25.md"
+  - id: "epic-2-retro-item-3-flag-predicate-new-归属改到-epic-3"
+    epic: 2
+    action: "把 flag:predicate_new 的归属从 Epic 2/2.3 改到 Epic 3，并让 src/core/patch.ts 的写法与「Epic
+      3 才有读者」对齐"
+    owner: "下一 epic 的 spec 作者"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-2-retro-2026-11-25.md"
+  - id: "epic-2-retro-item-4-向量链路归属二选一"
+    epic: 2
+    action: "向量链路归属二选一：把 vector 传进 createWritePort 并接上 VectorPolicy.write，或把 vec_state
+      从 payload 与 schema 移除、等 Epic 5 重新引入"
+    owner: "Epic 5 的 spec 作者"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-2-retro-2026-11-25.md"
+  - id: "epic-2-retro-item-5-脱敏覆盖拒绝路径"
+    epic: 2
+    action: "脱敏覆盖拒绝路径：src/seams/write-port.ts 的 reject() 不再原样存 raw patch，改为先对每个字符串叶子跑
+      maskSensitiveText"
+    owner: "下一故事的实现者"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-2-retro-2026-11-25.md"
+  - id: "epic-2-retro-item-6-审计行可-join-可归因"
+    epic: 2
+    action: "审计行可 join、可归因：WriteAuditRow 加 op_id 与 session_id，或改掉 src/core/decisions.ts
+      里「also written to the audit row」那句"
+    owner: "下一故事的实现者"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-2-retro-2026-11-25.md"
+  - id: "epic-2-retro-item-7-注入行读-plan-自己的数"
+    epic: 2
+    action: "注入行改为读 plan 自己的数：tokens 取 plan.tokens、truncated 取 plan.truncatedItems.length
+      > 0，必要时加 truncated_items"
+    owner: "下一故事的实现者"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-2-retro-2026-11-25.md"
+  - id: "epic-2-retro-item-8-动作项措辞规则写进-spec-模板"
+    epic: 2
+    action: "动作项措辞规则写进 spec 模板：动作项不得指定交付顺序或已删除的接口名，只能指定可观察的结果"
+    owner: "回顾流程（bmad-retrospective references）"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-2-retro-2026-11-25.md"
+  - id: "epic-2-retro-item-9-补-6-条能看见契约的测试"
+    epic: 2
+    action: "补 6 条能看见契约的测试：isLive 两种语义、#restoreTail catch、sessionIdOf 三跳、onReaderFailure、VERSIONS_SINCE_SLOT_QUERY、evidence
+      模板两处 throw 与 reused > 0"
+    owner: "下一故事的实现者"
+    status: open
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-2-retro-2026-11-25.md"

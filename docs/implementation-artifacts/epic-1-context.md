@@ -19,6 +19,7 @@
 **启用是可验证的三步，不是一步**：依赖与 profile 声明、宿主补丁文件条目、重启后验证，缺一即等于没装。改错文件（改的是生成物而非补丁文件）必须被体检明确指出，而不是让用户自行猜测。用户要能在重启后一分钟内凭可见输出判断「装上了没有」，不靠翻日志推断。
 
 **体检**：单条命令按固定顺序检查五项——库能开、快照校验过、维度匹配、凭据可用、注入段已注册。全部通过退出码 0；每种错误配置各返回非零退出码，点名出错项与配置键，不打印密钥，全程零网络请求、零业务写入。
+  - **2026-11-25 注**：体检现在是聊天内 `/omw doctor`，五项与判据不变，但没有退出码——各判为单项 fail 并点名错误码，摘要形如「k/5 通过」。第五项判据另见 `entry-routing.md`（从「根层段已注册」改为「主对话 preset 内段可见 ∧ profile 位未注册该段」）。
 
 **降级只有两档，没有中间态**：整体 no-op，或只关向量路径。整体 no-op 的触发面封闭为四类——库打不开、快照校验失败、配置维度与库不符、契约版本高于代码支持。此时不注入记忆段、不注册可执行工具、不排固化、不写任何节点，只留一行结构化日志。向量故障（凭据无效 / 欠费 / 超时 / 返回维度不符）只关向量，文本与图路径及工具面照常。恢复一律靠重载插件，进程内不自愈、不重试。
 
@@ -32,14 +33,15 @@
 
 ## Technical Decisions
 
-- **分层与依赖方向**：`src/{core,store,dream,persona,seams,gui,ops}` 加 `assets/ eval/ test/`。`store/` 不 import 其他层，`core/` 不 import `seams/`，`gui/` 不 import `store/`；由 eslint 强制而非评审约定，本 epic 需让这条静态门真的拦下一次故意的跨层 import。
+- **分层与依赖方向**：`src/{core,store,dream,persona,seams,gui,ops}` 加 `assets/ eval/ test/`。`store/` 不 import 其他层，`core/` 不 import `seams/`，`gui/` 不 import `store/`；由 `scripts/check-layers.mjs` 做确定性检查（走 `pnpm lint`），**不是** eslint——`@typescript-eslint/parser@8.x` 的 peer 要求 `typescript >=4.8.4 <6.1.0`，与钉住的 7.0.2 冲突，eslint 10 自身也解析不了 TS（`Parsing error: Unexpected token :`）。本 epic 需让这条静态门真的拦下一次故意的跨层 import。
 - **配置单一出处**：`src/seams/config.ts` 的 zod schema 是唯一真相，含全部键、默认值与互斥规则，互斥冲突启动即失败；环境变量只承载 `SILICONFLOW_API_KEY`；代码里不得另存一份默认值。
 - **错误码封闭为八个**：`OMW_DB_OPEN` / `OMW_SNAPSHOT_VERIFY` / `OMW_DIM_MISMATCH` / `OMW_EMBED_AUTH` / `OMW_EMBED_QUOTA` / `OMW_EMBED_TIMEOUT` / `OMW_EXTRACT_FAIL` / `OMW_DREAM_BUDGET`。新增或改名都算破坏兼容。
+  - **2026-11-25 注**：八个是 **Epic 1 交付时**的基数，本文保留原样。CAP-9 入口与路由立项后封闭集扩到**十一个**（加 `OMW_ROUTE_LOAD` / `OMW_ROUTE_DISPATCH` / `OMW_ROUTE_MISMATCH`），权威文本见 `requirements.md` 的 FR-18 与 `ARCHITECTURE-SPINE.md` AD-13。
 - **启动闸门在注册之前**：库打开、快照校验、维度比对、契约版本比对构成前置闸门，不过则整个注册流程不执行。注入与工具注册各自独立 try/catch，一方失败不拖累另一方。
 - **契约版本**：库内 `meta.contract_version` 是兼容判据，高于代码支持即整体 no-op，日志须点名两侧取值。
 - **日志与审计分家**：运行日志一行一事件 `{ts, level, code, detail}`；审计按天切分、只落文件、保留 30 天，轮转只经保留策略模块。内部降级状态只能是 `ok` / `no-op` / `vector-off` 三值之一。
 - **注入两个出口**：身份段走 `systemPrompt.section()`（字节稳定），每轮可变的内容走 `systemPrompt.context()`；两处调用只允许出现在 `seams/prompt-composer.ts`，由 CI 阻断其他位置。
-- **闸门先行**：M0 的八道验证是硬闸门，任一不过不进下一阶段。已实测通过的四项（原生模块加载、embedding 维度、压缩后 seq 可回读、固化提炼与核验两模型）保留为回归项；本 epic 真正要过的是 G0-4（写入→注入→召回最小闭环）、G0-5（插件被真正启用并完成一次注入）、G0-6（静态门对故意跨层 import 报错）。G0-7 的外部打分通道属召回阶段。
+- **闸门先行**：M0 的八道验证是硬闸门，任一不过不进下一阶段。已实测通过的四项（原生模块加载、embedding 维度、压缩后 seq 可回读、固化提炼与核验两模型）保留为回归项；本 epic 真正要过的是 G0-5（插件被真正启用并完成一次注入）与 G0-6（静态门对故意跨层 import 报错）。**G0-4（写入→注入→召回最小闭环）不在本 epic**——它要召回，而召回属 FR-5 / Epic 2，且 `epics.md` 的反向约束禁止为过关而预埋后续 epic 的实现（详见 `spec-epic-1-plugin-foundation.md:267`）。G0-7 的外部打分通道属召回阶段。
 
 ## UX & Interaction Patterns
 
@@ -48,6 +50,7 @@ v1 无图形界面，用户可见面只有四种，且都属于本 epic 的契�
 - 启动后一行加载确认，以及系统提示里出现的身份段——这就是「装上了」的判据。
 - 一条体检命令：五项按固定顺序输出，逐项 pass/fail；出错时点名配置键与错误码，不打印密钥。
 - 退出码语义：成功 0、未找到 2、其他非零为错误（后续只读命令沿用同一套）。
+  - **2026-11-25 注（此条已作废）**：用户裁定「不要任何 CLI，只保留 command」后，本项目没有任何进程外入口，也没有退出码语义。后续只读命令是聊天内斜杠命令（`/omw explain` 等），结果用消息文本报告，未命中返回空结果 + `NOT_FOUND` 标记，失败以错误样式返回并点名首个错误码。Epic 1 交付时确曾有 `omw` CLI，它随后被移除（`epic-1-retro-2026-11-23.md:125`）。
 - 坏掉时用户看到的是「没有记忆细节但人设仍在」，不是空回复、也不是半个插件；错误信息必须直接指向该改哪一项配置。
 
 ## Cross-Story Dependencies

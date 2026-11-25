@@ -42,6 +42,7 @@ deferred:
 - 注入只有两个出口，且只允许出现在 `src/seams/prompt-composer.ts`：身份段 `ctx.systemPrompt.section({name:'harness:identity'})` ≤1200 字符、字节稳定、文本哈希不变即不重写；状态尾巴 `ctx.systemPrompt.context({name:'omw:persona-state'})` ≤30 token。其它任何文件出现 `systemPrompt.` 调用即为越界。
 - 降级状态是封闭三值 `ok | no-op | vector-off`，由单一状态机持有；任何代码路径不得产生第四态、中间态或「先降级后悄悄恢复」。
 - 运行时降级错误码封闭八个：`OMW_DB_OPEN`、`OMW_SNAPSHOT_VERIFY`、`OMW_DIM_MISMATCH`、`OMW_EMBED_AUTH`、`OMW_EMBED_QUOTA`、`OMW_EMBED_TIMEOUT`、`OMW_EXTRACT_FAIL`、`OMW_DREAM_BUDGET`。
+  - **2026-11-25 注**：本文是 Epic 1 的实施规格快照，八个保持原样。CAP-9 立项后封闭集为**十一个**（加 `OMW_ROUTE_LOAD`、`OMW_ROUTE_DISPATCH`、`OMW_ROUTE_MISMATCH`）；`src/core/degrade.ts` 的常量表要等 CAP-9 落地时才扩，本 epic 不返工。
 - 配置唯一出处是 `src/seams/config.ts` 的 zod schema；环境变量只承载凭据（键名由 `embedding.apiKeyEnv` 指定，默认 `SILICONFLOW_API_KEY`）；宿主补丁条目的 `config:` 原样传入 `apply`，未知键保留不报错。
 - 日志 `<dataDir>/omw.log` 一行一事件 `{ts, level, code, detail}`；`omw doctor` 一次运行只追加一行 `omw.log`、不写任何业务节点、不发任何网络请求。
 - 目录与文件全部由 `<dataDir>` 派生，`<dataDir>` 来自 `ctx.dshHomePath('oh-my-whale')`（`db.path` 显式配置时以其为准）：`oh-my-whale.tdb`、`omw.log`、`snapshots/`、`audit-YYYYMMDD.jsonl`。
@@ -56,6 +57,7 @@ deferred:
 - 不绕过 `src/store/` 直连 `triviumdb`；`seams/` 不出现 `triviumdb` 类型；`core/` 不出现 IO。
 - 不为了通过闸门在源码里留跨层 import 的「例外注释」，也不把层检查降级成人工约定。
 - 不在 AR-1 清单之外引入运行时第三方依赖（唯一例外：`yaml@2.9.1`，供 `omw doctor` 解析补丁文件）。
+  - **2026-11-25 注**：`yaml` 依赖随进程外 CLI 一并移除（见 `epic-1-retro-2026-11-23.md:125`），本条按历史保留。
 
 ## I/O & Edge-Case Matrix
 
@@ -82,7 +84,7 @@ deferred:
 
 ## Code Map
 
-- `package.json` -- 插件清单：`type: module`、`main: lib/index.js`、`bin.omw`、`dsh.manifestVersion/bundle.patch`、锁定版本的 deps 与 scripts
+- `package.json` -- 插件清单：`type: module`、`main: lib/index.js`、`dsh.manifestVersion/bundle.patch`、锁定版本的 deps 与 scripts（**无 `bin` 字段**：2026-11-25 起本项目不提供任何进程外入口，建包时若照本文旧版加 `bin.omw` 会造出一个不存在的入口）
 - `tsconfig.json` -- `module/moduleResolution: nodenext`、`rootDir: src`、`outDir: lib`、`strict`
 - `eslint.config.js` -- flat config，覆盖 `.js/.mjs/.cjs`（TS 由 `tsc --noEmit` 负责；eslint 10 无法解析 TS，见 Design Notes）
 - `vitest.config.ts` -- `test/**/*.test.ts`，node 环境
@@ -103,9 +105,7 @@ deferred:
 - `src/store/embedding.ts` -- 唯一 embedding 调用通道：2s 超时、401/402/超时映射、可注入 `fetch`
 - `src/ops/snapshots.ts` -- 每日快照、`verifySnapshot`、保留 7 份轮转、恢复先 `close()`、迁移前快照判定（AD-15 豁免）
 - `src/ops/audit.ts` -- `audit-YYYYMMDD.jsonl` 追加器与事件形状
-- `src/cli.ts` -- `omw doctor`：解析 profile → 五项有序检查 → 输出 → 退出码
-- `src/cli/doctor.ts` -- 五项检查实现（库/快照/维度/凭据/注入段），可单测
-- `src/cli/profile.ts` -- 读 `<DSH_HOME>/profiles/<name>` 的 package.json、cordis.patch.yml、cordis.yml（`yaml`）
+- ~~`src/cli.ts`、`src/cli/doctor.ts`、`src/cli/profile.ts`~~ -- **本条作废**：进程外 CLI 已于 2026-11-25 移除，三项能力改为 ①体检走聊天内 `/omw doctor`（`src/seams/commands.ts` 的命令面）②读 profile 的 `package.json` / `cordis.patch.yml` / `cordis.yml` 与五项检查实现（库/快照/维度/凭据/注入段）留在 `src/main.ts` 与 `src/seams/runtime.ts` 的装配路径上，仍可单测。详见 `:307` 与本节末尾「2026-11-25 注」
 - `scripts/check-layers.mjs` -- 层依赖检查（import 说明符扫描），违规即非零退出
 - `scripts/gate.ts` -- 跑 G0-5/G0-6 并把证据写到 `docs/implementation-artifacts/gates/`
 - `test/support/fake-ctx.ts` -- 录制式假 ctx：`systemPrompt.section/context`、`tools.register`、`logger`、`effect`、`dshHomePath`
@@ -115,7 +115,7 @@ deferred:
 ## Tasks & Acceptance
 
 **Execution:**
-- `package.json` -- 建包清单：`type: module`、`main: lib/index.js`、`bin.omw: lib/cli.js`、`dsh.manifestVersion/bundle.patch`、锁定版本 deps、scripts（build/test/lint/doctor） -- 让包可安装、可被 DSH 识别
+- `package.json` -- 建包清单：`type: module`、`main: lib/index.js`、`dsh.manifestVersion/bundle.patch`、锁定版本 deps、scripts（build/test/lint） -- 让包可安装、可被 DSH 识别（**不建 `bin` 字段、不建 doctor 脚本**：体检改为聊天内 `/omw doctor`）
 - `tsconfig.json` -- `module/moduleResolution: nodenext`、`rootDir: src`、`outDir: lib`、`strict` -- 产出可被 ESM 直接 import 的 `lib/*.js`
 - `eslint.config.js` -- flat config，只覆盖 `.js/.mjs/.cjs` -- 把不兼容 TS 7 的解析器隔离在外
 - `vitest.config.ts` -- include `test/**/*.test.ts`、node 环境 -- 跑验收
@@ -135,9 +135,7 @@ deferred:
 - `src/seams/prompt-composer.ts` -- 身份段与状态尾巴、预算、哈希不变即不重写 -- 注入单出口
 - `src/seams/tools.ts` -- 按名注册四个占位工具；no-op 时一个都不注册 -- 1.3 的对照面
 - `src/index.ts` -- 导出 `Config` 与 `apply`，注册身份段后向 stderr 写一次 `[omw] loaded ... section=harness:identity` -- 插件入口与加载确认
-- `src/cli/profile.ts` -- 读 `<DSH_HOME>/profiles/<name>` 的 package.json、cordis.patch.yml、cordis.yml -- 结构诊断
-- `src/cli/doctor.ts` -- 五项有序检查与诊断码映射 -- FR-17 主体
-- `src/cli.ts` -- `omw doctor` 参数解析、输出格式、退出码 0/1/2 -- 命令面
+- ~~`src/cli/profile.ts`、`src/cli/doctor.ts`、`src/cli.ts`~~ -- **三条作废**（2026-11-25 移除进程外 CLI）：结构诊断并入 `src/seams/runtime.ts` 的装配期检查，五项有序检查与诊断码映射并入 `src/seams/commands.ts` 的 `/omw doctor` 命令体（消息文本输出，无退出码），FR-17 主体不变
 - `scripts/check-layers.mjs` -- 扫描 src 的 import 说明符，违规即非零退出 -- G0-6
 - `scripts/gate.ts` -- 跑 G0-5/G0-6 并把证据写到 `docs/implementation-artifacts/gates/` -- 闸门取证
 - `test/support/fake-ctx.ts` -- 录制式假 ctx -- 让注入与注册可断言
@@ -152,7 +150,7 @@ deferred:
 - `README.md` -- 启用三步、体检语义、降级语义 -- FR-17 文档面
 
 **Acceptance Criteria:**
-- Given 干净仓库，when `pnpm install && pnpm build`，then 产出 `lib/index.js` 与 `lib/cli.js`，且无未声明依赖。
+- Given 干净仓库，when `pnpm install && pnpm build`，then 产出 `lib/index.js`（**无进程外入口**，2026-11-25 起不再产出 `lib/cli.js`），且无未声明依赖。
 - Given 空测试集，when `pnpm test`，then 通过（脚手架阶段）——最终状态下 `pnpm test` 全绿且至少覆盖 I/O 矩阵每一行。
 - Given 临时 `DSH_HOME` 中已把本包装进 profile 且在 `cordis.patch.yml` 写了 `insert` 条目，when 跑 `dsh --profile <tmp> --dump-config`，then 组合后的树含 `{id: oh-my-whale, name: dsh-oh-my-whale}`；when 再跑 `dsh --profile <tmp> "hi"`，then stderr 出现恰一次 `[omw] loaded` 且同一行含 `section=harness:identity`（模型轮次是否成功不影响该判定）。
 - Given 同一 profile，when 把条目只写进生成物 `cordis.yml`，then `omw doctor` 非零退出并指认「补丁文件改错位置」。
@@ -272,13 +270,14 @@ deferred:
 
 **Commands:**
 - `pnpm install` -- expected: 成功，锁定版本与 AR-1 一致，无 peer 冲突
-- `pnpm build` -- expected: `lib/index.js` 与 `lib/cli.js` 存在且可 `import`
+- `pnpm build` -- expected: `lib/index.js` 存在且可 `import`（`lib/cli.js` 已随进程外 CLI 一并移除）
 - `pnpm test` -- expected: 全绿，覆盖 I/O 矩阵每一行
 - `pnpm lint` -- expected: 通过；注入一条跨层 import 后失败（G0-6 取证）
 - `node scripts/gate.ts --gate g0-6` -- expected: 通过并写 `docs/implementation-artifacts/gates/g0-6.json`
 - `node scripts/gate.ts --gate g0-5` -- expected: 通过并写 `docs/implementation-artifacts/gates/g0-5.json`（临时 `DSH_HOME`，不改用户 profile）
 - `OMW_E2E=1 pnpm test -- test/e2e` -- expected: 临时 `DSH_HOME` 内加载成功、`[omw] loaded` 出现、提示含 `harness:identity`
 - `node lib/cli.js doctor --home <tmp> --profile web` -- expected: 五项按序输出，退出码 0/1 与矩阵一致
+  - **2026-11-25 注**：此条已作废。用户先后两次裁定（`epic-1-retro-2026-11-23.md:125`「移除 `omw` CLI，只留聊天内 `/omw doctor`」、2026-11-25「不要任何 CLI，只保留 command」）后，本项目无 `lib/cli.js`，也没有任何进程外入口。对应的验收改为：在真实会话里执行聊天内 `/omw doctor`，断言五项按序、结果以消息文本报告（无退出码语义）。本文其余 CLI 字样分两类：**已就地改准的**——`:87`（建包清单去掉 `bin.omw`）与 `:118`（执行清单去掉 `bin` 与 doctor 脚本）、`:108` 三条 `src/cli/*` 改为作废并指明能力去向、`:138` 三条同此；**按历史保留、以本注为准的**——`:36`/`:47`/`:59` 的 `omw doctor` 叙述、`:66`–`:73` 矩阵行的「退出码 1」列（现行读作「返回码文本 `E_*`/`OMW_*`」）、`:156`–`:161` 的 Given/When 用例、`:201`/`:214`/`:242` 的评审条目、`:257` 的 doctor 专属码段、`:293` 的实现摘要、`:303` 的变更文件行。这些改动会重写历史评审记录，故只作废不改写——本节原列的 `:204`/`:245`/`:247`/`:284` 四个行号经 2026-11-25 复核均不含 CLI 字样，是笔误。
 
 **Manual checks (if no CLI):**
 - 通读 `src/seams/prompt-composer.ts`：确认 `systemPrompt.` 只在此文件出现，且身份段文本不含逐轮变化内容。
@@ -294,16 +293,16 @@ deferred:
 Epic 1（1.1–1.5）以**一个可被 DSH 真实加载的插件底座**交付：分层目录 + 锁定版本工具链 + `apply(ctx, config)` 入口 + 字节稳定的身份段注入（`harness:identity`）；`omw doctor` 五项按序体检与非零退出码；库打不开/快照校验失败/维度不符/契约版本过高 → 整体 no-op（身份段照常、四工具零注册、日志恰一行）；向量故障 → 只关向量（401/402/维度不符），超时只记 `OMW_EMBED_TIMEOUT` 且写入照常、节点留 `vec_state=pending`；每日快照做后即校验、保留 7 份、恢复先关库、迁移前必须已有 `pre-migration-*`。闸门 G0-5/G0-6 以真实宿主会话与故意违规 fixture 双重取证。
 
 ### 变更文件（按职责）
-- `package.json` / `tsconfig.json` / `tsconfig.test.json` / `eslint.config.js` / `vitest.config.ts` / `.gitignore` / `cordis.patch.yml` / `README.md` — 包清单（`dsh.manifestVersion/bundle.patch`、`bin.omw`、`prepare`、`packageManager`）、构建与测试配置、启用三步与降级语义文档
-- `assets/persona.md` — 身份段唯一来源（四段 338 字符）
+- `package.json` / `tsconfig.json` / `tsconfig.test.json` / `eslint.config.js` / `vitest.config.ts` / `.gitignore` / `cordis.patch.yml` / `README.md` — 包清单（`dsh.manifestVersion/bundle.patch`、`prepare`、`packageManager`；`bin.omw` 已随进程外 CLI 移除，现 `package.json` 无 `bin` 字段）、构建与测试配置、启用三步与降级语义文档
+- `assets/persona.md` — 身份段唯一来源（四段 **336** 字符，不含尾换行；337 是含尾换行的字符数、939 是字节数。改名「鲸鲸」前后的差异见 `epic-1-retro-2026-11-23.md:108`）
 - `src/index.ts` — 插件入口：`export apply`/`inject=['systemPrompt']`，stderr 打印一次带真实段注册状态的加载行
 - `src/seams/{config,prompt-composer,logger,tools,runtime,vector,json-schema}.ts` — 配置单一真相、唯一注入出口、一行一事件日志、四个占位工具、启动装配与降级决策、向量失败策略
 - `src/core/{degrade,gates}.ts` — 三态状态机与封闭八码/`degraded_reason` 枚举、四个探针的有序闸门（纯函数）
 - `src/store/{db,meta,search,embedding,vector-write}.ts` — triviumdb 唯一接触点、契约版本 flag、全量文本检索、2s 超时与 401/402 映射、先提交节点再挂向量的写入路径
 - `src/ops/{snapshots,audit}.ts` — 每日快照/校验/轮转/恢复/迁移前判定（AD-15 豁免）、审计行与封闭 `degraded_reason` 校验
-- `src/cli.ts`、`src/cli/{doctor,profile,recording-ctx}.ts` — `omw doctor` 命令面、profile 三文件解析、录制式离线 ctx
+- ~~`src/cli.ts`、`src/cli/{doctor,profile,recording-ctx}.ts`~~ — **已随进程外 CLI 移除**（`epic-1-retro-2026-11-23.md:125`、2026-11-25「不要任何 CLI，只保留 command」裁定）；其中录制式离线 ctx 的能力留在 `test/support/recording-ctx.ts`
 - `scripts/check-layers.mjs`、`scripts/gate.ts` — 层依赖/写权限门、G0-5/G0-6 证据生成
-- `test/**`（10 个文件、92 个用例）— 覆盖 I/O 矩阵全部 16 行、进程级 CLI 退出码、真实 `dsh` e2e
+- `test/**`（10 个文件、92 个用例，其中 e2e 1 个默认 skip ⇒ 跑出来是 91 passed / 1 skipped）— 覆盖 I/O 矩阵全部 16 行、真实 `dsh` e2e
 - `docs/implementation-artifacts/{epic-1-context.md,spec-epic-1-plugin-foundation.md,gates/g0-5.json,gates/g0-6.json}` — 本 epic 的上下文、规格与闸门证据
 
 ### 评审结果
@@ -317,7 +316,7 @@ Epic 1（1.1–1.5）以**一个可被 DSH 真实加载的插件底座**交付�
 
 ### 验证（本轮实跑，非转述）
 - `pnpm install --frozen-lockfile` → exit 0
-- `pnpm build` → exit 0（`lib/index.js`、`lib/cli.js`）
+- `pnpm build` → exit 0（`lib/index.js`；`lib/cli.js` 现已不存在）
 - `pnpm lint` → exit 0（`tsc` src + `tsc` test + `layers: 21 个源文件，全部规则通过` + eslint）
 - `pnpm test` → 9 文件通过 / 1 skip，**91 passed | 1 skipped**
 - `node scripts/gate.ts --gate g0-6` → pass（`tree-clean` / 故意违规报 `core-no-seams` / 移除后恢复通过）

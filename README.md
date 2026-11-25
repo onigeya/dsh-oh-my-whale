@@ -2,6 +2,8 @@
 
 DSH 记忆插件。**本版本只有底座**：可被宿主加载、可用一条命令体检、坏掉时可以整档退场或只关向量路径。记忆语义（记住、想起、遗忘、解释）属于后续 epic，四个工具名在此只注册占位，调用返回 `E_NOT_IMPLEMENTED`。
 
+> **这份 README 描述的是「已交付」的状态，不是目标状态**（2026-11-25 补记）。文中的「单一安装位、五项体检、八个错误码」都是 Epic 1 的实际形态。目标设计把插件拆成**两个安装位**（记忆位 `profile` + 人格位 `omw-main` preset），届时第 5 项判据、体检项数与错误码个数都会变——那套设计在 [`docs/specs/spec-DSH哦鲸鲸/entry-routing.md`](docs/specs/spec-DSH哦鲸鲸/entry-routing.md)，**尚未实现**。两份文档不冲突，是时点不同：这里写的是现在装得上什么，那里写的是要装成什么样。
+
 ## 启用三步
 
 三步缺一即等于没装。**改的是补丁文件，不是生成物。**
@@ -66,6 +68,8 @@ stderr 的加载行由插件自己写，不走 `ctx.logger`：宿主只把插件
 | 4 | 凭据可用 | `embedding.apiKeyEnv` 指向的环境变量已设置 | `OMW_EMBED_AUTH` |
 | 5 | 注入段已注册 | 本实例注册了 `harness:identity` 且文本非空，并报出已注册的工具数 | `OMW_SECTION_NOT_REGISTERED` |
 
+> 第 5 项的判据在**两个安装位**落地后会改（目标设计）：从「本实例注册了该段」改为「`omw-main` preset 内该段可见 ∧ profile 位未注册该段」，因为人格搬进 preset 后，profile 位**不该**再注册任何 section——照现判据体检必然失败。同一时刻还会多出第 6、7 项（折叠接管、`routing.json` 可读），且按安装位报数：只装记忆位报 1–4。见 `entry-routing.md` §八 与 `ARCHITECTURE-SPINE.md` 的 doctor 表。
+
 退出码不适用（它是聊天里的命令）：命令用消息文本报告，有失败时以错误样式返回，摘要给出「k/5 通过」与首个失败码。
 
 体检的边界：**零网络**（凭据项只读环境变量）、不新开数据库连接、不写业务节点。缺当天快照时会补做并校验——这是「快照校验过」这一项的字面含义。「凭据可用」不校验密钥真伪：那需要一次真实请求，与零网络冲突；密钥是否有效由第一次真正调用 embedding 时的 `OMW_EMBED_AUTH` 判定。
@@ -81,6 +85,8 @@ stderr 的加载行由插件自己写，不走 `ctx.logger`：宿主只把插件
 | embedding 单次超时 > 2s | 记 `OMW_EMBED_TIMEOUT`，该条 `vec_state` 回落 `pending`，写入照常成功，向量能力**不**关闭 |
 
 运行时降级错误码封闭八个：`OMW_DB_OPEN`、`OMW_SNAPSHOT_VERIFY`、`OMW_DIM_MISMATCH`、`OMW_EMBED_AUTH`、`OMW_EMBED_QUOTA`、`OMW_EMBED_TIMEOUT`、`OMW_EXTRACT_FAIL`、`OMW_DREAM_BUDGET`。新增或改名都算破坏兼容。
+
+> 入口与路由（CAP-9）要在这个封闭集上**再加三个**——`OMW_ROUTE_LOAD` / `OMW_ROUTE_DISPATCH` / `OMW_ROUTE_MISMATCH`，即 8 → 11。那是目标设计，本版本尚未实现；扩集的动作与 `SPEC.md`、`requirements.md`、`epics.md` 同批改（见 `entry-routing.md` §七）。
 
 「坏掉的是记忆，不是人设」是硬约束：库不可用时 `harness:identity` 的文本与健康库**逐字节相同**（`test/degrade/no-op.test.ts` 断言）。
 
