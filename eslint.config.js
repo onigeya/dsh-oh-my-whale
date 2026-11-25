@@ -13,7 +13,7 @@
 // this file to catch anything about shape, because it cannot see TypeScript.
 export default [
   {
-    ignores: ["node_modules/**", "lib/**", ".omw-e2e/**", "docs/**", "coverage/**"],
+    ignores: ["node_modules/**", "lib/**", ".omw-e2e/**", ".agents/**", "docs/**", "coverage/**"],
   },
   {
     files: ["**/*.js", "**/*.mjs", "**/*.cjs"],
