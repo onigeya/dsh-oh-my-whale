@@ -161,7 +161,7 @@ AD-7 管的是「往系统提示里放什么」，AD-20 管的是「放了多少
 
 - **Binds:** CAP-6, ops/
 - **Prevents:** 「压缩省了 token」变成一句无法证伪的口号；也防止某类会话上折叠长期亏本（摘要成本 + 缓存重付 > 节省）却没人发现。
-- **Rule:** 每次折叠写一行审计（只落文件，不落库，按天切分，保留 30 天）：`{ts, session_id, op_id, tier, span, before_tokens, after_tokens, saved_tokens, summary_cost_tokens, prefix_repay_tokens, breakeven_turns, prefix_unchanged, degraded, host_cache_read, host_cache_write, host_uncached}`。其中 `breakeven_turns = ceil((summary_cost_tokens + prefix_repay_tokens) / max(1, saved_tokens))`。`breakeven_turns > govern.breakevenMaxTurns`（默认 20）记 `low_yield`，并把该会话的 `growthFloorTokens` 临时上调 50%（自适应降频，会话结束即失效）。**归因只用自己的计量**：`prefix_repay_tokens` 由相邻两次请求的 `uncached` 差值给出，不引入第二个数字来源。
+- **Rule:** 每次折叠写一行审计（只落文件，不落库，按天切分，保留 30 天）：`{ts, session_id, op_id, tier, span, before_tokens, after_tokens, saved_tokens, summary_cost_tokens, prefix_repay_tokens, breakeven_turns, prefix_unchanged, degraded, host_cache_read, host_cache_write, host_cache_uncached}`。其中 `breakeven_turns = ceil((summary_cost_tokens + prefix_repay_tokens) / max(1, saved_tokens))`。`breakeven_turns > govern.breakevenMaxTurns`（默认 20）记 `low_yield`，并把该会话的 `growthFloorTokens` 临时上调 50%（自适应降频，会话结束即失效）。**归因只用自己的计量**：`prefix_repay_tokens` 由相邻两次请求的 `uncached` 差值给出，不引入第二个数字来源。
 
 ### AD-40 — 工具面是公开契约 [ADOPTED]
 

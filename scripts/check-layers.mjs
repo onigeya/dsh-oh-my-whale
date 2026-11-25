@@ -15,6 +15,7 @@
  *   prompt-seam-owner  systemPrompt.section(/.context( only in src/seams/prompt-composer.ts
  *   hard-delete-owner  delete(/deleteManyAtomic(/unlink(/unlinkLabel( only in the AD-15 exempt modules
  *   hard-delete-literal  a transaction op literal `type: 'delete'|'unlink'|'unlinkLabel'`, in any spelling
+ *   fs-delete-owner    unlinkSync(/rmSync(/rmdirSync(/rm(/rmdir( only in the AD-15 exempt modules (AD-5)
  *   ad15-exempt-header   an exempt module's first non-empty line names its purpose
  *   write-authority    every engine write method only in src/store/commits/** (AD-4)
  *   tql-owner          prepareTql/executePreparedTql only in src/store/templates/**
@@ -74,6 +75,17 @@ const EXEMPT_HEADER_PREFIX = '// AD-15 豁免：'
 
 /** Calls that must never appear outside the exempt modules (AD-5). */
 const HARD_DELETE_CALLS = ['delete', 'deleteManyAtomic', 'unlink', 'unlinkLabel']
+
+/**
+ * Filesystem removals, which the engine token list above cannot see.
+ *
+ * `unlink` and `unlinkSync` are different identifiers, so a module could delete
+ * a file while the engine-call gate stayed quiet. This list closes that: it
+ * applies to src/ only, because tests and build scripts are expected to clean
+ * their own temp directories, and a repository event of a *stored memory*
+ * disappearing is what AD-5 forbids.
+ */
+const FS_DELETE_CALLS = ['unlinkSync', 'rmSync', 'rmdirSync', 'rm', 'rmdir']
 
 /** The object key that discriminates a transaction op. */
 const OP_TYPE_KEY = 'type'
@@ -471,20 +483,113 @@ function readStringExpression(tokens, start) {
  * both quotes and calls a name, but a token stream separates them by kind.
  * @param {string} code source with comments stripped.
  * @param {readonly string[]} names call names to report.
- * @returns {Array<{name: string, line: number}>} one entry per call site.
+ * @returns {Array<{name: string, line: number}>} one entry per call site. A
+ * `delete` on a locally declared Map or Set is not reported; see
+ * {@link collectionNames}.
  */
 function callNames(code, names) {
   const wanted = new Set(names)
   const tokens = tokenize(code)
+  const collections = collectionNames(tokens)
   const found = []
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index]
     if (token.kind !== 'ident' || !wanted.has(token.value)) continue
     const next = tokens[index + 1]
     if (next === undefined || next.kind !== 'punct' || next.value !== '(') continue
+    // `seen.delete(key)` on a local Map is not a stored memory disappearing.
+    if (token.value === 'delete') {
+      const dot = tokens[index - 1]
+      const receiver = tokens[index - 2]
+      const member = dot !== undefined && dot.kind === 'punct' && (dot.value === '.' || dot.value === '?.')
+      if (member && receiver !== undefined && receiver.kind === 'ident' && collections.has(receiver.value)) continue
+    }
     found.push({ name: token.value, line: token.line })
   }
   return found
+}
+
+/**
+ * Names bound in this file to an in-memory collection.
+ *
+ * \`delete\` is the one engine method whose name a collection shares: \`Map\` and
+ * \`Set\` both spell \`delete\`, so a token scan cannot tell \`db.delete(id)\` from
+ * \`seen.delete(key)\` by the name alone. Rather than weaken the rule for every
+ * receiver, this collects the identifiers declared as \`new Map()\` / \`new Set()\`
+ * and their weak and typed forms, and the caller skips a \`delete\` whose
+ * receiver is one of them. Everything else still fails closed.
+ * @param {import('./check-layers.mjs').Token[]} tokens token stream.
+ * @returns {Set<string>} identifiers to treat as collections.
+ */
+function collectionNames(tokens) {
+  const names = new Set()
+  const constructors = new Set(['Map', 'Set', 'WeakMap', 'WeakSet'])
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (token.kind !== 'ident' || token.value !== 'new') continue
+    const equals = tokens[index - 1]
+    if (equals?.kind !== 'punct' || equals.value !== '=') continue
+    const ctor = tokens[index + 1]
+    if (ctor?.kind !== 'ident' || !constructors.has(ctor.value)) continue
+    const after = tokens[index + 2]
+    if (after?.kind !== 'punct' || (after.value !== '(' && after.value !== '<')) continue
+    const name = collectionBindingName(tokens, index - 1)
+    if (name !== undefined) names.add(name)
+  }
+  return names
+}
+
+/** Keywords that end the walk back to a binding name. */
+const BINDING_KEYWORDS = new Set(['const', 'let', 'var', 'readonly', 'public', 'private', 'protected', 'static'])
+
+/**
+ * The identifier an `= new Map()` is bound to, read backwards from its `=`.
+ *
+ * A collection name is not always written `const seen = new Set()`: the gate
+ * has to see a class field or a parameter default too, and those put a type
+ * annotation between the name and the value — `seen: WeakSet<object> = new
+ * WeakSet()`, which is how `src/seams/logger.ts` spells the one that first
+ * tripped this. Walking backwards is the only way to tell the name from the
+ * type, because the type is itself a run of identifiers and punctuation.
+ * @param {import('./check-layers.mjs').Token[]} tokens token stream.
+ * @param {number} equalsIndex index of the `=` before `new`.
+ * @returns {string|undefined} binding name, or undefined when the shape is not
+ * a binding this rule models.
+ */
+function collectionBindingName(tokens, equalsIndex) {
+  let index = equalsIndex - 1
+  let depth = 0
+  let candidate
+  while (index >= 0 && equalsIndex - index <= 16) {
+    const token = tokens[index]
+    if (token.kind === 'punct') {
+      // Walking right to left, a closing bracket opens the group and an
+      // opening one closes it.
+      if (token.value === '>' || token.value === ']' || token.value === ')') { depth += 1; index -= 1; continue }
+      if (token.value === '<' || token.value === '[' || token.value === '(') {
+        if (depth > 0) { depth -= 1; index -= 1; continue }
+        return candidate
+      }
+      if (depth > 0) { index -= 1; continue }
+      if (token.value === ':') {
+        const optional = tokens[index - 1]
+        const name = optional?.kind === 'punct' && optional.value === '?' ? tokens[index - 2] : optional
+        return name?.kind === 'ident' ? name.value : undefined
+      }
+      if (token.value === '?') { index -= 1; continue }
+      // Any other punctuation ends the binding: `;` after a field, `{` at the
+      // start of a class body, `,` between parameters.
+      return candidate
+    }
+    if (depth > 0) { index -= 1; continue }
+    if (token.kind !== 'ident') return undefined
+    if (BINDING_KEYWORDS.has(token.value)) return candidate
+    const before = tokens[index - 1]
+    if (before?.kind === 'punct' && (before.value === '.' || before.value === '?.')) return undefined
+    candidate = token.value
+    index -= 1
+  }
+  return candidate
 }
 
 /**
@@ -598,9 +703,13 @@ function deleteLiteralLines(code) {
 /**
  * Check one file against the no-deletion rules (AD-5, AD-15).
  *
- * Read over the whole repository rather than over `src/`: a physical delete is
- * not a layering mistake, it is forbidden everywhere, and a gate that stopped at
- * the source tree would let a script or a test reach around it.
+ * The node-deletion rules read over the whole repository rather than over
+ * `src/`: a physical delete is not a layering mistake, it is forbidden
+ * everywhere, and a gate that stopped at the source tree would let a script or a
+ * test reach around it. The file-deletion rule is narrower on purpose — it only
+ * watches `src/`, because clearing a temp fixture with `rmSync` is a legitimate
+ * thing for a test to do and a repository-wide ban would force every test to
+ * hoist its cleanup somewhere else.
  * @param file - absolute path.
  * @param root - repository root.
  * @param violations - collected findings.
@@ -625,6 +734,16 @@ function checkDeletion(file, root, violations) {
         line: call.line,
         message: `硬删只允许出现在 AD-15 豁免模块：${call.name}(`,
       })
+    }
+    if (insideSource) {
+      for (const call of callNames(uncommented, FS_DELETE_CALLS)) {
+        violations.push({
+          rule: 'fs-delete-owner',
+          file: relativePath,
+          line: call.line,
+          message: `文件删除只允许出现在 AD-15 豁免模块：${call.name}(`,
+        })
+      }
     }
     // The second gate: a transaction op literal deletes without ever naming a
     // delete function, which is why the token list above cannot see it. It is

@@ -116,8 +116,10 @@ describe('runtime: installing the store', () => {
     expect(nodeCount(db)).toBe(11)
   })
 
-  it('records the bootstrap as one write audit row', () => {
+  it('records the bootstrap as one write audit row', async () => {
     const { runtime, home } = boot()
+    // Audit lines are queued, not written: nothing is on disk until the queue drains.
+    await runtime.audit?.flush()
     const files = readdirSync(runtime.paths.dataDir).filter(name => name.startsWith('audit-'))
     expect(files).toHaveLength(1)
     const rows = readJsonLines(join(runtime.paths.dataDir, files[0] ?? ''))
@@ -125,6 +127,14 @@ describe('runtime: installing the store', () => {
     expect(writes).toHaveLength(1)
     expect(writes[0]).toMatchObject({ outcome: 'bootstrap', code: 'seed_install', mem_keys: [] })
     expect(typeof writes[0]?.['elapsed_ms']).toBe('number')
+    // AC⑥ over all three row types: a write row names its memories by key and
+    // carries no node id, so the audit trail cannot be joined back to the
+    // store's internal identifiers. The injection row has its own version of
+    // this check in `runtime-audit.test.ts`; a row kind nobody asserts is a row
+    // kind that can grow an id without a test failing.
+    const text = JSON.stringify(writes[0])
+    expect(text).not.toMatch(/"(?:id|node_id|nodeId)"/u)
+    expect(text).not.toMatch(/"[a-z_]+":\s*\d{3,}"/u)
     expect(home.dir).toBeTruthy()
   })
 

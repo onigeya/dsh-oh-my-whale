@@ -73,6 +73,61 @@ export interface RecallReaderDeps {
    * `performance.now`, so no caller has to supply one.
    */
   readonly now?: () => number
+  /**
+   * Called after a query that actually ran, with the facts an audit row needs.
+   *
+   * Only a query that ran gets here: a refused argument never touched the store,
+   * and writing a row for it would put a recall in the log that never happened
+   * (AD-20). A throw is caught, because bookkeeping may never fail a recall.
+   */
+  readonly onRecall?: (event: RecallEvent) => void
+  /**
+   * Called when a query was accepted but the store threw instead of answering.
+   *
+   * Deliberately not `onRecall`: a failed call has no hits and no elapsed time an
+   * audit row could stand behind, and an all-zero row would read like a recall
+   * that found nothing (AC⑥). The failure still has to be observable, so it
+   * reports what is true — the call was attempted, the store refused, and how
+   * long it took to find out.
+   */
+  readonly onRecallFailure?: (event: RecallFailureEvent) => void
+}
+
+/** What a completed recall reports to the audit (AD-20). */
+export interface RecallEvent {
+  /**
+   * The session that asked, when the host said.
+   *
+   * The tool call is the only place a recall can learn this (`exec.agent.id`);
+   * a row without it can still be counted, but not attributed to a session, so
+   * the report would have to lump every caller together.
+   */
+  readonly sessionId?: string
+  /** The query as typed; the auditor hashes it and never stores it (NFR-6). */
+  readonly query: string
+  /** The count this call ran with, after the configuration and the argument. */
+  readonly topK: number
+  /** `mem_key`s of the hits, in the order the answer returned them (AD-3). */
+  readonly memKeys: readonly string[]
+  /** Wall time of the accepted call, in whole milliseconds. */
+  readonly elapsedMs: number
+  /** Whether the answer was degraded, and why, in the closed vocabulary. */
+  readonly degraded: boolean
+  readonly degradedReason: readonly DegradedReason[]
+}
+
+/** What a recall that never got an answer reports to the audit (AD-20). */
+export interface RecallFailureEvent {
+  /** The calling session, when the host said; omitted rather than invented. */
+  readonly sessionId?: string
+  /** The query as typed, so the auditor can hash it like a successful one. */
+  readonly query: string
+  /** The count the call ran with, after the configuration and the argument. */
+  readonly topK: number
+  /** `E_GATE_DOWN`: the only failure an accepted call can end in. */
+  readonly code: 'E_GATE_DOWN'
+  /** Milliseconds spent before the store gave up. */
+  readonly elapsedMs: number
 }
 
 /** The recall seam. */
@@ -81,9 +136,10 @@ export interface RecallReader {
    * Answer one recall.
    * @param query - free text; blank is refused.
    * @param topK - optional per-call count; out-of-range is refused, never clamped.
+   * @param sessionId - the calling session, passed through to the audit row.
    * @returns the answer; a refusal carries a code and an empty hit list.
    */
-  recall(query: unknown, topK?: unknown): RecallAnswer
+  recall(query: unknown, topK?: unknown, sessionId?: string): RecallAnswer
   /**
    * Stop answering. Safe to call twice.
    *
@@ -107,7 +163,7 @@ export function createRecallReader(deps: RecallReaderDeps): RecallReader {
   let disposed = false
 
   return {
-    recall(query: unknown, topK?: unknown): RecallAnswer {
+    recall(query: unknown, topK?: unknown, sessionId?: string): RecallAnswer {
       const started = clock()
       // A call that omits the count means the configured one, not five. The
       // configuration is the operator's decision and the argument is the
@@ -126,7 +182,23 @@ export function createRecallReader(deps: RecallReaderDeps): RecallReader {
         return refuse('E_GATE_DOWN', '记忆库已关闭，本次没有召回任何东西。', deps, started, clock)
       }
       try {
-        return answer(text.value, bounds.value, deps, search, started, clock)
+        const result = answer(text.value, bounds.value, deps, search, started, clock)
+        try {
+          deps.onRecall?.({
+            ...(sessionId === undefined || sessionId === '' ? {} : { sessionId }),
+            query: text.value,
+            topK: bounds.value,
+            memKeys: result.hits.map(hit => hit.mem_key),
+            elapsedMs: result.elapsed_ms,
+            degraded: result.degraded,
+            degradedReason: result.degraded_reason,
+          })
+        } catch {
+          // A bookkeeping failure is not a recall failure: the answer is already
+          // computed and correct, and swallowing this keeps the audit off the
+          // critical path (AD-18 local degradation).
+        }
+        return result
       } catch (error) {
         // The disposed flag above only knows about this reader. The handle it
         // reads through belongs to the runtime, so a closed database arrives
@@ -134,6 +206,18 @@ export function createRecallReader(deps: RecallReaderDeps): RecallReader {
         // and the I/O matrix promises a refusal for it, not a stack trace in
         // the host's tool result (AD-25 E_GATE_DOWN).
         const detail = error instanceof Error ? error.message : String(error)
+        const elapsedMs = Math.round(clock() - started)
+        try {
+          deps.onRecallFailure?.({
+            ...(sessionId === undefined || sessionId === '' ? {} : { sessionId }),
+            query: text.value,
+            topK: bounds.value,
+            code: 'E_GATE_DOWN',
+            elapsedMs,
+          })
+        } catch {
+          // Same rule as the success path: bookkeeping may never change the answer.
+        }
         return refuse(
           'E_GATE_DOWN',
           `记忆库不可读，本次没有召回任何东西：${sanitizeEngineText(detail)}`,

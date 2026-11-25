@@ -153,7 +153,7 @@ severity_counts: { high: 5, medium: 15, low: 11 }
 **F15 · 中 · AD-20 — 缓存命中率用代理指标，宿主已有真实计量**
 - 证据：AD-20（161 行）把 `prefix_unchanged` 称为「前缀缓存命中率的代理指标」。但宿主每次模型调用都上报真实值：`dsh-llm/lib/types/types.d.ts:160-179`（`cacheReadTokens` / `cacheWriteTokens` / `uncachedInputTokens`，且注明三者互斥、计费输入为三者之和），`dsh-token-meter/lib/types/projection.d.ts:13-16` 已有投影。
 - 后果：简报标准 4 的达标线是「命中率下降 < 10%」，用布尔代理算不出百分比；v1 又要「建监控与基线」，指标口径定错，基线就白建。
-- 改法：AD-20 的注入行改为 `{ts, session_id, tier, chars, tokens, items[], truncated, prefix_unchanged, host_cache_read, host_cache_write, host_uncached}`，来源写死为宿主 token 计量投影；`prefix_unchanged` 降为辅助字段。并把「命中率 = ΣcacheRead / (ΣcacheRead + ΣcacheWrite + Σuncached)（按会话聚合）」写进一致性约定。
+- 改法：AD-20 的注入行改为 `{ts, session_id, tier, chars, tokens, items[], truncated, prefix_unchanged, host_cache_read, host_cache_write, host_cache_uncached}`，来源写死为宿主 token 计量投影；`prefix_unchanged` 降为辅助字段。并把「命中率 = ΣcacheRead / (ΣcacheRead + ΣcacheWrite + Σuncached)（按会话聚合）」写进一致性约定。
 
 **F16 · 中 · 〔缺 AD〕— 工具面契约（名字/入参/返回/错误码）没有 AD**
 - 证据：C4/C3 提到 `recall` / `remember` / `forget` / `explain` 四个工具，AD-4 提到 `remember` 工具，但骨架从未钉死工具名、入参 schema、返回包封（`{ok, items[], degraded, reason?}`）、错误码枚举。Consistency Conventions 只写「错误 `{code, message, detail?}`」，没有 code 列表。

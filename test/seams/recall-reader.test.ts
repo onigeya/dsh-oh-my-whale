@@ -502,6 +502,56 @@ describe('recall: a handle that was closed underneath the reader', () => {
     }
   })
 })
+describe('recall: a store that went away reports the refusal it cannot return', () => {
+  it('calls back once with E_GATE_DOWN instead of failing silently', () => {
+    const home = tempHome('omw-recall-closed-')
+    mkdirSync(home.path('oh-my-whale'), { recursive: true })
+    const file = home.path('oh-my-whale', 'oh-my-whale.tdb')
+    const opened = openDatabase({ file, dim: TEST_DIM, memoryLimitMb: 64 })
+    if (!opened.ok) throw new Error(opened.reason)
+    try {
+      opened.db.insert([...ZERO], assertion('assertion:E:likes:whale', 'whale watching'))
+      const failures: { code: string; sessionId?: string; topK: number }[] = []
+      const reader = createRecallReader({
+        db: opened.db,
+        topK: DEFAULT_TOP_K,
+        candidatePool: DEFAULT_CANDIDATE_POOL,
+        onRecallFailure: (event) => { failures.push({ code: event.code, ...(event.sessionId === undefined ? {} : { sessionId: event.sessionId }), topK: event.topK }) },
+      })
+      closeDatabase(opened.db)
+      const answer = reader.recall('whale', 7, 'session-alpha')
+
+      // The answer is one half of the contract; the callback is the other. A
+      // refusal nobody hears about is a store that silently stopped answering,
+      // which is exactly the failure mode AD-20 has to make visible.
+      expect(answer.ok).toBe(false)
+      expect(failures).toHaveLength(1)
+      expect(failures[0]).toEqual({ code: 'E_GATE_DOWN', sessionId: 'session-alpha', topK: 7 })
+      expect(() => { reader.dispose() }).not.toThrow()
+    } finally {
+      home.remove()
+    }
+  })
+
+  it('stays quiet for a refused argument, because no query ran', () => {
+    const store = openWriteStore('omw-recall-')
+    const failures: string[] = []
+    const reader = createRecallReader({
+      db: store.db,
+      topK: DEFAULT_TOP_K,
+      candidatePool: DEFAULT_CANDIDATE_POOL,
+      onRecallFailure: (event) => { failures.push(event.code) },
+    })
+
+    expect(reader.recall('whale', 99).ok).toBe(false)
+
+    // `onRecallFailure` is documented as the store-not-answering channel. A
+    // bad argument never reached the store, so reporting it here would make the
+    // two failures indistinguishable at the audit row.
+    expect(failures).toEqual([])
+  })
+})
+
 describe('recall: the degradation vocabulary is closed', () => {
   it('re-exports the six values from one source instead of copying them', () => {
     expect(RECALL_DEGRADED_REASONS).toEqual(DEGRADED_REASONS)

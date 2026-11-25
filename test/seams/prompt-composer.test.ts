@@ -79,6 +79,58 @@ function recordingHost(): RecordingHost {
   }
 }
 
+/**
+ * A host that keeps the provider a section was registered with, and renders it
+ * on demand.
+ *
+ * `recordingHost` renders once at registration and stores the string, which
+ * cannot express the thing this seam has to guarantee: the provider is called
+ * again on every assembly, so whatever it reads at that moment is what the model
+ * receives. A host that refuses a replacement therefore has to leave the older
+ * provider returning the older text.
+ */
+interface ProviderHost {
+  readonly host: SystemPromptLike
+  /** When true, `section()` throws: the host refuses the replacement. */
+  refuse: boolean
+  /** Render a registered name the way an assembly would, or undefined. */
+  render(name: string): string | undefined
+}
+
+function providerHost(): ProviderHost {
+  const state = { refuse: false, live: new Map<string, string | (() => string)>() }
+  const register = (registration: { name: string; text: string | (() => string) }): (() => void) => {
+    state.live.set(registration.name, registration.text)
+    return () => {
+      // Rebuilt, not deleted: the deletion gate forbids `.delete(` on any object.
+      const next = new Map<string, string | (() => string)>()
+      for (const [key, value] of state.live) {
+        if (key !== registration.name) next.set(key, value)
+      }
+      state.live = next
+    }
+  }
+  return {
+    host: {
+      section(registration) {
+        if (state.refuse) throw new Error('host refused the replacement')
+        return register(registration)
+      },
+      context: register,
+    },
+    get refuse(): boolean {
+      return state.refuse
+    },
+    set refuse(next: boolean) {
+      state.refuse = next
+    },
+    render(name: string): string | undefined {
+      const registered = state.live.get(name)
+      return typeof registered === 'function' ? registered() : registered
+    },
+  }
+}
+
 /** Build a composer with the AD-7 defaults unless the case says otherwise. */
 function composerOf(overrides: Partial<PromptComposerOptions> = {}): PromptComposer {
   return new PromptComposer({
@@ -470,6 +522,24 @@ describe('injection: a host that refuses', () => {
     expect(recorder.live.get(PERSONA_SECTION_NAME)).toBe('第一版')
     expect(composer.hasSection).toBe(true)
   })
+
+  // The section is a provider, so the host renders it again on every assembly.
+  // A refusal has to survive that second render: the older registration must
+  // keep answering with the older text, or the refused replacement silently
+  // reaches the model anyway (AD-20: the row describes the prompt that was sent).
+  it('keeps rendering the older text after the host refuses a replacement', () => {
+    const host = providerHost()
+    let persona = '第一版'
+    const composer = composerOf({ personaText: () => persona })
+    expect(composer.register(host.host).personaRegistered).toBe(true)
+    expect(host.render(PERSONA_SECTION_NAME)).toBe('第一版')
+
+    host.refuse = true
+    persona = '第二版'
+    expect(composer.register(host.host).failed).toEqual(['section'])
+
+    expect(host.render(PERSONA_SECTION_NAME)).toBe('第一版')
+  })
 })
 
 describe('injection: the synchronous path is fast enough', () => {
@@ -515,6 +585,9 @@ describe('injection: a reader that throws', () => {
     expect(outcome.personaRegistered).toBe(true)
     expect(composer.hasSection).toBe(true)
     expect(recorder.calls.some(call => call.kind === 'section')).toBe(true)
+    // Once: `register()` composes one plan, and the provider replays that very
+    // plan rather than composing again, so a broken reader is reported once per
+    // registration. The failure still never escapes and the section survives it.
     expect(failures).toEqual(['state:store unrunnable'])
     // No state source answered this round, so the tail has no text at all.
     expect(outcome.plan.tail.text).toBeUndefined()

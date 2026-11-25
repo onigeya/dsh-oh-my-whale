@@ -43,11 +43,17 @@ import { createAppendFileSink, createLogger, type Logger } from './logger.ts'
 import { PromptComposer, type InjectionPlan, type PersonaState, type SystemPromptLike } from './prompt-composer.ts'
 import { registerPlaceholderTools, type ToolRegistryLike } from './tools.ts'
 import { createVectorPolicy, type VectorPolicy } from './vector.ts'
-import { createWriteAudit, createWritePort, type WritePort } from './write-port.ts'
+import { createWritePort, type WritePort } from './write-port.ts'
 import { asSessionQuery, createQuoteSource, type SessionQueryLike } from './evidence-source.ts'
 import { createEvidenceReader, type EvidenceReader } from './evidence-reader.ts'
 import { createVersionReader, type VersionReader } from './version-reader.ts'
 import { createRecallReader, type RecallReader } from './recall-reader.ts'
+import { createHostUsageReader } from './host-usage.ts'
+import { createRetention, type Retention } from '../ops/retention.ts'
+import { createInjectionAuditor } from '../ops/injection-audit.ts'
+import { createRecallAuditor } from '../ops/recall-audit.ts'
+import { createAudit, type Audit } from '../ops/audit.ts'
+import type { RecallEvent, RecallFailureEvent } from './recall-reader.ts'
 
 /**
  * Diagnostic log codes for registration problems.
@@ -73,8 +79,26 @@ export const OPERATIONAL_LOG_CODES = {
   schemaNotReady: 'OMW_SCHEMA_NOT_READY',
   /** The write queue could not be drained before the handle was closed. */
   writeCloseFailed: 'OMW_WRITE_CLOSE_FAILED',
-  /** A write audit row could not be appended. The write itself already landed. */
+  /**
+   * An audit row could not be appended, or the audit directory could not be read.
+   *
+   * One code covers all three kinds of row on purpose: the three writers are the
+   * same facade, and a reader grepping for it wants "the audit trail has a hole"
+   * rather than three spellings of it.
+   */
   auditWriteFailed: 'OMW_AUDIT_WRITE_FAILED',
+  /** Old audit files were swept at mount, or the sweep itself failed. */
+  auditRetentionSwept: 'OMW_AUDIT_RETENTION_SWEPT',
+  /**
+   * An audit row was not written, and no error came back to report.
+   *
+   * Two assemblies reach this: one the host performed outside any session
+   * (there is no `session_id` to record, and inventing one is forbidden), and a
+   * recall the store refused (it has no hits, so no row may claim it found
+   * anything). Both are deliberate silences in the audit trail, which is exactly
+   * why they belong in `omw.log` instead of nowhere.
+   */
+  auditRowSkipped: 'OMW_AUDIT_ROW_SKIPPED',
 } as const
 
 /** The slice of `ctx` the plugin actually uses. */
@@ -176,6 +200,24 @@ export interface Runtime {
    */
   readonly injection?: InjectionPlan
   /**
+   * The audit facade every row is appended through (AD-20).
+   *
+   * Exposed so a caller can `flush()` the queue and observe a write failure the
+   * tool call itself was never allowed to see (AC⑦).
+   */
+  readonly audit?: Audit
+  /**
+   * The sweep to run, not a record of the one that already ran.
+   *
+   * Exposed for the same reason as {@link Runtime.audit}: the sweep is the one
+   * place an audit file disappears, so a caller can run it and see what it
+   * removed. Mount already ran it once and logged the outcome
+   * (`OMW_AUDIT_RETENTION_SWEPT` with the count, or `OMW_AUDIT_WRITE_FAILED`
+   * when it was blocked); that mount-time result is not kept, so this is the
+   * seam itself and calling it sweeps again.
+   */
+  readonly retention?: Retention
+  /**
    * Drain the write queue, then close the database and release both injection
    * registrations. Idempotent, and returns a promise the caller must await:
    * closing the handle under a queued write would lose it.
@@ -264,6 +306,42 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
   // One clock for the whole start: the audit rows, the seed payloads and the
   // write timestamps have to agree about which instant this boot happened at.
   const nowMs = (): number => (deps.now?.() ?? new Date()).getTime()
+  //
+  // One facade, one queue, three kinds of row (AD-20). The write port, the
+  // injection auditor and the recall auditor all append through the same object,
+  // so one `flush()` drains everything and the day boundary comes from one clock
+  // (AC⑦, AUD_DAY_SPLIT). Writes only enqueue: an assembly never waits on a disk.
+  //
+  const audit = createAudit(deps.now === undefined ? { dataDir: paths.dataDir } : { dataDir: paths.dataDir, now: deps.now })
+  // The host's token accounting is optional twice over (no `sessions`, no
+  // `sessionProjections`); a missing half yields `null` columns, never zeros.
+  const hostUsage = createHostUsageReader(readHostService(ctx, 'sessions'), readHostService(ctx, 'sessionProjections'))
+  const auditor = createInjectionAuditor({
+    audit,
+    ...(deps.now === undefined ? {} : { now: deps.now }),
+    hostUsage,
+  })
+  const recallAuditor = createRecallAuditor(deps.now === undefined ? { audit } : { audit, now: deps.now })
+  const recordRecall = (event: RecallEvent): void => {
+    try {
+      recallAuditor.record(event)
+    } catch (error) {
+      // The answer is already correct; a row that failed to write may not take
+      // it away (AC⑧, AD-18 local degradation).
+      logger.warn(OPERATIONAL_LOG_CODES.auditWriteFailed, { reason: describeError(error) })
+    }
+  }
+  // A recall the store refused wrote no row: it has no hits, and a zero-hit row
+  // would be indistinguishable from a query that legitimately found nothing.
+  // The refusal is still worth a line, because 'recall is silently failing' is
+  // exactly the kind of thing an operator cannot see from the audit trail.
+  const recordRecallFailure = (event: RecallFailureEvent): void => {
+    logger.warn(OPERATIONAL_LOG_CODES.auditRowSkipped, {
+      kind: 'recall',
+      reason: event.code,
+      elapsed_ms: event.elapsedMs,
+    })
+  }
   const composer = new PromptComposer({
     personaText: deps.personaText ?? loadPersonaText(deps.personaPath),
     personaMaxChars: config.inject.personaMaxChars,
@@ -274,6 +352,35 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
     topK: config.recall.topK,
     recallItemBudgetTokens: RECALL_ITEM_BUDGET_TOKENS,
     ...(deps.readState === undefined ? {} : { readState: deps.readState }),
+    //
+    // The row is written here and nowhere else: the host calls the identity
+    // provider once per assembly, and that call is the only moment a
+    // `session_id` exists to put in the row (AD-20).
+    //
+    onInject: (plan, context) => {
+      try {
+        const row = auditor.record({ sessionId: context?.session?.id, plan })
+        //
+        // Two different nothings, and only one of them is news.
+        //
+        // An absent context means nobody assembled: the host is reading the
+        // registration's text (registration, inspection, a fixture), and
+        // `dsh-system-prompt` never does that with a provider it then sends --
+        // `assemble(context = {})` always passes an object. Logging here would
+        // put a line in `omw.log` for a prompt that was never going to exist,
+        // and the one-line startup invariant (Story 1.3) is about what the
+        // plugin actually did.
+        //
+        // An object without a session is a real assembly outside any session --
+        // a preview, a title pass. No row is written (a fabricated session_id
+        // would be worse than a hole), but the hole is a fact worth a line.
+        if (row === undefined && context !== undefined) {
+          logger.warn(OPERATIONAL_LOG_CODES.auditRowSkipped, { kind: 'injection', reason: 'no-session' })
+        }
+      } catch (error) {
+        logger.warn(OPERATIONAL_LOG_CODES.auditWriteFailed, { reason: describeError(error) })
+      }
+    },
   })
 
   let db: Database | undefined
@@ -285,8 +392,32 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
   let version: VersionReader | undefined
   let recall: RecallReader | undefined
   let injection: InjectionPlan | undefined
+  let retention: Retention | undefined
   let disposed = false
   let disposing: Promise<void> | undefined
+
+  //
+  // AD-15 lets exactly one module unlink, and it runs here once per mount: the
+  // day boundary belongs to the boot clock, so a long-running process never
+  // rotates mid-session and two mounts never disagree about which file is old.
+  // A refusal here is local — an old file surviving is not a reason to lose the
+  // plugin (AD-18).
+  //
+  try {
+    retention = createRetention(deps.now === undefined ? { dataDir: paths.dataDir } : { dataDir: paths.dataDir, now: deps.now })
+    const rotated = retention.rotate()
+    if (rotated.removed.length > 0) {
+      logger.info(OPERATIONAL_LOG_CODES.auditRetentionSwept, { removed: rotated.removed.length, scanned: rotated.scanned })
+    }
+    // Files past the window that would not go. The sweep survived them, so the
+    // window is now partially unrotated and somebody has to know.
+    if (rotated.failed.length > 0) {
+      logger.warn(OPERATIONAL_LOG_CODES.auditWriteFailed, { reason: 'retention-blocked', failed: rotated.failed.length })
+    }
+  } catch (error) {
+    retention = undefined
+    logger.warn(OPERATIONAL_LOG_CODES.auditWriteFailed, { reason: describeError(error) })
+  }
 
   const registerSection = (): void => {
     let outcome: ReturnType<PromptComposer['register']>
@@ -353,6 +484,18 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
       if (db !== undefined) {
         if (!closedByPort) closeDatabase(db)
         db = undefined
+      }
+      //
+      // Rows are queued rather than written when they are produced, so the last
+      // assembly of a session is still in memory at this point. Draining here is
+      // the only await in the plugin that can wait for the disk; a failure is
+      // local and already reported by the sink, and losing an audit row is never
+      // a reason to leave the handle open.
+      //
+      try {
+        await audit.flush()
+      } catch (error) {
+        logger.warn(OPERATIONAL_LOG_CODES.auditWriteFailed, { reason: describeError(error) })
       }
     })()
     return disposing
@@ -452,10 +595,10 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
   // and the only thing lost is the write side (AD-18 keeps the halves
   // independent).
   //
-  // The audit object is built before the bootstrap because the bootstrap itself
-  // is a write worth recording: installing the seed registry is the one write
-  // that happens without a tool call behind it.
-  const audit = createWriteAudit(paths.dataDir, deps.now)
+  // The bootstrap itself is a write worth recording — installing the seed
+  // registry is the one write with no tool call behind it — so it goes through
+  // the same facade and the same queue the rest of the rows use.
+  //
   const auditWrite = (row: { outcome: 'bootstrap' | 'committed' | 'rejected' | 'downgraded'; code: string; mem_keys: readonly string[]; elapsed_ms: number }): void => {
     try {
       audit.append({ kind: 'write', ts: new Date(nowMs()).toISOString(), ...row })
@@ -527,6 +670,16 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
       db,
       topK: config.recall.topK,
       candidatePool: config.recall.candidatePool,
+      //
+      // The row is written from inside the reader, right after the answer is
+      // computed: that is the only place the hits, the timing and the degraded
+      // reasons are all in hand at once, and the refusal paths never reach it
+      // (AC②: a refused argument is not a recall).
+      //
+      onRecall: (event: RecallEvent): void => { recordRecall(event) },
+      // The other half of the same promise: a call the store refused writes no
+      // row, but it must not vanish either.
+      onRecallFailure: (event: RecallFailureEvent): void => { recordRecallFailure(event) },
     })
   }
   registerTools()
@@ -577,6 +730,8 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
       ...(version === undefined ? {} : { version }),
       ...(recall === undefined ? {} : { recall }),
       ...(injection === undefined ? {} : { injection }),
+      ...(retention === undefined ? {} : { retention }),
+      audit,
       dispose,
     }
   }
@@ -618,6 +773,27 @@ function resolveToolRegistry(ctx: RuntimeContext): ToolRegistryLike | undefined 
   try {
     return ctx.tools
   } catch {
+    return undefined
+  }
+}
+
+/**
+ * Read one optional host service by name, without triggering the injection guard.
+ *
+ * Every host surface this plugin touches is optional: a harness without
+ * `sessions` still injects the identity, and one without `sessionProjections`
+ * still writes a row — with `null` cache columns (AC①, AUD_HOST_ABSENT).
+ * @param ctx - the context slice the plugin holds.
+ * @param name - the Cordis service name to resolve.
+ * @returns the service, or `undefined` when this harness does not expose it.
+ */
+function readHostService(ctx: RuntimeContext, name: string): unknown {
+  if (typeof ctx.get !== 'function') return undefined
+  try {
+    return ctx.get(name)
+  } catch {
+    // A real Cordis context throws for a service it did not inject; resolving an
+    // optional surface must never take the whole plugin down.
     return undefined
   }
 }

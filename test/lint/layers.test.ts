@@ -293,6 +293,129 @@ describe('lint: layer dependencies', () => {
     }
   })
 
+  it('rejects a filesystem delete outside the exempt modules', () => {
+    // `unlink` and `unlinkSync` are different identifiers, so the engine gate
+    // above cannot see a file disappearing. A stored memory must never be
+    // removed, and neither may the file it lives in (AD-5).
+    mkdirSync(join(fixture, 'src', 'core'), { recursive: true })
+    const names = ['unlinkSync', 'rmSync', 'rmdirSync', 'rm', 'rmdir'] as const
+    for (const name of names) {
+      const file = join(fixture, 'src', 'core', 'cleanup.ts')
+      writeFileSync(file, `export function clean(path: string) {\n  return ${name}(path)\n}\n`)
+      try {
+        const result = check(fixture)
+        expect(result.status, name).toBe(1)
+        expect(result.output, name).toContain('fs-delete-owner')
+      } finally {
+        rmSync(file, { force: true })
+      }
+    }
+  })
+
+  it('leaves a delete on a local collection alone', () => {
+    // `Map` and `Set` spell their removal `delete` too, and a token scan sees
+    // the same two identifiers. The receiver is what tells them apart: a name
+    // bound to `new Map()` in this file is not a stored memory.
+    mkdirSync(join(fixture, 'src', 'core'), { recursive: true })
+    const file = join(fixture, 'src', 'core', 'seen.ts')
+    writeFileSync(file, [
+      'export function once(keys: string[]) {',
+      '  const seen = new Map<string, number>()',
+      '  const once = new Set<string>()',
+      '  seen.delete(keys[0] ?? \'\')',
+      '  once.delete(keys[1] ?? \'\')',
+      '  return seen.size + once.size',
+      '}',
+      '',
+    ].join('\n'))
+    try {
+      const result = check(fixture)
+      expect(result.output).not.toContain('hard-delete-owner')
+      expect(result.status).toBe(0)
+    } finally {
+      rmSync(file, { force: true })
+    }
+  })
+
+  it('recognises a collection held in a field or a parameter default', () => {
+    // `const seen = new Set()` is only one of the shapes a collection takes.
+    // A class field puts a type annotation between the name and the value
+    // (`seen: WeakSet<object> = new WeakSet()`, which is how logger.ts writes
+    // it), and a parameter default puts the name inside an argument list. Both
+    // are collections, and reporting their `delete` as a hard delete was a
+    // false accusation that would push a module towards not using a Set at all.
+    mkdirSync(join(fixture, 'src', 'core'), { recursive: true })
+    const file = join(fixture, 'src', 'core', 'fields.ts')
+    writeFileSync(file, [
+      'class Holder {',
+      '  private seen: WeakSet<object> = new WeakSet()',
+      '  private counts: Map<string, number> = new Map()',
+      '  drop(key: object) {',
+      '    this.counts.delete(String(key))',
+      '    return this.seen.delete(key)',
+      '  }',
+      '}',
+      'function withDefault(cache: Map<string, number> = new Map()) {',
+      '  return cache.delete(\'x\')',
+      '}',
+      'export const ready = new Holder()',
+      'export const clean = withDefault',
+      '',
+    ].join('\n'))
+    try {
+      const result = check(fixture)
+      expect(result.output).not.toContain('hard-delete-owner')
+      expect(result.status).toBe(0)
+    } finally {
+      rmSync(file, { force: true })
+    }
+  })
+
+  it('still reports an engine delete next to a field-held collection', () => {
+    mkdirSync(join(fixture, 'src', 'core'), { recursive: true })
+    const file = join(fixture, 'src', 'core', 'fields-mixed.ts')
+    writeFileSync(file, [
+      'class Holder {',
+      '  private seen: WeakSet<object> = new WeakSet()',
+      '  drop(db: any, key: object) {',
+      '    this.seen.delete(key)',
+      '    return db.delete(1)',
+      '  }',
+      '}',
+      'export const ready = new Holder()',
+      '',
+    ].join('\n'))
+    try {
+      const result = check(fixture)
+      expect(result.status).toBe(1)
+      expect(result.output).toContain('hard-delete-owner')
+      expect(result.output).toContain(':5')
+    } finally {
+      rmSync(file, { force: true })
+    }
+  })
+
+  it('still reports an engine delete in a file that also holds a collection', () => {
+    mkdirSync(join(fixture, 'src', 'core'), { recursive: true })
+    const file = join(fixture, 'src', 'core', 'mixed.ts')
+    writeFileSync(file, [
+      'export function both(db: any) {',
+      '  const seen = new Set<string>()',
+      '  seen.delete(\'k\')',
+      '  return db.delete(1)',
+      '}',
+      '',
+    ].join('\n'))
+    try {
+      const result = check(fixture)
+      expect(result.status).toBe(1)
+      expect(result.output).toContain('hard-delete-owner')
+      expect(result.output).toContain(':4')
+    } finally {
+      rmSync(file, { force: true })
+    }
+  })
+
   it('requires the AD-15 header on an exempt module', () => {
     // A root of its own, so the three states can be compared on the whole exit
     // code and not just on the presence of one rule in the output.

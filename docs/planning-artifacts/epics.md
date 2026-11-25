@@ -582,7 +582,7 @@ So that「为什么这一轮它没记得」这种问题能用数据回答，而�
 
 **Given** 一次召回结束
 **When** 检查审计
-**Then** 追加一行，含命中 `{mem_key}` 集合、耗时与 `degraded_reason`（`recall_timeout` / `rerank_unavailable` / `rerank_circuit_open` / `vec_unavailable` / `embed_circuit_open` / `budget_truncated` 六值封闭）（FR-7、AD-20）
+**Then** 追加一行 `{ts, session_id, query_hash, top_k, hits[], elapsed_ms, degraded, degraded_reason[]}`，含命中 `{mem_key}` 集合、耗时与 `degraded_reason`（`recall_timeout` / `rerank_unavailable` / `rerank_circuit_open` / `vec_unavailable` / `embed_circuit_open` / `budget_truncated` 六值封闭）（FR-7、AD-20）
 
 **Given** 审计文件
 **When** 检查

@@ -308,9 +308,11 @@ const DESCRIPTIONS: Record<PlaceholderToolName, string> = {
  * could not (AC②).
  * @param reader - the recall seam, absent when no handle is open.
  * @param args - the raw argument object the host supplied.
+ * @param exec - the host's execution context; its agent id is the session the
+ *   audit row attributes the recall to. Absent in a host that passes none.
  * @returns the reader's answer, or a refusal naming the missing store.
  */
-function recallTool(reader: RecallReader | undefined, args: unknown): unknown {
+function recallTool(reader: RecallReader | undefined, args: unknown, exec?: unknown): unknown {
   if (reader === undefined) {
     return {
       ok: false,
@@ -332,7 +334,7 @@ function recallTool(reader: RecallReader | undefined, args: unknown): unknown {
     }
   }
   const record = args as { query?: unknown; topK?: unknown }
-  const answer = reader.recall(record.query, record.topK)
+  const answer = reader.recall(record.query, record.topK, exec === undefined ? undefined : sessionIdOf(exec))
   // Every field is named rather than spread: `...answer` also carried `hits`,
   // which OUTPUT_SCHEMA does not declare, and `additionalProperties: false`
   // makes that a contract the host could enforce against us. The flattened
@@ -375,7 +377,7 @@ export function memoryTools(writer?: RememberWriter, recall?: RecallReader): Too
       ],
     },
     execute: async (args: unknown, exec?: unknown): Promise<unknown> => {
-      if (name === 'recall') return recallTool(recall, args)
+      if (name === 'recall') return recallTool(recall, args, exec)
       if (name !== 'remember') return notImplemented(name)
       if (writer === undefined) return writeUnavailable(name)
       const read = readPatchArgument(args)

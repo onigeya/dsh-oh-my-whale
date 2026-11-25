@@ -52,12 +52,32 @@ export const PERSONA_SECTION_ORDER = -1000
 /** Where the state tail sorts among host runtime contexts. */
 export const PERSONA_STATE_CONTEXT_ORDER = 130
 
-/** The two host calls this module is allowed to make. */
+/**
+ * The slice of the host's `AssembleContext` this composer reads (AD-20).
+ *
+ * Declared structurally rather than imported: the plugin never depends on a host
+ * package (AD-1), and the only fact it needs is which session is being assembled.
+ * Everything else the host passes along is allowed and ignored.
+ */
+export interface PromptAssemblyContext {
+  /** The session this assembly is for, when the host has one. */
+  readonly session?: { readonly id: string }
+}
+
+/**
+ * The two host calls this module is allowed to make.
+ *
+ * `text` may be a provider: the host calls it once per assembly and hands over
+ * its own `AssembleContext`, which is the only moment a section can learn which
+ * session it is being assembled for. The identity section is registered that way
+ * because an audit row needs a `session_id` (Story 2.6); a plain string stays
+ * accepted for the state tail, whose text the composer already owns.
+ */
 export interface SystemPromptLike {
   /** Register a system section; returns the disposer. */
-  section(section: { name: string; order: number; text: string | (() => string) }): () => void
+  section(section: { name: string; order: number; text: string | ((context?: PromptAssemblyContext) => string) }): () => void
   /** Register a runtime-context contribution; returns the disposer. */
-  context(context: { name: string; order: number; text: string | (() => string) }): () => void
+  context(context: { name: string; order: number; text: string | ((context?: PromptAssemblyContext) => string) }): () => void
 }
 
 /** The mutable tail's inputs. Every field is optional: absent means "say nothing". */
@@ -233,6 +253,15 @@ export interface PromptComposerOptions {
    * broken store behind an empty prompt.
    */
   readonly onReaderFailure?: (tier: string, error: unknown) => void
+  /**
+   * Called once per assembly of the identity section, with the plan behind it.
+   *
+   * The host invokes the section provider on every assembly; that is the only
+   * place a `session_id` exists, so it is where the audit row is produced (AD-20).
+   * A throw here is caught and ignored: a bookkeeping failure must never cost the
+   * prompt its identity (FR-15).
+   */
+  readonly onInject?: (plan: InjectionPlan, context: PromptAssemblyContext | undefined) => void
 }
 
 /**
@@ -380,12 +409,88 @@ export interface RegisterOutcome {
 export class PromptComposer {
   readonly #options: PromptComposerOptions
   #personaRegistration: { hash: string; dispose: () => void } | undefined
-  #tailRegistration: { text: string; dispose: () => void } | undefined
+  #tailRegistration: { text: string; plan: TailPlan; dispose: () => void } | undefined
   readonly #onReaderFailure: ((tier: string, error: unknown) => void) | undefined
+  readonly #onInject: ((plan: InjectionPlan, context: PromptAssemblyContext | undefined) => void) | undefined
+  /**
+   * The plan the prompt actually carries, kept current by `register`.
+   *
+   * The identity section is a provider, so the host may render it at any moment,
+   * including while `register()` is still running. Whatever the provider reports
+   * has to be the prompt that exists, not the plan this iteration composed: a
+   * refused tail registration leaves the previous tail in place, and a row that
+   * described the composed tail would name text the model never saw (AD-20).
+   */
+  #livePlan: InjectionPlan | undefined
+
+  //
+  // The plan a registration call is currently offering the host. The provider
+  // reads it while `systemPrompt.section()` runs, because a host may render the
+  // section eagerly before that call returns; it is cleared once the attempt
+  // settles, and only a successful one is promoted to `#livePlan`. Keeping the
+  // two apart is what stops a refused replacement from changing the text the
+  // host is still holding (AD-20: the row describes the prompt that was sent).
+  //
+  #offeredPlan: InjectionPlan | undefined
+
+  /**
+   * The tail this prompt actually carries, expressed as a tail plan.
+   *
+   * The tail the host renders is the *registered* string, which is not always the
+   * tail this `compose()` produced: a host that refused the new context keeps
+   * serving the old one. So the answer is built from the registration, and the
+   * plan recorded alongside it, never from `plan.tail` alone.
+   *
+   * The tail plan travels with the text for one reason: `tier` says whether a tail
+   * is present and `items` says which segments it carries, so a tail plan with
+   * text but no segments would publish `identity+state` over an `items` list that
+   * names no state. That combination cannot arise here because the plan and the
+   * text are recorded together.
+   *
+   * @param plan - the plan this `register()` call composed.
+   * @returns the tail plan that matches what is registered.
+   */
+  /**
+   * Put the tail registration back the way it was before the current call.
+   * @param systemPrompt - the host seam.
+   * @param before - the registration this call replaced, if any.
+   * @returns whether the prompt is back to that state.
+   */
+  #restoreTail(
+    systemPrompt: SystemPromptLike,
+    before: { text: string; plan: TailPlan; dispose: () => void } | undefined,
+  ): boolean {
+    this.#tailRegistration?.dispose()
+    this.#tailRegistration = undefined
+    if (before === undefined) return true
+    try {
+      const dispose = systemPrompt.context({
+        name: PERSONA_STATE_CONTEXT_NAME,
+        order: PERSONA_STATE_CONTEXT_ORDER,
+        text: before.text,
+      })
+      this.#tailRegistration = { text: before.text, plan: before.plan, dispose }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  #registeredTail(plan: InjectionPlan): TailPlan {
+    const registered = this.#tailRegistration
+    if (registered === undefined) {
+      return plan.tail.text === undefined
+        ? plan.tail
+        : { ...plan.tail, text: undefined, kept: [], chars: 0, tokens: 0 }
+    }
+    if (plan.tail.text === registered.text) return plan.tail
+    return registered.plan
+  }
 
   constructor(options: PromptComposerOptions) {
     this.#options = options
     this.#onReaderFailure = options.onReaderFailure
+    this.#onInject = options.onInject
   }
 
   /**
@@ -513,25 +618,14 @@ export class PromptComposer {
     const plan = this.compose()
     const { persona } = plan
     const failed: HostChannel[] = []
-    let personaRegistered = false
-    if (this.#personaRegistration?.hash !== persona.hash) {
-      // The old registration is only released once the new call succeeded: a host
-      // that refuses the replacement must not cost the prompt the section it has.
-      const previous = this.#personaRegistration
-      try {
-        const dispose = systemPrompt.section({
-          name: PERSONA_SECTION_NAME,
-          order: PERSONA_SECTION_ORDER,
-          text: persona.text,
-        })
-        previous?.dispose()
-        this.#personaRegistration = { hash: persona.hash, dispose }
-        personaRegistered = true
-      } catch {
-        failed.push('section')
-      }
-    }
+    //
+    // The tail is registered before the identity section on purpose: the section
+    // is a provider, and a host that renders registrations eagerly calls it
+    // before this method returns. Registering the tail first means that very
+    // first render already reports the prompt it is being asked to produce.
+    //
     const tail = plan.tail.text
+    const tailBefore = this.#tailRegistration
     let tailRegistered = false
     if (tail !== undefined && this.#tailRegistration?.text !== tail) {
       const previous = this.#tailRegistration
@@ -542,7 +636,7 @@ export class PromptComposer {
           text: tail,
         })
         previous?.dispose()
-        this.#tailRegistration = { text: tail, dispose }
+        this.#tailRegistration = { text: tail, plan: plan.tail, dispose }
         tailRegistered = true
       } catch {
         failed.push('context')
@@ -553,6 +647,64 @@ export class PromptComposer {
       this.#tailRegistration.dispose()
       this.#tailRegistration = undefined
     }
+    const nextPlan = { ...plan, tail: this.#registeredTail(plan) }
+    const tailsDiffer = this.#tailRegistration !== tailBefore
+    let personaRegistered = false
+    let personaRefused = false
+    if (this.#personaRegistration?.hash !== persona.hash) {
+      // The old registration is only released once the new call succeeded: a host
+      // that refuses the replacement must not cost the prompt the section it has.
+      const previous = this.#personaRegistration
+      this.#offeredPlan = nextPlan
+      try {
+        const dispose = systemPrompt.section({
+          name: PERSONA_SECTION_NAME,
+          order: PERSONA_SECTION_ORDER,
+          //
+          // A provider, not a string: the host calls it once per assembly and
+          // hands over the only `session_id` this plugin ever sees. The plan it
+          // reports is the plan whose text it returns, so an audit row can never
+          // describe a prompt that was not sent (AD-20).
+          //
+          // It replays the registered plan instead of composing again: composing
+          // here would read the state store on the injection path, which this
+          // story forbids, and would report a tail the host may never receive.
+          //
+          text: (context?: PromptAssemblyContext) => {
+            const assembled = this.#offeredPlan ?? this.#livePlan ?? plan
+            try {
+              this.#onInject?.(assembled, context)
+            } catch {
+              // Bookkeeping failure must never cost the prompt its identity.
+              //
+              // Deliberately silent as well as deliberately swallowing: the
+              // composer is given one callback and has no logger, so the
+              // mounting side is where the warning belongs. `runtime` wraps
+              // this callback and logs `OMW_AUDIT_WRITE_FAILED`; this catch is
+              // the guard for the case where it does not, which is why the two
+              // layers are not redundant.
+            }
+            return assembled.persona.text
+          },
+        })
+        previous?.dispose()
+        this.#personaRegistration = { hash: persona.hash, dispose }
+        personaRegistered = true
+      } catch {
+        personaRefused = true
+        failed.push('section')
+        // The rejected section and the tail accepted above would otherwise
+        // disagree: the host would assemble the new tail around the old identity
+        // and the row would describe a prompt nobody was sent. Undo the tail too,
+        // so a refused registration leaves the prompt exactly as it was.
+        if (tailsDiffer) {
+          if (!this.#restoreTail(systemPrompt, tailBefore)) failed.push('context')
+        }
+      } finally {
+        this.#offeredPlan = undefined
+      }
+    }
+    if (!personaRefused) this.#livePlan = nextPlan
     return {
       plan,
       persona,
@@ -562,7 +714,6 @@ export class PromptComposer {
       dispose: () => this.dispose(),
     }
   }
-
   /** Whether an identity registration is currently live. */
   get hasSection(): boolean {
     return this.#personaRegistration !== undefined

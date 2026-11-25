@@ -145,4 +145,4 @@ graph LR
 - 错误 `{code, message, detail?}`；运行时错误码 8 个（`OMW_*`），工具错误码 5 个（`E_*`），两套不混用。
 - 导出 = 纯文本 + JSONL，不含节点 id，默认不含已脱敏引文。
 - kind 与 edge label 用 snake_case；文件名 kebab-case；`mem_key` 格式见 §2；CAP-n 与 AD-n 编号永不复用、永不重排。
-- 审计形如 `audit-YYYYMMDD.jsonl`（按天切分、保留 30 天、只落文件）：注入行 `{ts, session_id, tier, chars, tokens, items[], truncated, prefix_unchanged, host_cache_read, host_cache_write, host_uncached}`；召回行 `{ts, query_hash, topK, hits[], elapsed_ms, degraded, degraded_reason[]}`，`degraded_reason` 取值封闭为 `recall_timeout | rerank_unavailable | rerank_circuit_open | vec_unavailable | embed_circuit_open | budget_truncated`。
+- 审计形如 `audit-YYYYMMDD.jsonl`（按天切分、保留 30 天、只落文件）：注入行 `{ts, session_id, tier, chars, tokens, items[], truncated, prefix_unchanged, host_cache_read, host_cache_write, host_cache_uncached}`（后三项取自宿主的 token 计量投影的会话内增量；拿不到就写 null，不写 0——0 是「这一轮确实没命中缓存」，未知不是）；召回行 `{ts, session_id, query_hash, top_k, hits[], elapsed_ms, degraded, degraded_reason[]}`（`session_id` 是召回唯一能归因的维度：宿主没给执行上下文时写空串，不编造 id），`degraded_reason` 取值封闭为 `recall_timeout | rerank_unavailable | rerank_circuit_open | vec_unavailable | embed_circuit_open | budget_truncated`。

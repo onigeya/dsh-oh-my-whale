@@ -34,8 +34,8 @@ function stubReader(answer: RecallAnswer): RecallReader & { readonly calls: stri
   const calls: string[] = []
   return {
     calls,
-    recall: (query: unknown, topK?: unknown) => {
-      calls.push(`${JSON.stringify(query)}:${JSON.stringify(topK)}`)
+    recall: (query: unknown, topK?: unknown, sessionId?: string) => {
+      calls.push(`${JSON.stringify(query)}:${JSON.stringify(topK)}:${sessionId ?? '-'}`)
       return answer
     },
     dispose: () => {},
@@ -183,8 +183,17 @@ describe('the remember tool', () => {
 
     const answer = await recall.execute({ query: 'whale', topK: 9 }, {}) as { ok: boolean; tool: string; mem_keys: string[] }
 
-    expect(reader.calls).toEqual(['"whale":9'])
+    expect(reader.calls).toEqual(['"whale":9:-'])
     expect(answer).toMatchObject({ ok: true, tool: 'recall', mem_keys: ['assertion:Elliott:likes:coffee'] })
+  })
+
+  it('tells the reader which session asked, so the audit row can name it', async () => {
+    const reader = stubReader(RECALL_ANSWER)
+    const recall = byName('recall', undefined, reader)
+
+    await recall.execute({ query: 'whale' }, { agent: { id: 'session-alpha' } })
+
+    expect(reader.calls).toEqual(['"whale":undefined:session-alpha'])
   })
 
   it('passes a missing query through as missing rather than filling it in', async () => {
@@ -193,7 +202,7 @@ describe('the remember tool', () => {
 
     await recall.execute({}, {})
 
-    expect(reader.calls).toEqual(['undefined:undefined'])
+    expect(reader.calls).toEqual(['undefined:undefined:-'])
   })
 
   it('flattens the hits into mem_keys and items for the transcript', async () => {

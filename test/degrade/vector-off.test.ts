@@ -201,8 +201,9 @@ describe('vector-off: recall still returns text hits', () => {
     const row = {
       ts: new Date().toISOString(),
       kind: 'recall' as const,
+      session_id: 'session-1',
       query_hash: 'abc',
-      topK: 5,
+      top_k: 5,
       hits: ['flag:contract_version'],
       elapsed_ms: 3,
       degraded: true,

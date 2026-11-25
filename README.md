@@ -173,7 +173,7 @@ recall(query: string, topK?: number) -> {
 
 ### 组装结果长什么样
 
-每次挂载组装一次，结果留在 `runtime.injection`（`InjectionPlan`），审计行（Story 2.6）报的就是这份数字，不重算：
+`runtime.injection` 是**挂载时**组装的那一份快照，字段如下。宿主每次装配时 provider 重放的就是这份计划（不重新 `compose()`），审计行也从它取数，所以同一次挂载里多次装配读到的是同一份。等 Epic 7 才有逐轮的注入计划，那时 `runtime.injection` 才谈得上「最新的一份」。
 
 | 字段 | 含义 |
 | --- | --- |
@@ -186,7 +186,43 @@ recall(query: string, topK?: number) -> {
 | `truncated` | 等价于 `truncatedItems` 非空；两个字段冗余是刻意的，一个给读日志的人，一个给写日志的代码 |
 | `prefixUnchanged` | 这次没有重注册身份段（文本哈希与上次相同） |
 
+反过来说，注入**没有**逐轮重组：`register()` 组一次计划，provider 每次装配时重放的就是这一份 `#livePlan`。所以 `runtime.injection`、provider 返回的文本、审计行里的 `prefix_unchanged` 讲的是同一次组装，不会互相打架。
+
 宿主拒绝注册时不会把异常抛给调用方：`register()` 返回 `failed`（哪条通道失败），并且**旧注册只在新调用成功后才释放**——拒绝替换不该让提示词丢掉已有的身份段。
+
+## 审计：三种行，一个文件
+
+`audit-YYYYMMDD.jsonl` 一行一个 JSON，按天切分，只落文件不落库（AD-20）。三种行各有自己的计量：
+
+| kind | 何时写 | 计量 | 额外信号 |
+| --- | --- | --- | --- |
+| `injection` | 宿主每装配一次提示词 | `tokens` | `tier`、`truncated`、`prefix_unchanged`、宿主缓存三项 |
+| `recall` | 每次**成功**的召回 | `elapsed_ms` | `session_id`、`hits`、`degraded` / `degraded_reason` |
+| `write` | 每次写事务结算 | `elapsed_ms` | `outcome`（`committed` / `rejected` / `downgraded` / `bootstrap`） |
+
+**注入行的 `session_id` 从装配上下文拿。** 身份段注册时给的是 provider 而不是一段固定字符串：宿主每次装配会带着 `AssembleContext` 调一次，`context.session.id` 就是这次注入的会话。这是唯一能拿到会话号的位置，也是身份段能变成审计生产者的原因。没有会话号时不编一个——那一次装配就不写行。
+
+**缓存三项记的是会话内增量，不是累计。** `host_cache_read` / `host_cache_write` / `host_cache_uncached` 取自宿主 token 计量投影的 `cacheReadTokens` / `cacheWriteTokens` / `uncachedInputTokens`，每行报的是与上一次装配的差。**拿不到就写 `null`，绝不写 0**：0 是「测到零命中」，`null` 是「这次没测到」，把后者记成前者会让命中率看起来比实际差。宿主重启导致某个桶倒退时也报 `null`，同时把基线换成新读数。
+
+**召回行也带 `session_id`。** 召回是会话读记忆的唯一通道，没有会话号，报告就算不出「这个会话命中了几次」。它从工具调用的执行上下文来（`exec.agent.id`）；宿主没给执行上下文时写空串，不编一个 `unknown`——报表把有归属的和没归属的分开数（`sessions` / `unattributed`），不去猜。
+
+**`prefix_unchanged` 比的是会话内相邻两次装配**，不是 `compose()` 那个与「上次注册」比的自有字段：同一个会话第二次装配、文本摘要相同才算 `true`；换会话就是 `false`。两个字段同名不同义，审计用的是后者。
+
+**写不阻塞注入路径。** `appendFile` 走串行队列，`append()` 只入队就返回；真正等磁盘的地方只有一处：插件 dispose 时的 `audit.flush()`。队列里的失败不会在 `append()` 抛出——它记下来，等 `flush()` 时浮出第一行。丢一行审计不该让这次注入失败。
+
+**轮转只在挂载时跑一遍**：`ops/retention.ts` 保留含今天在内的 30 个日历日文件，其余删除。按日历日算而不是 `now - 30*86400000`，否则夏令时切换那天会算错文件。删除只经这个模块，静态门 `fs-delete-owner` 与 `hard-delete-owner` 会拦住别处的 `unlinkSync` / `delete`。
+
+```bash
+node scripts/audit-report.mjs --since 24h                 # 三种行各自的 p50/p95 与降级计数
+node scripts/audit-report.mjs --since 7d --dir <dataDir> --json
+node scripts/audit-report.mjs --since 7d --now 2026-11-24T12:00:00Z   # 复现那一刻的窗口
+```
+
+`--now` 钉住窗口的**两端**：上界也要，否则复现历史事件的报表每天都会继续吸收新行，同一个窗口今天看和明天看不是一个数。带时间不带时区的串会被拒（按本机时区解析会让同一条命令在别的机器上覆盖别的窗口）；目录不存在直接非零退出，而不是打一份空报告——「从没审计过」和「路径配错了」不该长得一样。
+
+报表用 nearest-rank 分位数：报出来的每个数都是真实观测值，12 行的 p95 是第 12 行，不是两行平均。窗口里没数据时打印 `—` 而不是 0。半写入的最后一行、未闭合的 JSON、非本协议的 kind 都会被计数并跳过——追加文件的末尾本来就可能是不完整的，一处坏行不该让整份报告作废。
+
+审计行里没有任何节点 id（AD-3 / NFR-6）：召回行记业务键，写行记业务键，注入行只记单位名 `identity` 与 `state:<段名>`。
 
 ## 降级：只有三档，没有中间态
 
@@ -200,6 +236,8 @@ recall(query: string, topK?: number) -> {
 
 运行时降级错误码封闭八个：`OMW_DB_OPEN`、`OMW_SNAPSHOT_VERIFY`、`OMW_DIM_MISMATCH`、`OMW_EMBED_AUTH`、`OMW_EMBED_QUOTA`、`OMW_EMBED_TIMEOUT`、`OMW_EXTRACT_FAIL`、`OMW_DREAM_BUDGET`。新增或改名都算破坏兼容。
 
+审计自己还有三个运营码，它们不是降级码，不进上面那个封闭集合：`OMW_AUDIT_WRITE_FAILED`（审计行没写下去——盘不可用，或轮转被挡）、`OMW_AUDIT_ROW_SKIPPED`（这一行本该有却没写：宿主没给会话号，或召回被拒）、`OMW_AUDIT_RETENTION_SWEPT`（挂载时轮转删掉了旧文件，附删除数）。前两个写 `warn`，`OMW_AUDIT_RETENTION_SWEPT` 写 `info`（删掉旧文件是例行公事，不是故障）；三者都不改注入、召回、写入的结果——审计失败不该让记忆失败。
+
 「坏掉的是记忆，不是人设」是硬约束：库不可用时 `harness:identity` 的文本与健康库**逐字节相同**（`test/degrade/no-op.test.ts` 断言）。
 
 ## 数据目录
@@ -211,7 +249,7 @@ recall(query: string, topK?: number) -> {
   oh-my-whale.tdb          # 单文件库
   omw.log                  # 一行一事件 {ts, level, code, detail}
   snapshots/               # 每日快照，保留最近 7 份
-  audit-YYYYMMDD.jsonl     # 审计（本 epic 只建通道，生产路径不写入）
+  audit-YYYYMMDD.jsonl     # 审计：注入 / 召回 / 写事务三种行，按天切分，保留 30 天
 ```
 
 ## 开发
@@ -227,12 +265,12 @@ OMW_E2E=1 pnpm test -- test/e2e   # 真实 dsh 会话（临时 DSH_HOME，不动
 
 `pnpm lint` 里的层依赖检查不是约定：`scripts/check-layers.mjs` 扫描 import 说明符与禁用调用，故意写一条 `src/core/ → src/seams/` 的 import 会让它非零退出（`test/lint/layers.test.ts` 在临时 fixture 上证明了这一点）。
 
-物理删除有独立的两道门，扫的是**整个仓库**（`src/`、`test/`、`scripts/` 与根目录一层文件），不只是源码树：
+物理删除有独立的两道门：节点删除那两道扫的是**整个仓库**（`src/`、`test/`、`scripts/` 与根目录一层文件），文件删除那道只管 `src/`——清临时 fixture 是测试的正当操作，全仓禁令只会把每个测试的清理逻辑赶去别处：
 
 1. **函数名**：`delete(` / `deleteManyAtomic(` / `unlink(` / `unlinkLabel(` 按词法 token 判定「调用」，字符串与注释里提到这些名字不算。
 2. **事务 op 字面量**：`type: 'delete'` / `'unlink'` / `'unlinkLabel'`，覆盖裸字面量、`as const`、`+` 拼接、无插值模板四种写法。`type` 的取值读不出来时也报（`hard-delete-unreadable`）——静默跳过等于没查。
 
-豁免只对函数名那道生效，且只有 `src/ops/snapshots.ts`、`src/ops/retention.ts`、`src/ops/dispose.ts` 三个路径（后两个是预留，文件尚不存在）；这三个文件的首行必须写 `// AD-15 豁免：<用途>`，门会校验这一行而不是相信清单。op 字面量那道对豁免文件同样生效，删节点只能走退役，没有例外。
+豁免只对函数名那道生效，且只有 `src/ops/snapshots.ts`、`src/ops/retention.ts`、`src/ops/dispose.ts` 三个路径（`dispose.ts` 还是预留，文件尚不存在）；这三个文件的首行必须写 `// AD-15 豁免：<用途>`，门会校验这一行而不是相信清单。op 字面量那道对豁免文件同样生效，删节点只能走退役，没有例外。文件删除另有一道 `fs-delete-owner`：`unlinkSync` / `rmSync` / `rmdirSync` / `rm` / `rmdir` 与 `unlink` 是不同标识符，引擎那道门看不见文件消失，所以只允许出现在上面这几个豁免模块里（`Map`/`Set` 的 `.delete()` 不算）。
 
 ## 本版本的边界
 
@@ -243,6 +281,6 @@ OMW_E2E=1 pnpm test -- test/e2e   # 真实 dsh 会话（临时 DSH_HOME，不动
 - 写入的节点 `vec_state` 恒为 `pending`：向量补算还没做，在那之前新记忆不进向量召回，只走文本路径。
 - 谓词基数只能由用户通过 `/omw pred promote <名> --single|--multi --reason <理由>` 修改。
 - `/omw doctor` 只读：不建索引、不写种子、不写审计行。
-- 不做抽取、不做 dream 八步、不做 tier/rerank/预算裁剪、不做审计轮转、不做迁移与卸载。
+- 不做抽取、不做 dream 八步、不做 tier/rerank/预算裁剪、不做迁移与卸载。审计按天切分、保留含今天在内 30 个日历日，轮转在每次挂载时跑一遍（Story 2.6）。
 - 不做 GUI，不做治理命令，不做 eval 数据集。
 - 单进程纯插件：不监听端口、不起后台服务、不 spawn 子进程。

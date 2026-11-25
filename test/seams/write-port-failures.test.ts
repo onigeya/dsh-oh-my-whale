@@ -60,6 +60,8 @@ function harness(options: {
       ? { write: (): never => { throw new Error('disk full') } }
       : memory,
   })
+  // `audit.rows` is a snapshot of what has been appended so far, so the harness
+  // reads it on every access rather than capturing the empty array at build time.
   const warnings: string[] = []
   const db = options.db === undefined ? store.db : options.db(store.db)
   const port = createWritePort({
@@ -70,7 +72,7 @@ function harness(options: {
     contractVersion: 1,
     now: () => NOW,
   })
-  return { store, port, warnings, rows: audit.rows }
+  return { store, port, warnings, get rows(): readonly AuditRow[] { return audit.rows } }
 }
 
 describe('the audit sink is unwritable', () => {

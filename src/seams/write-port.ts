@@ -51,7 +51,7 @@ import {
   writeFailureError,
   writeQueueError,
 } from '../core/tool-errors.ts'
-import { createAudit, type Audit, type WriteOutcomeKind } from '../ops/audit.ts'
+import type { Audit, WriteOutcomeKind } from '../ops/audit.ts'
 import type { Database } from '../store/db.ts'
 import {
   createWriteGateway,
@@ -820,14 +820,4 @@ function describe(error: unknown): string {
   if (error instanceof Error) return error.message
   if (typeof error === 'string') return error
   return String(error)
-}
-
-/**
- * Build the audit facade a runtime hands to the write port.
- * @param dataDir - the directory holding `audit-YYYYMMDD.jsonl`.
- * @param now - clock override.
- * @returns the audit facade.
- */
-export function createWriteAudit(dataDir: string, now?: () => Date): Audit {
-  return createAudit(now === undefined ? { dataDir } : { dataDir, now })
 }
