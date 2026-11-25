@@ -239,4 +239,6 @@ updated: '2026-11-22'
 
 ### 取证方法
 
-深档取证：论文用 arXiv HTML 全文，代码先 shallow clone、clone 失败改用 codeload zip 解包，结论按 `文件:行号` 引用；SimuRA、WebATLAS、PGR 无公开仓库，其结论只有论文正文依据（来源表已标 medium）。原始材料落 `imports/raw`（论文）与 `imports/repos`（仓库），六份维度 digest 落 `digests/`，claims 账本在 `.memlog.md`。
+深档取证：论文用 arXiv HTML 全文，代码先 shallow clone、clone 失败改用 codeload zip 解包，结论按 `文件:行号` 引用；SimuRA、WebATLAS、PGR 无公开仓库，其结论只有论文正文依据（来源表已标 medium）。原始材料落 `imports/raw`（论文）与 `imports/repos`（仓库），维度 digest 落 `digests/`，claims 账本在 `.memlog.md`。
+>
+> **digest 只有五份，不是六份**（2026-11-25 订正）：`d1-simulator-r1-1.md`、`d2-budget-r1-1.md`、`d3-memory-loop-r1-1.md`、`d4-reliability-r1-1.md`、`d6-neighbors-r1-1.md`。**没有 d5**，因为维度五「落地映射——What-If 挂进 Dreaming 五阶段的哪一格」是本报告自己的推导段（`research.md` 的 `## 维度五`），没有外部取证可摘要；编号 `d6` 对应维度六，跳号是有意的，不是漏写。

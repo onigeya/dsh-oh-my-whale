@@ -1,9 +1,9 @@
 ---
-title: 看视频融合方案设计（CAP-7 候选）
+title: 看视频融合方案设计（CAP-8 候选）
 status: draft-for-review
 date: 2026-11-23
 depends_on: research.md（同目录）、watch-a-video skill、dsh-see-now、dsh-streamvision、video-watch-plus、sense-now
-non_goal: 本文不改 ARCHITECTURE-SPINE.md；CAP-7 是否并入骨架由下一个迭代定。本轮只出设计，不写代码；实现形态为插件内 TS 模块，不是技能里的 Python 脚本。
+non_goal: 本文不改 ARCHITECTURE-SPINE.md；CAP-8 是否并入骨架由下一个迭代定。本轮只出设计，不写代码；实现形态为插件内 TS 模块，不是技能里的 Python 脚本。
 ---
 
 # 看视频融合方案设计

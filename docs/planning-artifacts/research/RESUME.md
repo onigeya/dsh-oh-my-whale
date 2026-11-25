@@ -1,9 +1,11 @@
 # 研究融合 · 研究线索引
 
 > **2026-11-23 起本文件是历史索引，不是口径来源。** 一切与本项目决定有关的口径以
-> `docs/planning-artifacts/architecture/architecture-DSH哦鲸鲸-2026-11-23/ARCHITECTURE-SPINE.md`（AD-1…AD-26）为准；
+> `docs/planning-artifacts/architecture/architecture-DSH哦鲸鲸-2026-11-23/ARCHITECTURE-SPINE.md`（现行 AD-1…AD-55）为准；
 > 各研究线 `research.md` 里的推荐（R1…Rn）是**当日证据与建议**，其中被架构采纳的已写进 AD，被否的留在 `architecture/…/reconcile/` 与简报 addendum。
 > 六条研究线全部收口，下游 skill 读研究只需读本文件 + 各线执行摘要，不需要重读 digest。
+>
+> **2026-11-25 补记**：下文 §「六条研究线索引」与「第 1 线的产出」记的是 11-22/11-23 那批线，编号（AD-1…AD-26、FR-1…FR-22）也是当时口径，**不要据此判断现行编号**。此后又新增四条线——`technical-context-governance-2026-11-23`（上下文治理，CAP-7 的 18 条 AD-28…45）、`technical-video-watch-fusion-2026-11-23`、`technical-owl2-dl-ontology-native-recall-pipeline-2026-11-25`，以及两份单文件研究 `memory-layering-precedents.md` 与 `technical-datalog-engine-selection-2026-11-25.md`；它们的产出已并入 PRD §4.8–§4.16 的 FR-34…FR-77，实现归属见 `docs/planning-artifacts/epics.md`。本文件**不**代替这些线的 `research.md`。
 
 ## 六条研究线索引
 
@@ -31,7 +33,7 @@
 - **BLOCKING 已关闭**：与 `dsh-mnemon` 的关系由 **AD-16 定为「替换而非共存」**——一次性迁移、不删源文件、幂等、留回滚开关。
 - **遗留问题清零（2026-11-23）**：13 条逐条与 Elliott 对齐完毕。甲组 5 条定案并回写 PRD（迁移报告 + 回滚 + 可重跑 / 单人隔 ≥7 天重判 / precision 优先 / v1 只出口径 / 空闲触发）；乙组 4 条实测（bge-m3 实测 1024、255–408ms；本机无 mnemon 数据，迁移改用 fixture 验证）；丙组 4 条过期引用改完。
 - **门控口径修正（2026-11-23）**：M0 闸门以骨架为准是 **8 道**（G0-1…G0-8）。此前 SOLUTION-DESIGN、epics、PRD 正文与附录、架构页与状态报告都写「六道 / 六门」，已统一为八道，并补上 G0-7（`POST /systemone` 打分通道与断网降级）与 G0-8（固化提炼 / 核验两个模型 id 与核验行为）。当前已过 4 道（G0-1 / G0-2 / G0-3 / G0-8），其余 4 道待测。G0-8 的实测经过：原定 `Qwen3.5-4B` 三次探测均无响应，按闸门换同族 `Qwen/Qwen3.5-9B`（关思考后单次 11–13s）；核验模型 `deepseek-ai/DeepSeek-R1-0528-Qwen3-8B` 对清空证据指针的产物判 fail、对伪造引文判 fail、对零断言空产物判 fail，但会把完全相同的引文误报 `quote_not_found`（机械子串核验改由调用方做）。证据：`docs/implementation-artifacts/gates/g0-8-2026-11-23.json`，探针 `scripts/probe-g0-8.ts`。
-- **规划状态报告**：`planning-artifacts/omw-planning-status-2026-11-23.html`（单文件：M0–M5 分段、10 条定案、八道门、7 项缺口、下一步三件事）。
+- **规划状态报告**：`planning-artifacts/omw-planning-status-2026-11-23.html`（单文件：M0–M5 分段、10 条定案、八道门、7 项缺口、下一步三件事）。**2026-11-25 订正**：该文件从未入库，现不存在（`docs/` 下无此路径）；状态口径见 `architecture/…/omw-architecture.html`（1.3 MB 交互页，四门 pass 的呈现）与骨架的 G0 闸门表（`ARCHITECTURE-SPINE.md` 的「M0 闸门」段）。
 - **PRD 起草中**：`prds/prd-DSH哦鲸鲸-2026-11-23/`（§4 的 FR-1…FR-21 已按五能力分组）。
 - **三条线结论的下场**：第 3 线的 What-If 被采纳为八步里的第 ⑤ 步但**默认关闭**；第 6 线的风格层被推迟到 v1 之后（DSH 助手消息不可变）；第 4 线的候选重排被采纳为召回第二段；第 5 线的双时态与本体检判被采纳为三时间轴与 13 kind / 11 edge label。
 

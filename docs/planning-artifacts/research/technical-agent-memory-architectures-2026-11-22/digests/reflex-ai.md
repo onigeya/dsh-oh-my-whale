@@ -136,7 +136,7 @@ archive(id PK, summary, origin_tier, span_start, span_end, source_ids, token_est
 | 维度 | README 声称 | 代码事实 |
 |---|---|---|
 | 状态集合 | 5 层，状态"在层间迁移"（README:49、116-124） | `MemoryTier` 只是枚举标签（types.py:55-62），记录上无 `tier` 字段 |
-| 转移函数 | "promotion (frequently used → durable), demotion, compaction"（README:116） | 全仓库 grep `promot|demot` **只命中 3 处注释/文档字符串**：types.py:105、short_term.py:5、engine.py:43。**没有任何函数** |
+| 转移函数 | "promotion (frequently used → durable), demotion, compaction"（README:116） | 全仓库 grep `promot\|demot` **只命中 3 处注释/文档字符串**：types.py:105、short_term.py:5、engine.py:43。**没有任何函数** |
 | 阈值 | 配置项 `promotion_importance: 0.6`（config.py:94；configs/default.yaml:33） | 该键**在 `src/` 内无读取方**——只出现在定义处与 YAML 里（grep 结果仅此两处）。**死配置** |
 | 触发条件 | "frequently used" / importance 门槛 | 无。`importance` 只被写进库（episodic.py:56）与统计，从不参与任何淘汰或晋升判定 |
 

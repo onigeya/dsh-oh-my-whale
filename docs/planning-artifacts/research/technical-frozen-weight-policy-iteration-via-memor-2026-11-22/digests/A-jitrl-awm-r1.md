@@ -34,7 +34,7 @@
 
 | # | claim | 证据位置 | publisher | pub_date | confidence | class |
 |---|---|---|---|---|---|---|
-| J6 | **没有 embedding**。相似度是 **Jaccard**：J(s,s_i) = |T(s)∩T(s_i)| / |T(s)∪T(s_i)|，T(·) 为 state 表示的分词集合。 | Appendix F「Retrieval Similarity Metric」式(24)，PDF 行 975-981 | arXiv 作者 | 2026-09-27 | high | 论文 |
+| J6 | **没有 embedding**。相似度是 **Jaccard**：J(s,s_i) = \|T(s)∩T(s_i)\| / \|T(s)∪T(s_i)\|，T(·) 为 state 表示的分词集合。 | Appendix F「Retrieval Similarity Metric」式(24)，PDF 行 975-981 | arXiv 作者 | 2026-09-27 | high | 论文 |
 | J7 | **代码显式关闭了向量检索**：self.encoder_available = False  # Disable embedding to save costs，日志打印 Using BM25 for retrieval (vector embedding disabled to save costs)。即 embedding 模型字段（text-embedding-ada-002, dim 1536）仍在构造函数签名里，但**不参与检索**。 | cross_episode_memory.py:24, 45-59 | liushiliushi/JitRL | pushed 2026-09-22 | high | 源码 |
 | J8 | WebArena 是**两阶段层级匹配**：先按 Regularized URL 过滤到同一页面类型，再在该子集内算有效状态（当前 filter/输入框）的 Jaccard。 | Appendix F「Memory Retrieval」PDF 行 983-989 | arXiv 作者 | 2026-09-27 | high | 论文 |
 | J9 | 代码里的合成相似度是 similarity = 0.7 * history_sim + 0.3 * task_sim；task 过滤用 _jaccard(..., ngram=1) 且阈值 task_similarity_threshold = 0.27；**阈值随步数线性衰减**：dynamic_threshold = r − 0.1 * (step_count / max_steps)，max_steps = 20。 | cross_episode_memory.py:24, 451-462, 498-507, 557, 596-598 | 同上 | 同上 | high | 源码 |
@@ -46,11 +46,11 @@
 
 | # | claim | 证据位置 | publisher | pub_date | confidence | class |
 |---|---|---|---|---|---|---|
-| J13 | 值估计是**邻域均值**，不是加权均值、也不是差值回归：V(s) := (1/|N(s)|) Σ_{i∈N(s)} G_i（式4）。动作值 Q(s,a) := (1/|N(s,a)|) Σ_{j∈N(s,a)} G_j，N(s,a) = {(s_i,a_i,G_i) ∈ N(s) : a_i = a}（式5）。 | §4.2 式(4)(5)，PDF 行 185-208 | arXiv 作者 | 2026-09-27 | high | 论文 |
-| J14 | 未见动作用**乐观探索**：以概率 λ 赋 Q(s,a) := V(s) + α/|N(s)|，否则 Q(s,a) = 0。bonus 随记忆覆盖度增大而衰减。 | §4.2 式(6)，PDF 行 210-223 | 同上 | 同上 | high | 论文 |
+| J13 | 值估计是**邻域均值**，不是加权均值、也不是差值回归：V(s) := (1/\|N(s)\|) Σ_{i∈N(s)} G_i（式4）。动作值 Q(s,a) := (1/\|N(s,a)\|) Σ_{j∈N(s,a)} G_j，N(s,a) = {(s_i,a_i,G_i) ∈ N(s) : a_i = a}（式5）。 | §4.2 式(4)(5)，PDF 行 185-208 | arXiv 作者 | 2026-09-27 | high | 论文 |
+| J14 | 未见动作用**乐观探索**：以概率 λ 赋 Q(s,a) := V(s) + α/\|N(s)\|，否则 Q(s,a) = 0。bonus 随记忆覆盖度增大而衰减。 | §4.2 式(6)，PDF 行 210-223 | 同上 | 同上 | high | 论文 |
 | J15 | advantage = 动作值减状态基线：A(s,a) = Q(s,a) − V(s)（式7）。**是差值，不是加权平均**。 | §4.2 式(7)，PDF 行 225-234 | 同上 | 同上 | high | 论文 |
 | J16 | 代码与公式一一对应：action_advantages[a] = action_avg_rewards[a] − overall_avg_reward；未见动作以 exploration_prob = 0.05 概率赋 overall_avg_reward + alpha/max(count,1)（alpha = 1），否则 0；随后把 advantage 按最大正值（或最大负绝对值）归一化到 [−1,1]。 | jitrl_agent.py:285-349（exploration_prob=0.05 在 306 行，alpha = 1 在 308 行） | liushiliushi/JitRL | pushed 2026-09-22 | high | 源码 |
-| J17 | **闭式解的目标函数**：π* = argmax_{π'} E_{a∼π'}[A(s,a)] − (1/β) D_KL(π' ‖ π_θ)（式8/11）。解为 π*(a|s) ∝ π_θ(a|s) exp(β A(s,a))（式9），取对数得**加性 logit 更新** z'(s,a) = z(s,a) + β·A(s,a)（式10/12）。β 是控制 KL 约束强度的温度超参。 | §4.3 式(8)(9)(10) + Theorem 4.1 式(11)(12)，PDF 行 240-267 | arXiv 作者 | 2026-09-27 | high | 论文 |
+| J17 | **闭式解的目标函数**：π* = argmax_{π'} E_{a∼π'}[A(s,a)] − (1/β) D_KL(π' ‖ π_θ)（式8/11）。解为 π*(a\|s) ∝ π_θ(a\|s) exp(β A(s,a))（式9），取对数得**加性 logit 更新** z'(s,a) = z(s,a) + β·A(s,a)（式10/12）。β 是控制 KL 约束强度的温度超参。 | §4.3 式(8)(9)(10) + Theorem 4.1 式(11)(12)，PDF 行 240-267 | arXiv 作者 | 2026-09-27 | high | 论文 |
 | J18 | 理论部分共三条：Theorem 4.1（logit 更新是 KL 约束目标的精确闭式解）、Theorem 4.2（V_t/Q_t/A_t 在非平稳策略下依概率收敛到真值）、Theorem 4.3（策略更新一致性）。 | §4.4，PDF 行 206-267、837 | 同上 | 同上 | high | 论文 |
 | J19 | **候选集扩张**：C ← C_LLM ∪ {a_i : (s_i,a_i,G_i) ∈ N(s)}（式23）。对不在 LLM top-k 里的历史动作，把其基础 logit 初始化为**中性值 z(s,a) = 0**。这是把记忆里的动作「塞回」候选池的关键一步。 | Appendix F「Augmented Candidate Set」式(23)，PDF 行 965-973 | 同上 | 同上 | high | 论文 |
 | J20 | **代码里的实现是概率空间加性、不是 logit 空间加性**：corrected_logprob = normalized_prob + 1 * normalized_advantage。**β 被硬编码为 1**，而 normalized_prob = exp(candidate.logprob)（把 logprob 转成概率）。随后 max(..., key=corrected_logprob) **贪心选最大**，而不是从 softmax 采样。 | jitrl_agent.py:366-390（关键行 377-378）、:1129-1132（贪心选择）、:1020-1043（normalized_prob = math.exp(candidate.logprob)） | liushiliushi/JitRL | pushed 2026-09-22 | high | 源码 |

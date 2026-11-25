@@ -2,7 +2,7 @@
 
 - 日期：2026-11-23
 - 类型：technical / select（在三个既有实现之间选型，并落到本项目）
-- 决策：为 dsh-oh-my-whale 增加第六个能力 CAP-6「上下文治理」，设计见 `docs/planning-artifacts/architecture/architecture-DSH哦鲸鲸-2026-11-23/CONTEXT-GOVERNANCE.md`
+- 决策：为 dsh-oh-my-whale 增加一个新能力 CAP-7「上下文治理」（该编号在 2026-11-25 的编号审计中由 CAP-6 改为 CAP-7：CAP-6 已被 SPEC 的「迁移」占用），设计见 `docs/planning-artifacts/architecture/architecture-DSH哦鲸鲸-2026-11-23/CONTEXT-GOVERNANCE.md`
 - 侦察对象（均已 clone 到 `imports/repos/`）：
   - `NightFrost42/dsh-compaction-weave` @ 0.4.4（原生 JS，DSH 插件）
   - `yoza10635/dsh-argp` @ 2.0.x（TypeScript，DSH 插件）

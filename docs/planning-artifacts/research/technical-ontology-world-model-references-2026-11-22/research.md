@@ -242,7 +242,7 @@ anda-brain 的巩固是本次调研里工程完成度最高的部分 [16][17]：
 | [10] | crates/utopia-server/src/adjudication.rs L1–24（灰区对裁决、先例缓存） | commit a0a800f |
 | [11] | web/src/docs/mcp.md L1–55（at / as_of / remember 人工确认） | commit a0a800f |
 | [12] | AIRI-Institute/AriGraph README 与仓库结构（无模拟器模块） | commit e884b76 · 2024-09-10 |
-| [13] | AriGraph 论文正文（本次未读，见未解问题 4） | 保留位 |
+| [13] | AriGraph 论文正文 —— **这是「未读缺口」标记，不是一条来源**：正文 :114 用它标出「哪些判断只凭摘要与仓库结构、没有论文正文支撑」。编号留在表里是为了让 `[13]` 在正文可解引用，不代表本报告读过该论文。见未解问题 4 | 保留位（有意空置） |
 | [14] | PyPI nous-state 0.2.0 元数据 | 2026-11-22 |
 | [15] | Pranavsingh431/nous-state README（管线、Dimension/Delta、API） | release 2026-10-04 |
 | [16] | ldclabs/anda-brain README（sleep 三档、settlement、forgetting 语义） | commit a139642 · 2026-11-19 |

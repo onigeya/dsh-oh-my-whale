@@ -466,5 +466,3 @@ LTPO 的 reward 本质是"给定前缀，模型对下一个 token 有多确定"�
 | 23 | SEAL arXiv 2506.10943（改权重的反例） | https://arxiv.org/abs/2506.10943 | 论文 | 2025-06-12 |
 | 24 | DSH `dsh-llm` 类型定义：`types.d.ts:538`（GenerateOptions）、`call-config.d.ts:10`（LlmCallControls）、`index.d.ts:31-46`（llm/stream 瀑布） | 本地：`@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm/lib/types/` | 源码 | 0.2.2-rc.5 |
 | 25 | DSH `dsh-deepseek-llm-api-extensions` `types.d.ts`（DeepSeekLlmApiExtensionMap 请求体扩展） | 本地：`@deepseek-ai/dsh-deepseek-llm-api-extensions/lib/types/` | 源码 | 0.2.2-rc.5 |
-
-

@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS l1_records (
 | 合并 | LLM merge/update，多对多，合并后提升 priority | 候选池 top-5 | `prompts/l1-dedup.ts:22-24,77` |
 | 遗忘（TTL） | 每日定点清理 L0/L1 | `cleanTime` 默认 `"03:00"`；`l0l1RetentionDays` 默认 **0 = 不清理** | `config.ts:612,688`；`MemoryCleanupConfig` `:204-212` |
 | 衰减（decay） | **仅存在于 Wiki 图扩散**：每跳 score×decay | 调用方传参，默认上限 200 节点 | `wiki/graph-search.ts:30-46` |
-| 半衰期 | **未发现任何 halfLife/半衰期实现**（全仓 grep `halfLife|half-life|衰减` 仅命中 wiki 图与中文注释） | — | 负证据 |
+| 半衰期 | **未发现任何 halfLife/半衰期实现**（全仓 grep `halfLife\|half-life\|衰减` 仅命中 wiki 图与中文注释） | — | 负证据 |
 | 版本/回滚 | `version` 列 + `memory_audit` + 备份配额 | `backupCount=3`、`sceneBackupCount=10` | `memory-store.ts:843-855`；`config.ts:705-706` |
 | 单次 L2 上限 | 超限不下发，留给下一轮 L2 | `l2MaxRecordsPerRun=200`、`l2MaxCharsPerRun=60000` | `config.ts:104-113,703-704` |
 

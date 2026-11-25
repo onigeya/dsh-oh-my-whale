@@ -36,7 +36,7 @@
 | 15 | 树搜索“如 DFS 和 MCTS”，实现参数 M=N=20、T=t+1 | arxiv-2507.23773.txt:456, 492 | 论文声称 | high |
 | 16 | 可观测状态即文本、文本观测当状态表示 | arxiv-2601.08955.txt:337-338 | 论文声称 | high |
 | 17 | POIMDP：K_t∈{0..Kmax}，K_t=0 退化为 POMDP | arxiv-2601.08955.txt:368-372 | 论文声称 | high |
-| 18 | 想象轨迹 τ̂ 经 Reflect 后进入策略，a_t∼π(·|s_t, Reflect(τ̂)) | arxiv-2601.08955.txt:407-414 | 论文声称 | high |
+| 18 | 想象轨迹 τ̂ 经 Reflect 后进入策略，a_t∼π(·\|s_t, Reflect(τ̂)) | arxiv-2601.08955.txt:407-414 | 论文声称 | high |
 | 19 | ITP_R 用 K-head 预测视界分布，reward 含 −λ_K·K_t 惩罚，A2C 联合优化 | arxiv-2601.08955.txt:423, 457-466 | 论文声称 | high |
 | 20 | 代码：`k_head = nn.Linear(hidden_size, kmax+1)` | repos/itp/itp/training/train_adaptive_k.py:224 | 代码实现 | high |
 | 21 | 代码：每步只 imagine 一次，单条 foresight，一次 reflect_and_act；max_k=5 | repos/itp/itp/orchestrator.py:25-40 | 代码实现 | high |
