@@ -10,6 +10,8 @@ spine: ARCHITECTURE-SPINE.md
 
 三张图，逐层放大：系统在什么环境里（Context）→ 由哪些可独立部署/独立推演的单元组成（Container）→ 单元内部怎么分（Component）。只画当前存在的和 v1 要建的；Deferred 项不出现。
 
+> **2026-11-25 补记**：本文写于 CAP-9（入口与路由）立项之前，因此 C2/C3 里没有 `src/main.ts`、`core/route/`、`seams/route/`、`presets/`。它们已作为「目标形态」补在文末的 **C5 · 入口与路由** 一节，不进 C2/C3 的既有图——C2/C3 描述的是单安装位形态，把两套形态画在同一张容器图里会让「谁持有库」这件事含糊。`src/govern/` 属 CAP-7（上下文治理），不属 CAP-8（看视频融合，候选、未立项）。
+
 ## C1 · 系统上下文
 
 ```mermaid
@@ -160,3 +162,44 @@ sequenceDiagram
   DSH->>DSH: turn-stopping（异步）
   DSH-)TH: 抽取本轮 → 单事务写入
 ```
+
+## C5 · 入口与路由（CAP-9，目标形态）
+
+这一节单独画，因为它改变的不是组件内部划分，而是**安装形态**：从「一个插件一处安装」变成「两个安装位 + 一处路由」。不要和 C2 叠在一起看。
+
+```mermaid
+flowchart TB
+  subgraph PROF["安装位① profile（全局层）"]
+    IDX["src/index.ts<br/>四工具 + 唯一库租约"]
+    MEM["omw.memory 服务<br/>（只此一处 provide）"]
+    RT["seams/route/*<br/>账本·派发·回流·工具"]
+  end
+  subgraph PRESET["安装位② preset omw-main（主对话专用）"]
+    MAIN["src/main.ts<br/>只注册 composer"]
+    SEC["harness:identity section<br/>≤1200 字符，字节稳定"]
+    TAIL["omw:persona-state context<br/>≤30 token"]
+  end
+  subgraph WK["worker 会话（任意 preset，非 omw-main）"]
+    W1["持有记忆四工具"]
+    W2["无 harness:identity"]
+  end
+  LEDGER[("routing.json<br/>话题 ↔ 会话/工作区")]
+  RT --> LEDGER
+  MEM -.->|"惰性 ctx.get()"| TAIL
+  RT -->|"agents.create 自持 handle"| WK
+  WK -->|"turn/end 摘要 + 指针"| RT
+  RT -->|"mainAgent.followup"| MAIN
+  IDX --> MEM
+  MAIN --> SEC
+  MAIN --> TAIL
+```
+
+| 单元 | 安装位 | 能做什么 | 明确不能做什么 |
+| --- | --- | --- | --- |
+| `src/index.ts`（记忆面） | profile 全局层 | 注册四工具、持有唯一库租约、provide `omw.memory` | **不注册任何 section**（AD-46）；不 import `presets/` |
+| `src/main.ts`（人格面） | `omw-main` preset | 注册 `harness:identity` 与 `omw:persona-state`、注册两个派发工具 | **不开库**；`inject` 只许 `systemPrompt`（AD-54）；不得成为 `selectedDefault` |
+| `core/route/decide.ts` | 同 profile | 纯函数判定 create/attach/correct | 不碰 ctx、文件、日志（`core-no-seams` 强制） |
+| `seams/route/*` | 同 profile | 读写账本、创建/回收 worker、回流摘要 | 不自造 message source kind（AD-52）；不写 `meta.origin:'subagent'` |
+| worker 会话 | 由路由创建 | 记忆读写、执行具体工作 | 无身份段、无派发工具；**可被用户接手**（FR-33） |
+
+人格与记忆的可见性边界就是这两张子图之间的线：`harness:identity` 只出现在 `PRESET` 子图里，`omw.memory` 只在 `PROF` 子图里 provide。库坏时 `TAIL` 整段缺席、`SEC` 照常——这是 AD-11 与 I24 守的那条线。

@@ -7,8 +7,8 @@ paradigm: 'layered + CQRS-lite（写走补丁表，读走查询模板）'
 scope: 'DSH 插件 dsh-oh-my-whale：记忆、固化、治理、人格、运维五个能力；不含表达层、主动搭话、技能演进'
 status: final
 created: '2026-11-23'
-updated: '2026-11-23'
-binds: [CAP-1, CAP-2, CAP-3, CAP-4, CAP-5]
+updated: '2026-11-25'
+binds: [CAP-1, CAP-2, CAP-3, CAP-4, CAP-5, CAP-7, CAP-9]
 sources:
   - docs/planning-artifacts/briefs/brief-DSH哦鲸鲸-2026-11-22/brief.md
   - docs/planning-artifacts/briefs/brief-DSH哦鲸鲸-2026-11-22/addendum.md
@@ -42,7 +42,7 @@ graph TD
 
 - **Binds:** all
 - **Prevents:** 出现第二个常驻进程、IPC 协议、端口监听、文件锁；以及把后台工作交给自建守护进程这类分叉。
-- **Rule:** 全部逻辑在 `apply(ctx, config)` 内注册，随 fiber 销毁由 ctx 回收；后台代码任务只用 `ctx.timer`（进程内、随 fiber 销毁，插件需 inject timer）；`ctx.schedule` 是宿主的提醒投递——它把 prompt 当 user 消息送进目标 Session、还会触发模型轮次，所以只服务 Deferred 里的主动搭话，且必须经 `seams/schedule.ts` 单一出口；禁止 spawn 子进程、监听端口、跨进程锁文件（`worker_threads` 是同进程线程，不在此列——AD-8 的召回就靠它）；显式资源一律走 `ctx.effect()`。
+- **Rule:** 全部逻辑在 `apply(ctx, config)` 内注册，随 fiber 销毁由 ctx 回收；后台代码任务只用 `ctx.timer`（进程内、随 fiber 销毁，插件需 inject timer）；`ctx.schedule` 是宿主的提醒投递——它把 prompt 当 user 消息送进目标 Session、还会触发模型轮次，所以只服务 Deferred 里的主动搭话，且必须经 `seams/schedule.ts` 单一出口；禁止 spawn 子进程、监听端口、跨进程锁文件（`worker_threads` 是同进程线程，不在此列——AD-8 的召回就靠它）；显式资源一律走 `ctx.effect()`。**本插件不提供任何进程外可执行入口**（2026-11-25 用户裁定「不要任何 CLI，只保留 command」）：`package.json` 不写 `bin`，`scripts/` 只放开发期工具（构建、lint、层依赖检查、gate、评测驱动），不承载面向用户的命令；所有面向用户的命令都是聊天内斜杠命令，经 `ctx.commands.register` 注册。
 
 ### AD-2 — 单文件库直连，不设存储适配层 [ADOPTED]
 
@@ -60,7 +60,7 @@ graph TD
 
 - **Binds:** CAP-1, store/
 - **Prevents:** 写入散落各处、半写入、同一轮对话两次覆盖、审计链断裂。
-- **Rule:** `insert` / `insertWithId` / `batchInsert` / `upsertWithId` / `patchPayload` / `updatePayload` / `updateVector` / `link` / `upsertEdge` / `commitTransaction` / `tqlMut` 只允许出现在 `src/store/`（`compareAndSetPayloadField` 只允许出现在 `src/ops/` 的修复路径）；一次业务写入 = 一张补丁表 = 一次 `commitTransaction`，可含多种 op；被拒补丁不得静默丢弃，须在同一事务内写一条 `rejected` 记录（含原因与原始补丁）。写入口只有三个，且共用这一段：`remember` 工具、用户显式命令、`agent/turn-stopping` 后的去抖抽取（默认 3s 去抖，可关）；抽取只读本轮新增的 seq 区间，不回溯、不外扩。监听器只做三件事——从 agent 解析 session、把 `turn` 记进内存待抽取集合、**同步返回**；去抖与 max-wait 一律走 `ctx.timer`（每会话一个、max-wait 默认 10s），因为该事件是 `@mode serial` 且被 await 之后才允许边界提交，睡在监听器里等于每个 turn 多等 3–10 秒；`agent/turn-stopping` 的 payload 只有 `{agent, turn, signal}`、不含 session 与 seq，所以会话由 seams 层从 agent 解析、seq 区间由持久游标 `extraction_cursor:<session_id>` 推进，同一 turn 重复触发按 `turn` 号去重——否则全局去抖会把两个会话并成一个单会话证据指针。再加一条进程内约束：全进程只有一个写队列 `store/commits/queue.ts`，所有 `commitTransaction` 经它串行提交，优先级 对话写入 > 快照 > dream（dream 在提交边界让出）；任何模块不得自行加锁，也不得绕过队列直接 await 提交。
+- **Rule:** `insert` / `insertWithId` / `batchInsert` / `upsertWithId` / `patchPayload` / `updatePayload` / `updateVector` / `link` / `upsertEdge` 只允许出现在 `src/store/`（`compareAndSetPayloadField` 只允许出现在 `src/ops/` 的修复路径）；写事务入口 `commitTransaction` / `tqlMut` 的辖区见 AD-15（仅 `src/store/commits`）——**两条门不得重叠判同一行**；一次业务写入 = 一张补丁表 = 一次 `commitTransaction`，可含多种 op；被拒补丁不得静默丢弃，须在同一事务内写一条 `rejected` 记录（含原因与原始补丁）。写入口只有三个，且共用这一段：`remember` 工具、用户显式命令、`agent/turn-stopping` 后的去抖抽取（默认 3s 去抖，可关）；抽取只读本轮新增的 seq 区间，不回溯、不外扩。监听器只做三件事——从 agent 解析 session、把 `turn` 记进内存待抽取集合、**同步返回**；去抖与 max-wait 一律走 `ctx.timer`（每会话一个、max-wait 默认 10s），因为该事件是 `@mode serial` 且被 await 之后才允许边界提交，睡在监听器里等于每个 turn 多等 3–10 秒；`agent/turn-stopping` 的 payload 只有 `{agent, turn, signal}`、不含 session 与 seq，所以会话由 seams 层从 agent 解析、seq 区间由持久游标 `extraction_cursor:<session_id>` 推进，同一 turn 重复触发按 `turn` 号去重——否则全局去抖会把两个会话并成一个单会话证据指针。再加一条进程内约束：全进程只有一个写队列 `store/commits/queue.ts`，所有 `commitTransaction` 经它串行提交，优先级 对话写入 > 快照 > dream（dream 在提交边界让出）；任何模块不得自行加锁，也不得绕过队列直接 await 提交。
 
 ### AD-5 — 三轴时间 + supersede，无物理删除 [ADOPTED]
 
@@ -127,7 +127,7 @@ graph TD
 
 - **Binds:** CAP-5, seams/
 - **Prevents:** 半活插件产生幽灵行为——注入旧状态却不写、工具有一半可用、用户以为记忆在生效。
-- **Rule:** 打开库失败、`verifySnapshot` 不符、配置 `db.dim` 与库 meta 不符、`contract_version` 不符 → 不注册 section、不注册可执行工具（若需占名则 `execute` 恒返回拒绝）、不排 dream、不写任何节点，只向宿主日志写一行原因；恢复需重载插件，不在进程内自愈重试。资源超限（`ResourceBudgetError`）按同一档处理，不进业务重试；库以 `memoryLimitMb` 与实例资源上限设界。唯一例外：缺 embedding 凭据**不进全停**，只永久关闭向量路径，文本与图召回照常（属 AD-18 的局部降级）。**降级只有两档**：要么整体 no-op（本条），要么只关向量路径（AD-19 的 401/402、AD-23 的维度不符）；不存在「半开」——不写一半、不注入半段。两处 `dim` 判定分工：建库 `dim` 与库 meta 不符属打开时故障（本条全停），embedding 返回维度 ≠ `db.dim` 属运行时故障（AD-23 只关向量路径）。
+- **Rule:** 打开库失败、`verifySnapshot` 不符、配置 `db.dim` 与库 meta 不符、`contract_version` 不符 → 不注册 section、不注册可执行工具（若需占名则 `execute` 恒返回拒绝）、不排 dream、不写任何节点，只向宿主日志写一行原因；恢复需重载插件，不在进程内自愈重试。资源超限（`ResourceBudgetError`）按同一档处理，不进业务重试；库以 `memoryLimitMb` 与实例资源上限设界。唯一例外：缺 embedding 凭据**不进全停**，只永久关闭向量路径，文本与图召回照常（属 AD-18 的局部降级）。**降级只有两档**：要么整体 no-op（本条），要么只关向量路径（AD-19 的 401/402、AD-23 的维度不符）；不存在「半开」——不写一半、不注入半段。 **2026-11-25 修订——「两档」只管记忆面**：本条规定的档位只覆盖**记忆安装位**（profile 位，提供四工具与库）。同一进程内的另外三个安装位各有自己的档位、互不牵连：**人格安装位**（`omw-main` preset 里的 `dsh-oh-my-whale/main`）**不打开库**，因此没有降级档位——库坏时身份段照常注入且字节不变（AD-11），尾巴整段省略；**路由安装位**（`entry-routing.md`）只依赖 `routing.json`，库坏时派发照常、账本坏即 `E_GATE_DOWN` 停路由；**上下文治理安装位**按 `CONTEXT-GOVERNANCE.md` AD-36 的五档。理由：`CONTEXT-GOVERNANCE.md` AD-36 已立「降级与记忆、人格互不牵连」，本条与它是同一条原则的两个侧面。所以原句读作「记忆面只有两档」，**不是**「全插件只有两档」；「不存在半开」的禁令仍只对记忆面生效。两处 `dim` 判定分工：建库 `dim` 与库 meta 不符属打开时故障（本条全停），embedding 返回维度 ≠ `db.dim` 属运行时故障（AD-23 只关向量路径）。 **2026-11-25 修订——错误码封闭集由 8 扩到 11**：新增 `OMW_ROUTE_LOAD`（账本读不出）/ `OMW_ROUTE_DISPATCH`（派发事务失败）/ `OMW_ROUTE_MISMATCH`（会话 id 与账本不一致），来自 `entry-routing.md` §七。它们与既有八个**平级并列、仍封闭**，只有基数变大；新增或改名仍算破坏兼容。同批修订点见该文件 §七 的显式修订条。
 
 ### AD-14 — 快照纪律：每日 + 迁移前 + 留 7 份 [ADOPTED]
 
@@ -141,9 +141,11 @@ graph TD
 - **Prevents:** 时间门被绕过（TQL 跑出模板层）、写入口被复制、物理删除混进业务代码。
 - **Rule:** eslint 强制分层依赖（`store/` 不 import 其他层、`core/` 不 import `seams/`）；CI grep 失败即阻断：`ctx.systemPrompt.section(` 与 `.context(` 只允许出现在 `src/seams/prompt-composer.ts`；`child_process`、`net.createServer`、锁库（`proper-lockfile` / `flock`）全仓禁止；`triviumdb` 只允许被 `src/store/**` import（eslint `no-restricted-imports` 反写白名单，其他层连它的类型都不许 import）；`prepareTql(` / `executePreparedTql(` 只允许出现在 `src/store/templates/`；写方法全清单 `insert|insertWithId|batchInsert|upsertWithId|patchPayload|updatePayload|updateVector|link|upsertEdge|compareAndSetPayloadField|indexText|indexKeyword|dropIndex|flush|commitTransaction|tqlMut` 只允许出现在 `src/store/commits`（`compareAndSetPayloadField` 另准 `src/ops/` 的修复路径）；只读裸 `tql(` 只允许出现在 `src/ops/`；**硬删清单** `delete(` / `deleteManyAtomic(` / `unlink(` / `unlinkLabel(` 与事务 op 字面量 `type: 'delete' | 'unlink' | 'unlinkLabel'` 全仓禁止——注意实例上没有 `unlinkLabel` 方法，所以 grep 必须同时覆盖方法形态与 op 字面量形态；TQL 参数化用 AST 规则表达（eslint `no-restricted-syntax`）：`prepareTql` / `executePreparedTql` 的第一实参必须是字面量或无插值模板（`expressions.length === 0`）；方法级禁令同样落 AST——接收者必须是库句柄标识符——否则裸文本 grep 会误伤 `Map.delete` 这类同名调用。
 
+**NFR-13 具名豁免（2026-11-25 登记于本 AD）**：`child_process` 的「全仓禁止」有一个具名例外——`src/eval/` 与 `scripts/` 目录内允许**一次性短命**子进程（`spawnSync` 语义，无常驻、无监听、无后台），用于评测驱动与 fixture 生成；`src/` 其余位置仍由静态门禁止。判据是「无常驻、无监听、无后台」三条，不是「有无子进程」。v1 交付物里不出现任何子进程调用（唯一会用它的 FR-61 已 Deferred），故本豁免当前无生效调用点，属边界铺垫。
+
 ### AD-16 — mnemon 替换而非共存，幂等且可回滚 [ADOPTED]
 
-- **Binds:** CAP-5, 迁移
+- **Binds:** CAP-5, CAP-6（迁移）
 - **Prevents:** 两套记忆并存各回答一次；重复迁移产生重复节点；迁移失败无法退回旧行为。
 - **Rule:** 一次性把 `USER.md` 按 `§` 分段、`MEMORY.md` 逐条转为 `pref` / `assertion` 节点，`mem_key` 用业务身份（`pref:<规范化 key>` 或 `assertion:<subj>:<pred>`），**不用 uuid5 当身份**；`uuid5(namespace, file:linehash)` 只写进 payload 的 `migration_id`，用来判定「这一行已经迁过」，保证重复运行不产生重复节点；不删除、不修改 mnemon 源文件；`config.legacyMnemonInject = true` 并**重启插件**后恢复旧注入（配置不热读，AD-13 的「恢复需重载」同样适用），迁移节点保留待人工清理。
 
@@ -169,7 +171,7 @@ graph TD
 
 - **Binds:** CAP-1, CAP-5
 - **Prevents:** 预算停留在纸面；「有没有拖慢 DSH」只能靠感觉；事后无法解释某条记忆为何被注入。
-- **Rule:** 每次注入写一行 `audit.jsonl`：`{ts, session_id, tier, chars, tokens, items[], truncated, prefix_unchanged, host_cache_read, host_cache_write, host_uncached}`——后三个取自宿主的 token 计量投影（`cacheReadTokens` / `cacheWriteTokens` / `uncachedInputTokens`），命中率按会话聚合为 `ΣcacheRead / (ΣcacheRead + ΣcacheWrite + Σuncached)`，`prefix_unchanged` 只作辅助字段；每次召回写一行：`{ts, query_hash, topK, hits[], elapsed_ms, degraded, degraded_reason[]}`，`degraded_reason` 取值封闭为 `recall_timeout | rerank_unavailable | rerank_circuit_open | vec_unavailable | embed_circuit_open | budget_truncated`（可多值，空数组即未降级）；dream 每次运行写一行汇总。审计行只落文件不落库，按天切分 `audit-YYYYMMDD.jsonl`、保留 30 天，轮转与删除只经 `ops/retention.ts`。注入路径的同步预算：`compose()` 单次 p95 ≤20ms，审计写入异步（`appendFile` 队列），注入路径上不做任何库查询；超预算降级为只注入身份段并记 `E_BUDGET`。注入路径不查库：身份段直接读 `assets/persona.md`（AD-11），状态尾巴取本回合已算好的值，缺值整段省略——不临时查询、不填默认值。
+- **Rule:** 每次注入写一行 `audit.jsonl`：`{ts, session_id, tier, chars, tokens, items[], truncated, prefix_unchanged, host_cache_read, host_cache_write, host_cache_uncached}`——后三个取自宿主的 token 计量投影（`cacheReadTokens` / `cacheWriteTokens` / `uncachedInputTokens`），命中率按会话聚合为 `ΣcacheRead / (ΣcacheRead + ΣcacheWrite + Σuncached)`，`prefix_unchanged` 只作辅助字段；每次召回写一行：`{ts, session_id, query_hash, top_k, hits[], elapsed_ms, degraded, degraded_reason[]}`——`session_id` 是那次召回所属的会话，无会话时写空串而不编造一个，`degraded_reason` 取值封闭为 `recall_timeout | rerank_unavailable | rerank_circuit_open | vec_unavailable | embed_circuit_open | budget_truncated`（可多值，空数组即未降级）；dream 每次运行写一行汇总。审计行只落文件不落库，按天切分 `audit-YYYYMMDD.jsonl`、保留 30 天，轮转与删除只经 `ops/retention.ts`。注入路径的同步预算：`compose()` 单次 p95 ≤20ms，审计写入异步（`appendFile` 队列），注入路径上不做任何库查询；超预算降级为只注入身份段并记 `E_BUDGET`。注入路径不查库：身份段直接读 `assets/persona.md`（AD-11），状态尾巴取本回合已算好的值，缺值整段省略——不临时查询、不填默认值。
 
 ### AD-21 — 决策账本：每条改动都留下谁、依据什么、为什么 [ADOPTED]
 
@@ -220,7 +222,9 @@ graph TD
 
 装、看、坏、修四件事必须写到「不用再问一轮」的程度。
 
-**启用三步**（不是一步）：① `package.json` 声明依赖并写 `dsh.profile.bundles`；② 改 `cordis.patch.yml`（**不是** `cordis.yml`——后者是生成物，注释里就写着别改）添加 `{id, name, config}` 条目；③ 重启后验证：插件出现在宿主里、注入段可见、`omw doctor` 全绿。G0-5 就是这条验证。
+**命令面只有聊天内斜杠命令**（2026-11-25 用户裁定）：`/omw doctor`、`/omw explain`、`/omw version-chain`、`/omw flag-queue`、`/omw export`、`/omw stats`、`/omw brief`（七条；`brief` 于 2026-11-25 随 FR-39 进入 v1，只出文件、不进注入与召回）。全部复用当前实例已打开的库句柄与治理投影 DTO，不 spawn 子进程、不抢库租约；结果用消息文本报告，**没有退出码语义**——失败以错误样式返回并给出首个错误码，摘要形如「k/5 通过」。仓库里不留面向用户的 `scripts/` 命令，也不写 `package.json` 的 `bin` 字段；`scripts/` 只服务开发与验收。
+
+**启用三步**（不是一步）：① `package.json` 声明依赖并写 `dsh.profile.bundles`；② 改 `cordis.patch.yml`（**不是** `cordis.yml`——后者是生成物，注释里就写着别改）添加 `{id, name, config}` 条目；③ 重启后验证：插件出现在宿主里、注入段可见、`/omw doctor` 全绿。G0-5 就是这条验证。
 
 **配置面**（schema 的唯一出处是 `seams/config.ts`，见 AD-26；环境变量只承载 `SILICONFLOW_API_KEY`）：
 
@@ -259,9 +263,21 @@ graph TD
 | `dream.extractModel` | `Qwen/Qwen3.5-9B` | ③④⑤⑧ 的提炼模型（G0-8 实测：骨架原定 `Qwen3.5-4B` 在 SiliconFlow 挂死，按闸门换同族 9B） |
 | `dream.verifyModel` | `deepseek-ai/DeepSeek-R1-0528-Qwen3-8B` | ③④⑤⑧ 的核验模型（G0-8 实测可用） |
 
-**「有没有拖慢 DSH」的判据**（自计时，写进审计行，不靠感觉）：注入组装 p95 ≤30ms；召回 p95 ≤900ms（含②重排）、`rerank_unavailable` 比例 <5%、①真空比例 <1%；写事务 p95 ≤10ms。看数用 `scripts/audit-report.mjs --since 24h`，输出 p50/p95 与降级计数。抽取每轮一次外部 LLM 调用，必须异步执行且**不得占用下一轮首个 token 之前的路径**。
+**「有没有拖慢 DSH」的判据**（自计时，写进审计行，不靠感觉）：注入组装 p95 ≤30ms（其中 `compose()` 同步段 ≤20ms，见 AD-7；余下 10ms 是折叠块的拼装与审计入队）；召回 p95 ≤900ms（含②重排）、`rerank_unavailable` 比例 <5%、①真空比例 <1%；写事务 p95 ≤10ms。看数用聊天内 `/omw stats --since 24h`（读审计 JSONL），输出 p50/p95 与降级计数。抽取每轮一次外部 LLM 调用，必须异步执行且**不得占用下一轮首个 token 之前的路径**。
 
-**坏的时候看哪里**：运行日志 `<plugin-data>/oh-my-whale/omw.log`，一行一事件 JSONL `{ts, level, code, detail}`；错误码固定为 `OMW_DB_OPEN` / `OMW_SNAPSHOT_VERIFY` / `OMW_DIM_MISMATCH` / `OMW_EMBED_AUTH` / `OMW_EMBED_QUOTA` / `OMW_EMBED_TIMEOUT` / `OMW_EXTRACT_FAIL` / `OMW_DREAM_BUDGET`。`omw doctor` 检查五件事：库能开、快照校验过、维度匹配、凭据可用、注入段已注册。
+**坏的时候看哪里**：运行日志 `<plugin-data>/oh-my-whale/omw.log`，一行一事件 JSONL `{ts, level, code, detail}`；错误码分两层，**两层的封闭集不合并计算**：① **降级码八个**（封闭集，`src/core/degrade.ts` 的 `OMW_CODES`，驱动 `ok`/`no-op`/`vector-off` 三态机）：`OMW_DB_OPEN` / `OMW_SNAPSHOT_VERIFY` / `OMW_DIM_MISMATCH` / `OMW_EMBED_AUTH` / `OMW_EMBED_QUOTA` / `OMW_EMBED_TIMEOUT` / `OMW_EXTRACT_FAIL` / `OMW_DREAM_BUDGET`；② **诊断日志码四个**（只写日志、不参与三态机，`src/seams/vector.ts` 的 `TRANSIENT_LOG_CODE` 与 `src/seams/runtime.ts` 的三条注册失败码）：`OMW_EMBED_TRANSIENT`（warn，不转移状态）/ `OMW_SECTION_NOT_REGISTERED` / `OMW_TOOL_NOT_REGISTERED` / `OMW_CONTRACT_NOT_RECORDED`。另 **CAP-9 的三个路由码** `OMW_ROUTE_LOAD` / `OMW_ROUTE_DISPATCH` / `OMW_ROUTE_MISMATCH` 已登记但**尚未交付**（CAP-9 未立项），落地时并入对应层。`/omw doctor` 的检查项是**一张按安装位排序的表，各处文档引用的项号一律以本表为准**；某项只在对应安装位装了才存在，缺它不是失败：
+
+| 项 | 检查 | 所属安装位 |
+| --- | --- | --- |
+| 1 | 库能开 | 记忆（profile） |
+| 2 | 快照校验过 | 记忆（profile） |
+| 3 | 维度匹配 | 记忆（profile） |
+| 4 | 凭据可用 | 记忆（profile） |
+| 5 | 人格段**在主对话 preset 内可见**：判据由「根层段已注册」改为「`omw-main` preset 内该段可见 ∧ profile 位未注册该段」（`entry-routing.md` C8、AD-46） | 人格（`omw-main` preset） |
+| 6 | 折叠接管是否生效、`fold` 表可读、账本存在 | 上下文治理（CAP-7） |
+| 7 | `routing.json` 可读且 schema 通过 | 路由（CAP-9） |
+
+只装记忆位时报 1–4；装上人格位后才有第 5 项。`CONTEXT-GOVERNANCE.md` 说的「第 6 项」与 `entry-routing.md` 说的「第 5 项改判据」都落在这张表里，不冲突。
 
 ## Consistency Conventions
 
@@ -270,6 +286,40 @@ graph TD
 | 命名（实体、文件、接口、事件） | 节点 kind 与 edge label 用 snake_case；`mem_key` = `<kind>:<subj>:<pred>[:<obj_norm>]`；文件名 kebab-case；CAP-n 与 AD-n 编号永不复用、永不重排 |
 | 数据与格式 | 时间一律 ISO-8601 UTC 带毫秒；有效期半开区间 `[valid_from, valid_to)`；错误 `{code, message, detail?}`；记账 `{ts, kind, tokens, items, actor}`；导出为纯文本 + JSONL，且不含节点 id |
 | 状态与横切 | 写只在 `store/commits`；错误不吞，落 `rejected` 记录；运行日志一行一事件；配置由 zod 校验，环境变量只承载密钥；本地单用户，不做鉴权 |
+
+### 编号保留登记表（唯一权威，2026-11-25 编号审计后建立）
+
+三条纪律（只增不改、不跳号、不复用）此前**无法校验**，因为没有任何单一位置登记「谁占了哪一段」。三份文档各自宣称「接续 AD-27、永不复用」，结果 `CONTEXT-GOVERNANCE.md` 与 `entry-routing.md` 都从 AD-28 起跳、同号异义。本表是唯一权威：任何文档要扩号，先在此登记再动笔；未登记的号一律视为未占用，且**不得凭「我记得写到哪了」续号**。
+
+| 编号段 | 占用者 | 文档 | 备注 |
+| --- | --- | --- | --- |
+| CAP-1…CAP-5 | 记忆插件五个能力 | 本文件、`SPEC.md`、`requirements.md` | 原始五能力组 |
+| CAP-6 | 迁移 | `SPEC.md:49`、`requirements.md:201` | mnemon 迁移；**不是**上下文治理 |
+| CAP-7 | 上下文治理 | `CONTEXT-GOVERNANCE.md`（24 处） | 2026-11-25 由原 CAP-6 改号，避免与迁移撞 |
+| CAP-8 | 看视频融合（候选） | `research/technical-video-watch-fusion-2026-11-23/FUSION-DESIGN.md` | 仅候选，未立项 |
+| CAP-9 | 入口与路由 | `entry-routing.md` | 人格进主对话 + 路由派发 |
+| AD-1…AD-27 | 记忆插件架构决策 | 本文件 | `:214` AD-27 为原上限 |
+| AD-28…AD-45 | 上下文治理决策 | `CONTEXT-GOVERNANCE.md:83`…`:196` | `research/technical-context-governance-2026-11-23/research.md:88,92,104` 引用同一套 |
+| AD-46…AD-55 | 入口与路由决策 | `entry-routing.md` | 其中 AD-50…53 来自官方 superagent 原型对照（§十二） |
+| FR-1…FR-24 | 记忆插件功能需求 | `requirements.md`、`epics.md`、`prd.md` | v1 已全部分解为 story |
+| FR-25…FR-33 | 入口与路由功能需求 | `entry-routing.md` §十 | 未分解，挂下一个 sprint planning |
+| NFR-1…NFR-10 | 记忆插件非功能需求 | `requirements.md`、`epics.md` | — |
+| NFR-11…NFR-12 | 入口与路由非功能需求 | `entry-routing.md` §十 | — |
+| FR-34…FR-77 | 研究线融合增量 | `prd.md` §4.8–§4.16、`requirements.md` | 44 条；其中视频组 4 条（FR-59–62）Deferred、推 Epic 9 的 4 条（FR-63/64/67/71）不属 v1 |
+| NFR-13…NFR-16 | 研究线融合增量 | `requirements.md:236–239` | 子进程边界、折叠不降 focus_ratio、人格三元稳定、三值结论可复算 |
+| I1…I16 | 记忆插件可执行不变量 | `requirements.md:235-250`、本文件 §Gates 邻域 | I16 尚未入 `epics.md` 的表，属已知遗漏 |
+| I17…I26 | 入口与路由可执行不变量 | `entry-routing.md` §九 | 其中 I24 与 I6 互补，见下 |
+
+**降级档位的归属同样按安装位切分**（消除 AD-13「只有两档」与 AD-36「五档」的表面冲突）：
+
+| 安装位 | 装什么 | 降级档位 | 库坏时 |
+| --- | --- | --- | --- |
+| 记忆（profile） | 四工具 + 唯一库租约 + `omw.memory` | 两档：整体 no-op / 只关向量（AD-13、AD-19、AD-23） | 整体 no-op |
+| 人格（`omw-main` preset） | `harness:identity` + `omw:persona-state` | **无档位**（不开库、不依赖路由） | **身份段照常且字节不变**，尾巴省略（AD-11、`entry-routing.md` I24） |
+| 路由（`entry-routing.md`） | `routing.json` + 派发/回流 | 两档：正常 / 账本不可用即 `E_GATE_DOWN` 停路由 | **派发照常**（不碰库） |
+| 上下文治理（CAP-7） | 折叠接管 + 账本 | 五档（`CONTEXT-GOVERNANCE.md` AD-36） | 不受影响 |
+
+> **因此 I6 的原文「库不可用时零注册」需要读成「记忆安装位零注册」**：它断言的是「库坏时不要把半活的记忆工具挂上去」，而不是「整台机器什么都别注入」。人格安装位在那时**必须**还在（否则违反 AD-11：坏掉的是记忆，不是人设）。`entry-routing.md` I24 断言的就是这一半。两条不是矛盾，是同一场景的两侧；`requirements.md:722`（I6）与 `SOLUTION-DESIGN.md:233` 的措辞已按本表加上限定语（2026-11-25 同步完成）。
 
 ## Stack
 
@@ -319,7 +369,7 @@ dsh-oh-my-whale/
     gui/       # 客户端插件（只 import DTO 类型，拿不到 ctx）
     ops/       # 快照、校验、迁移、卸载、保留策略的唯一入口
   assets/      # persona.md（字节稳定，随插件发布）
-  scripts/     # 运维 CLI：snapshot / verify / migrate --dry-run
+  scripts/     # 开发期工具（构建、lint、层依赖检查、gate、评测驱动），不是交付给用户的命令面
   eval/        # 验收物：golden-l1.jsonl、governance-20.md、rubric.md、reports/
   test/        # vitest：契约、注入快照、梦境 dry-run 回归、no-llm 断言
 ```
@@ -342,7 +392,7 @@ graph LR
 - **数据落盘**：`<plugin-data>/oh-my-whale/{oh-my-whale.tdb, snapshots/, audit.jsonl}`；实际 root 由 storage domain 决定，M0 确认。
 - **预算**：召回默认 5 条 / 三段 250+600+20ms、硬上限 1000ms，重排默认开启且每轮至多一次；dream 日 token 上限；常驻身份段 ≤1200 字符 + 状态尾巴 ≤30 token；抽取与 embedding 的日调用上限见 AD-26。
 - **停用**：从 profile 的补丁里移除条目并重启，数据原地保留，不删任何文件。
-- **卸载**：只走 `scripts/dispose.ts --export-then-delete`——先导出 JSONL，再删插件目录；`audit.jsonl` 默认不随卸载删除。这是 AD-5 的第三个具名豁免。
+- **卸载**：先用聊天内 `/omw export` 导出全量 JSONL，再由用户手动删除插件目录——**不提供进程外卸载命令**（早先设想过的 `scripts/dispose.ts` 已按 2026-11-25「无进程外 CLI」裁定取消，AD-5 第三个具名豁免改由 `src/ops/dispose.ts` 在进程内承担：导出后按 AD-5 允许的路径物理删除，文件头写 `// AD-15 豁免：卸载导出`）；`audit.jsonl` 默认不随卸载删除。
 - **升级**：读 `meta.contract_version`，高于代码支持版本即按 AD-13 整体 no-op；低则跑迁移，迁移前强制快照。
 
 节点与边的形状：
@@ -365,7 +415,7 @@ graph LR
   C["dream_cycle 周期标记"] -->|covers| EP
 ```
 
-权威 kind：`assertion` `evidence` `entity` `episode` `scene` `pref` `persona_state` `flag` `whatif` `decision` `dream_cycle` `dream_log` `rejected`。权威 edge label：`supersedes` `contradicts` `supports` `refutes` `enriches` `about` `part_of` `derived_from` `anchor` `in_episode` `covers`。
+权威 kind（16 个 = 记忆侧 14 + CAP-7 账本型 2）：`assertion` `evidence` `entity` `episode` `scene` `pref` `persona_state` `flag` `pred` `whatif` `decision` `dream_cycle` `dream_log` `rejected` `fold` `req_ledger`。权威 edge label：`supersedes` `contradicts` `supports` `refutes` `enriches` `about` `part_of` `derived_from` `anchor` `in_episode` `covers`。
 
 **`flag` 与 `decision` 都是节点，不是边**——治理视图靠 `kind=flag ∧ status=open` 和 `kind=decision` 查询；`supported_by` 这种把证据挂在断言上的写法已废弃，统一用 evidence → assertion 的 `supports` / `refutes` 表达极性。
 
@@ -390,10 +440,12 @@ graph LR
 | CAP-2 固化 | 夜间八步、确定性结算先行 | 每步独立提交，可从断点续跑 | `dream/`、`store/templates` | AD-8, AD-10, AD-17 |
 | CAP-3 治理 | 版本链、flag、账本、撤销、导出 | 零物理删除，撤销逐条等于操作前 | `core/`（裁决与版本链）、`gui/` | AD-5, AD-9, AD-17, AD-21, AD-22 |
 | CAP-4 人格 | 身份文件、状态尾巴、关系四维 | 身份不依赖库，边界在工具层拦截 | `persona/`、`assets/persona.md` | AD-7, AD-11, AD-12 |
-| CAP-5 运维 | 快照、体检、配置、降级 | 故障整体 no-op，不半开 | `ops/`、`scripts/` | AD-13, AD-14, AD-16, AD-19 |
+| CAP-5 运维 | 快照、体检、配置、降级 | 故障整体 no-op，不半开 | `ops/`，命令面是聊天内 `/omw` 斜杠命令 | AD-13, AD-14, AD-16, AD-19 |
 | 工具面 | 模型侧公开契约 | 签名变更即破坏兼容 | `seams/tools`、`core/` | AD-25 |
 | 治理投影 | 只读 DTO 与客户端视图 | 唯一只读出口 | `core/projections`、`seams/projection-bridge`、`gui/` | AD-24 |
 | 配置与预算 | schema 与四个日上限 | 单一出处，越限降级 | `seams/config` | AD-26 |
+| CAP-7 上下文治理 | 折叠阶梯、请求账本、焦点预算 | 只折已消费增量；折叠可逆可追；`compose()` 语义不变 | `govern/`（`CONTEXT-GOVERNANCE.md`） | AD-28…AD-45 |
+| CAP-9 入口与路由 | 人格进主对话、路由派发 | 路由只改装配、不改记忆；不自造 message source kind | `core/route/`、`seams/route/`（`entry-routing.md`） | AD-46…AD-55 |
 | 全系统 | 分层与接缝 | 依赖方向单向 | — | AD-1, AD-2, AD-15, AD-18 |
 
 简报四个成功标准在架构上的落点：记忆精度 → AD-6（证据可追）+ AD-17（推断可结算）；治理 20/20 可答 → AD-5 + AD-9 + AD-21（决策账本答「谁改的、为什么」）；遗忘回滚零残留 → AD-5（软删除 + tombstone）+ AD-22（按 `op_id` 撤销）+ I13；注入成本可控 → AD-7 + AD-20。标准 1 与标准 2 的验收物有结构落点：`eval/golden-l1.jsonl`（50 条 L1 抽样）、`eval/governance-20.md`（20 问）、`eval/rubric.md`（判定口径），由 `scripts/eval.ts` 跑、输出 `eval/reports/<date>.md`——没有这三个文件，标准 1/2 不算达标。

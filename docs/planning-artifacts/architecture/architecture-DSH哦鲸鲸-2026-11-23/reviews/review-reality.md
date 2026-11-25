@@ -24,8 +24,8 @@
 | 证实 | Deferred L331、AD-15 | `dsh-tools/lib/types/events.d.ts:29-40` | `tools/post-execute` 是 `@mode waterfall`，返回 `PostToolDecision`，JSDoc 明写 accept/replace/enrich/block——「卡片与通知可做硬门禁」成立。 |
 | 证实 | AD-8 L89、AD-5 L71 | 实测 `probe.mjs`；`triviumdb.d.ts:194-213` | `{superseded_at: {$exists:false}}` 语义正确：只返回缺该字段的节点；`$eq:null` 只命中显式 null；未知操作符抛 `TDB_INVALID_INPUT`（说明 `$exists` 是被实现的真操作符）。 |
 | 证实 | AD-10 L101 | `triviumdb.d.ts:921`＋实测 `probe2.mjs` | `createUniqueCompositeIndex(['k','v'])` 真唯一：重复 insert 与 updatePayload 都抛 `TDB_UNIQUE_CONSTRAINT`，`dream_cycle` 一天一次有机制兜底。 |
-| 证实 | AD-4 L65 | `triviumdb.d.ts:695,135-143` | `commitTransaction(operations): number[]` 存在，op 恰 8 种：insert / insertWithId / delete / updatePayload / updateVector / link|upsertEdge / unlink / unlinkLabel。 |
-| 证实 | AD-8 L89 | `triviumdb.d.ts:983-984` | `prepareTql` / `executePreparedTql` 存在；参数类型是 `Record<string, string|number|boolean|null>`（只接受标量，见中项 I）。 |
+| 证实 | AD-4 L65 | `triviumdb.d.ts:695,135-143` | `commitTransaction(operations): number[]` 存在，op 恰 8 种：insert / insertWithId / delete / updatePayload / updateVector / link\|upsertEdge / unlink / unlinkLabel。 |
+| 证实 | AD-8 L89 | `triviumdb.d.ts:983-984` | `prepareTql` / `executePreparedTql` 存在；参数类型是 `Record<string, string\|number\|boolean\|null>`（只接受标量，见中项 I）。 |
 | 证实 | AD-13 L119 | `triviumdb.d.ts:558,414,468-478` | `memoryLimitMb` 是构造选项；资源拒绝的 `error.code === 'QueueFull'`，`ResourceBudgetError` 存在。 |
 | 证实 | AD-14 L125 | `triviumdb.d.ts:1060` | `close()` 存在，可满足「恢复前先停库」。 |
 | 证实 | AD-14 L125 | `triviumdb.d.ts:1039,537-538` | `createSnapshot` 是实例方法；`verifySnapshot` / `restoreSnapshot` 是模块级导出（骨架写法隐含它们同源，实现时注意 import 位置）。 |

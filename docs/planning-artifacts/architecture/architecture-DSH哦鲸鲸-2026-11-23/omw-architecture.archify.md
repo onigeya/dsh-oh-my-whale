@@ -155,8 +155,8 @@
 | 凭据 401 或 402 | 关向量路径，报固定错误码 | 换 key 或充值 |
 | 抽取超时 | 弃本轮，记一次失败 | 下一轮重来 |
 
-@callout id=fail-rule level=warning title="降级只有两档"
-要么整体 no-op，要么只关向量路径。不存在「半开」：不写一半、不注入半段。
+@callout id=fail-rule level=warning title="记忆安装位降级只有两档"
+记忆安装位（库、四工具、召回）要么整体 no-op，要么只关向量路径。不存在「半开」：不写一半、不注入半段。人格安装位**无降级档**（`harness:identity` 不依赖库，见骨架 AD-11），上下文治理安装位另有五档（`CONTEXT-GOVERNANCE.md` AD-36），二者都不受本 callout 约束。
 
 ## 哪些门不过就不许往下走 {#gates}
 

@@ -36,7 +36,7 @@ binds: [CAP-1, CAP-2, CAP-3, CAP-4, CAP-5]
 | `scene` | 多方收敛出的情境 | `name, description, episode_refs[], confidence` |
 | `pref` | 用户偏好（迁移自 mnemon） | `key, value, source{kind,uri,line_from,line_to}, confidence` |
 | `persona_state` | 可变关系状态 | `dims{temperature,trust,intimacy,understanding}, updated_at, last_event?` |
-| `flag` | 待处理或已处理的标记 | `flag_type(dangling_evidence\|contradiction\|refuted\|rejected\|dream_truncated\|migration), severity, status(open\|resolved), detail, resolved_at?, resolved_by(auto\|human)?` |
+| `flag` | 待处理或已处理的标记 | `flag_type(dangling_evidence\|contradiction\|refuted\|rejected\|dream_truncated\|migration\|predicate_new), severity, status(open\|resolved), detail, resolved_at?, resolved_by(auto\|human)?` |
 | `decision` | 每次改动的账本（谁、依据什么、为什么） | `ts, actor, kind(insert\|supersede\|arbitrate\|resolve_flag\|migrate\|revert), op_id, affected[], target_mem_key, from?, to?, reason, precedent_id?, contract_version` |
 | `dream_log` | 固化每一步一条，支持断点续跑 | `date, step, seed, diff, tokens, status` |
 | `rejected` | 被校验拒收的补丁 | `patch, reason, at` |
@@ -230,7 +230,7 @@ knownAsOf(t)   : 上式 AND recorded_at <= t
 | I3 | 每轮注入不超预算，且审计行可复算 | 用审计行重算 tokens，与预算表比对 |
 | I4 | 召回在 1000ms 硬上限内返回候选，且**②失败不返空** | ①在 worker 线程跑、主线程只等 `recall.timeoutMs`；分别注入慢 provider 与坏 provider：前者断言走完①并按 `rerank_unavailable` 退回①顺序，后者断言①真空才记真空降级 |
 | I5 | dream 同日二次运行无 diff | dry-run 两次，diff 为空 |
-| I6 | 库不可用时零注册 | 用坏文件启动，断言 section 与工具都未注册 |
+| I6 | 库不可用时**记忆安装位**零注册 | 用坏文件启动，断言记忆段与四工具都未注册；人格段（预设安装位）此时照常且字节不变（AD-11、`entry-routing.md` I24），见骨架「编号保留登记表」的安装位档位表 |
 | I7 | 无 `falsifier` 的推断不入库 | 提交带 `origin=inference` 且无 falsifier 的补丁，断言进 `rejected` |
 | I8 | 快照可用 | `verifySnapshot` 返回 `complete=true` 且文件 crc 匹配 |
 | I9 | 身份段字节稳定 | 连续 100 轮注入，section 文本 sha256 不变 |
@@ -238,8 +238,8 @@ knownAsOf(t)   : 上式 AND recorded_at <= t
 | I11 | dream 中断可从最后完成的阶段续跑 | 在第 ④ 步后杀进程，重启后断言 ①②③ 不重跑 |
 | I12 | 治理能答「谁改的、为什么」 | 任取一条断言，沿 `decision` 链答出 actor / reason / 时间 |
 | I13 | 撤销单元整体回滚 | 造一次复合操作（supersede + flag + 边），按 `op_id` 撤销，默认查询与召回逐条等于操作前（比较时排除账本类节点） |
-| I14 | 插件能被真正启用并注入一次 | G0-5：重启后 `omw doctor` 全绿，且注入段在宿主里可见 |
-| I15 | 三项 p95 达标 | `scripts/audit-report.mjs --since 24h`：注入 ≤30ms、召回 ≤900ms 且 `rerank_unavailable` <5%、①真空 <1%、写事务 ≤10ms |
+| I14 | 插件能被真正启用并注入一次 | G0-5：重启后 `/omw doctor` 全绿，且注入段在宿主里可见 |
+| I15 | 三项 p95 达标 | `/omw stats --since 24h`（聊天内命令，读审计 JSONL）：注入 ≤30ms、召回 ≤900ms 且 `rerank_unavailable` <5%、①真空 <1%、写事务 ≤10ms |
 
 ## 10. 里程碑
 
@@ -268,7 +268,7 @@ knownAsOf(t)   : 上式 AND recorded_at <= t
 | 工具 | `recall(query, topK?≤8)`、`remember(patch)`、`forget(mem_key, reason)`、`explain(mem_key)`；统一包封 `ok / items? / degraded / reason?` | AD-25 |
 | 错误码 | `E_BUDGET` `E_TIMEOUT` `E_DEGRADED` `E_BOUNDARY` `E_GATE_DOWN` | AD-25 |
 | 治理投影 | `core/projections` 的纯函数 DTO（`flagQueue`/`versionChain`/`exportJsonl`/`explain`），带 `contractVersion`，经 `seams/projection-bridge` 给客户端 | AD-24 |
-| 配置 | 唯一 schema 在 `seams/config.ts`，互斥规则启动即校验；预算三键封顶外部调用 | AD-26 |
+| 配置 | 唯一 schema 在 `seams/config.ts`，互斥规则启动即校验；**预算四键**（`extractionCallsPerDay` / `embeddingCallsPerDay` / `rerankCallsPerDay` / `dreamTokensPerDay`，另 `budget.foldCallsPerDay` 属 CAP-7）封顶外部调用 | AD-26 |
 | 注入 | 身份段 `section()`、状态尾巴 `context()`；`compose()` p95 ≤20ms，审计异步 | AD-7、AD-20 |
 | 召回 | ①worker 线程内 `search()` 250ms → ②重排 600ms（每轮至多一次、缓存 10 分钟）→ ③注入 20ms；硬上限 1000ms、②失败退①不返空 | AD-8 |
 | 写 | 单写队列 `store/commits/queue.ts`，一次业务写入一次事务，撞唯一键即 `rejected` | AD-4、AD-3 |
