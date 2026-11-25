@@ -193,6 +193,6 @@ deferred: []
 
 **Findings.** 四层评审共 55 条。patch 37 条（含 3 条 high：retention 在无效时钟下会删光、会话被驱逐后把整段累计当成一次增量、宿主拒绝替换身份段时提示词仍被改成新的一版）；reject 16 条（多为把既有设计当缺陷，或引用了本工作树不存在的文档路径）；defer 1 条（`RuntimeDeps.readState` 生产未接线，属 2.6 之前就存在的形状）；false 2 条（末行换行、AUD_INJ_HOST_FIRST 的 0 与 null；都已逐条实测证伪）。逐条裁定见上方 Review Triage Log。
 
-**Follow-up.** ①`RuntimeDeps.readState` 仍未在生产接线（`src/index.ts` 只传 ctx/config/logger），所以 `identity+state` 这一档在生产里暂不可达——Epic 3 引入人物状态时补。②`docs/planning-artifacts/epics.md` 与 `SOLUTION-DESIGN.md` 里「`scripts/audit-report.mjs` 作为用户命令」的表述与项目卡 T4「不提供进程外 CLI」相冲突，按开发工具继续保留，待用户裁定。③`src/ops/audit.ts` 等文件末行无换行是 2.6 之前就有的状态，未在本故事顺手改。
+**Follow-up.** ①`RuntimeDeps.readState` 仍未在生产接线（`src/index.ts` 只传 ctx/config/logger），所以 `identity+state` 这一档在生产里暂不可达——**顺延到 Epic 7**（用户 2026-11-25 裁定）：生产可读的人物状态只存在于库里的 `persona_state` / `pref` / `flag` 节点，而 AD-7（`ARCHITECTURE-SPINE.md:81`）与 spec-2-4 的「注入路径不读库」、以及 Story 2.4 AC 的「状态尾巴在 Epic 7 交付前均如此」（`epics.md:523-524`）都不允许在 Epic 2 里把这条路打开；`epics.md:220` 也禁止预埋后续 epic 的实现。②`scripts/audit-report.mjs` 与项目卡 T4「不提供进程外 CLI」的冲突已由用户裁定（2026-11-25）：**保持现状**——它是与 `scripts/check-layers.mjs` 同形态的开发/运维检查工具，不算插件命令面；T4 收窄为「不提供用户命令」。③`src/ops/audit.ts` 等文件末行无换行是 2.6 之前就有的状态，未在本故事顺手改。
 
 **Verification.** 见上节：lint / 静态门 / 639 项测试 / 覆盖率门槛全部 exit 0，报表脚本对真实 runtime 目录实跑通过。
