@@ -1,3 +1,6 @@
+# Epic 3 开工前必须先补齐的工作：docs/implementation-artifacts/epic-3-readiness-2026-11-26.md
+# （P0 8 条阻塞开工 / P1 6 条挡单个 story / P2 10 条结转；未补齐前不要给 Epic 3 排 story）
+
 # STATUS DEFINITIONS:
 # ==================
 # Epic Status:
@@ -29,7 +32,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-23-2026 12:43
-last_updated: 11-25-2026 21:35
+last_updated: 11-26-2026 00:16
 project: DSH哦鲸鲸
 project_key: NOKEY
 tracking_system: file-system
