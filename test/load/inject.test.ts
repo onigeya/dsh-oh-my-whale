@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { apply } from '../../src/index.ts'
 import { parseConfig, resolvePaths, type Config } from '../../src/seams/config.ts'
-import { normalizePersona } from '../../src/seams/prompt-composer.ts'
+import { normalizePersona, RECALL_CONTEXT_NAME } from '../../src/seams/prompt-composer.ts'
 import { closeDatabase, openDatabase } from '../../src/store/db.ts'
 import { registerPlaceholderTools, type ToolRegistryLike } from '../../src/seams/tools.ts'
 import { createRecordingContext, tempHome, type TempHome } from '../support/fake-ctx.ts'
@@ -148,7 +148,11 @@ describe('load: identity section', () => {
 
   it('registers no state tail while the tail has no source', () => {
     const { sections } = load()
-    expect(sections.contexts).toEqual([])
+    // The recall context is registered unconditionally (its provider answers with
+    // whatever the assembly computed), so "no tail" is asserted by name rather
+    // than by an empty context list.
+    expect(sections.contexts.map(context => context.name)).toEqual([RECALL_CONTEXT_NAME])
+    expect(sections.contexts.map(context => context.text)).toEqual([''])
   })
 })
 
@@ -309,7 +313,15 @@ describe('load: what the injection may read (Story 2.4)', () => {
     expect(textOf(seeded.sections)).toBe(textOf(empty.sections))
     expect(textOf(seeded.sections).length).toBeGreaterThan(0)
     // Both mounts must record the same registrations, not just the same text.
-    expect(seeded.sections.contexts).toEqual(empty.sections.contexts)
+    // The providers are functions, so the comparison is over names, orders and
+    // the text they render for a session — two functions are never `===`.
+    const shapeOf = (recorded: ReturnType<typeof load>['sections']): unknown =>
+      recorded.contexts.map(context => ({
+        name: context.name,
+        order: context.order,
+        text: context.render === undefined ? context.text : context.render({ session: { id: 'shape-check' } }),
+      }))
+    expect(shapeOf(seeded.sections)).toEqual(shapeOf(empty.sections))
   })
 })
 

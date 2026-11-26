@@ -142,7 +142,7 @@
 SM-2（30 秒答清三问）需要一个真实入口；治理界面在 v1 之后，命令必须在 v1 交付。
 
 - **命令面只有聊天内斜杠命令**（2026-11-25 用户裁定：「不要任何 CLI，只保留 command」）。本项目不提供任何进程外可执行入口：不留 `bin` 字段、不留面向用户的 `scripts/` 命令、不 spawn 子进程（AD-1 单进程纯插件）。`scripts/` 只保留开发期工具（构建、测试、lint、层依赖检查、评测驱动），它们不是交付给用户的命令面。
-- 四条只读命令，与既有 `/omw doctor` 同一注册路径（`ctx.commands.register`）：`/omw explain <mem_key|关键词>`（版本链 + 账本 + 证据，一次调用）、`/omw version-chain <mem_key>`、`/omw flag-queue [--status open]`、`/omw export [--include-quotes]`；字段名与 AD-24 的治理投影 DTO 对齐。
+- 命令面为**十条平铺注册**（2026-11-26 P0-3 裁定，取代本条最初「四条只读命令」的写法）：`/omw-explain <mem_key|关键词>`（版本链 + 账本 + 证据，一次调用）、`/omw-flag-queue [--status open]`、`/omw-export [--include-quotes]` 三条本 FR 新增；`/omw-doctor`、`/omw-pred-promote`、`/omw-evidence`、`/omw-history`、`/omw-ledger`、`/omw-stats`、`/omw-brief` 七条沿用既有裁定。全部走同一注册路径（`ctx.commands.register`），**没有裸 `/omw` 子命令分派**；字段名与 AD-24 的治理投影 DTO 对齐。
 - 结果以消息文本返回，**没有退出码语义**：未命中时返回明确的空结果并带标记（`NOT_FOUND` / 对应 `OMW_*` 码），不打印调用栈、不返回交互式分页。
 - 输出为结构化 JSON 与人类可读两种；字段名与导出格式一致。
 - 任取一条记忆，从执行命令到看到三个答案 ≤30 秒（含人工阅读）。

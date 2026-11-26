@@ -40,7 +40,7 @@ import {
 } from '../store/meta.ts'
 import { RECALL_ITEM_BUDGET_TOKENS, resolvePaths, type Config, type HomePath, type Paths } from './config.ts'
 import { createAppendFileSink, createLogger, type Logger } from './logger.ts'
-import { PromptComposer, type InjectionPlan, type PersonaState, type SystemPromptLike } from './prompt-composer.ts'
+import { PromptComposer, type InjectionPlan, type PersonaState, type RecallItem as ComposerRecallItem, type SystemPromptLike } from './prompt-composer.ts'
 import { registerPlaceholderTools, type ToolRegistryLike } from './tools.ts'
 import { createVectorPolicy, type VectorPolicy } from './vector.ts'
 import { createWritePort, type WritePort } from './write-port.ts'
@@ -239,6 +239,14 @@ export interface RuntimeDeps {
   readonly personaPath?: string
   /** Mutable state-tail inputs. Epic 1 leaves this absent: no state, no tail. */
   readonly readState?: () => PersonaState | undefined
+  /**
+   * Recall inputs for one assembly (P0-1).
+   *
+   * A function of the assembly's query because the query comes from the
+   * conversation, which only exists at assembly time. Absent means "no recall
+   * tier"; a real mount always supplies one, since the reader exists by then.
+   */
+  readonly readRecall?: (query: string) => readonly ComposerRecallItem[] | undefined
   /** Embedding transport override (tests only); production uses the global `fetch`. */
   readonly fetchImpl?: typeof fetch
 }
@@ -353,13 +361,33 @@ export function startRuntime(deps: RuntimeDeps): Runtime {
     recallItemBudgetTokens: RECALL_ITEM_BUDGET_TOKENS,
     ...(deps.readState === undefined ? {} : { readState: deps.readState }),
     //
+    // Recall joins the injection at assembly time (P0-1). The reader is created
+    // further down — it needs the handle, which does not exist yet — so this is a
+    // thunk: it resolves `recall` when the host assembles, by which point the
+    // reader is there. A late-bound capture is the whole reason the wiring can
+    // live above the creation instead of the other way round.
+    //
+    readRecall: (query: string) => {
+      const reader = recall
+      if (reader === undefined) return undefined
+      const answer = reader.recall(query, config.recall.topK)
+      // A refusal is not an empty result: it must not be cached as "nothing to
+      // recall", and it must not stop the assembly. Its row is already written
+      // inside the reader, so this only decides what to inject.
+      if (!answer.ok) return undefined
+      // `value` is the reader's display string for this hit (it already knows
+      // which payload field holds the words per kind), so the composer gets the
+      // same text the recall tool would have shown the model.
+      return answer.hits.map(hit => ({ memKey: hit.mem_key, text: hit.value }))
+    },
+    //
     // The row is written here and nowhere else: the host calls the identity
     // provider once per assembly, and that call is the only moment a
     // `session_id` exists to put in the row (AD-20).
     //
-    onInject: (plan, context) => {
+    onInject: (plan, context, elapsedMs) => {
       try {
-        const row = auditor.record({ sessionId: context?.session?.id, plan })
+        const row = auditor.record({ sessionId: context?.session?.id, plan, elapsedMs })
         //
         // Two different nothings, and only one of them is news.
         //
@@ -804,8 +832,7 @@ function isToolRegistry(value: unknown): value is ToolRegistryLike {
     && typeof (value as { register?: unknown }).register === 'function'
 }
 
-/** Read the database dimension without letting a probe crash startup. */
-function safeDim(db: Database): number | null {
+/** Read the database dimension without letting a probe crash startup. */function safeDim(db: Database): number | null {
   try {
     return databaseDim(db)
   } catch {

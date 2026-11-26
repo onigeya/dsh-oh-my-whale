@@ -186,7 +186,6 @@ export function ensureSchema(db: Database, options: SchemaOptions = {}): SchemaO
       aliases: [],
       decidedBy: 'seed',
       decidedAt: nowIso,
-      evidenceCount: 0,
       normVersion: NORM_VERSION,
       activeSlot: 1,
       recordedAt: nowIso,

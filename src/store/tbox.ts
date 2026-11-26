@@ -106,7 +106,6 @@ export interface PredicatePayloadInput {
   readonly aliases: readonly string[]
   readonly decidedBy: 'user' | 'seed' | 'model'
   readonly decidedAt: string
-  readonly evidenceCount: number
   readonly normVersion: number
   readonly activeSlot: number
   readonly recordedAt: string
@@ -132,7 +131,6 @@ export function buildPredicatePayload(input: PredicatePayloadInput): Record<stri
     aliases: [...input.aliases],
     decided_by: input.decidedBy,
     decided_at: input.decidedAt,
-    evidence_count: input.evidenceCount,
     norm_version: input.normVersion,
     active_slot: input.activeSlot,
     valid_from: input.validFrom,

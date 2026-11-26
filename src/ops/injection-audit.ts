@@ -53,6 +53,14 @@ export interface InjectionRecord {
   readonly sessionId: string | undefined
   /** The plan that was registered. */
   readonly plan: InjectionPlan
+  /**
+   * Wall time the assembly took, in whole milliseconds (P0-8).
+   *
+   * Supplied by the composer, which is the only place that sees both the start
+   * and the end of one assembly. A row that measured nothing of its own would
+   * put a zero in the p50/p95 pool and drag the percentiles down.
+   */
+  readonly elapsedMs: number
 }
 
 /** The injection-audit seam. */
@@ -119,7 +127,7 @@ export function createInjectionAuditor(options: InjectionAuditorOptions): Inject
   const evicted = new Set<string>()
   return {
     record(record: InjectionRecord): InjectionAuditRow | undefined {
-      const { sessionId, plan } = record
+      const { sessionId, plan, elapsedMs } = record
       if (sessionId === undefined || sessionId === '') return undefined
       const digest = digestOf(plan)
       const previous = digests.get(sessionId)
@@ -133,15 +141,15 @@ export function createInjectionAuditor(options: InjectionAuditorOptions): Inject
         ts: at.toISOString(),
         session_id: sessionId,
         tier: tierOf(plan),
-        chars: plan.persona.chars + plan.tail.chars,
-        // What actually rode into the prompt: recall is composed but has no
-        // channel yet, so counting it here would report text the model never saw.
-        tokens: plan.identityTokens + plan.tail.tokens,
+        // All three tiers are on the wire now that recall has a channel, so the
+        // row counts all three. Until P0-1 it deliberately excluded recall —
+        // counting text the model never saw would have been a lie.
+        chars: plan.persona.chars + plan.tail.chars + plan.recall.chars,
+        tokens: plan.identityTokens + plan.tail.tokens + plan.recall.tokens,
         items: itemsOf(plan),
-        // Only the two injected tiers count. `plan.truncated` is true when recall
-        // was cut for budget, and a recall cut is not an injection cut.
-        truncated: plan.persona.truncated || plan.tail.truncated,
+        truncated: plan.persona.truncated || plan.tail.truncated || plan.recall.truncated,
         prefix_unchanged: previous !== undefined && previous === digest,
+        elapsed_ms: elapsedMs,
         host_cache_read: delta.usage.read,
         host_cache_write: delta.usage.write,
         host_cache_uncached: delta.usage.uncached,
@@ -229,25 +237,34 @@ export function createInjectionAuditor(options: InjectionAuditorOptions): Inject
  * @returns the tier.
  */
 function tierOf(plan: InjectionPlan): InjectionTier {
-  // Derived from the kept list -- the very list itemsOf() names -- so a row can
-  // never claim the identity tier while listing state units. tail.text is not
-  // the same source: a host that kept an earlier registration leaves a plan
-  // whose text and kept list can disagree, and the tier would then contradict
-  // the items printed on the same line.
-  return plan.tail.kept.length === 0 ? 'identity' : 'identity+state'
+  // Derived from the kept lists -- the very lists itemsOf() names -- so a row can
+  // never claim a tier while listing units it did not carry. tail.text is not the
+  // same source: a host that kept an earlier registration leaves a plan whose text
+  // and kept list can disagree, and the tier would then contradict the items
+  // printed on the same line.
+  const state = plan.tail.kept.length > 0
+  const recall = plan.recall.kept.length > 0
+  if (state && recall) return 'identity+state+recall'
+  if (recall) return 'identity+recall'
+  return state ? 'identity+state' : 'identity'
 }
 
 /**
  * The prompt units this assembly carried.
  *
  * Unit names, never `mem_key`s: an injection is a set of units, and a business key
- * belongs to the recall row that returned it. Recall contributes nothing here for
- * the same reason it contributes no tokens — there is no channel to carry it.
+ * belongs to the recall row that returned it. Recall contributes one unit per kept
+ * item, under the `recall` prefix — the names are what a reader groups by, and a
+ * bare `mem_key` would put a business identity on the wrong row.
  * @param plan - the assembly.
  * @returns the unit names, identity first.
  */
 function itemsOf(plan: InjectionPlan): readonly string[] {
-  return ['identity', ...plan.tail.kept.map(segment => `state:${segment}`)]
+  return [
+    'identity',
+    ...plan.tail.kept.map(segment => `state:${segment}`),
+    ...plan.recall.kept.map((_item, index) => `recall:${index + 1}`),
+  ]
 }
 
 /**

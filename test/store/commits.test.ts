@@ -33,7 +33,6 @@ function predicatePayload(name: string, extra: Record<string, unknown> = {}): Re
       aliases: [],
       decidedBy: 'seed',
       decidedAt: NOW_ISO,
-      evidenceCount: 0,
       normVersion: NORM_VERSION,
       activeSlot: 1,
       recordedAt: NOW_ISO,

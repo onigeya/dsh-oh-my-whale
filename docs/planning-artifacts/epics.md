@@ -101,7 +101,7 @@ inputDocuments:
 - **FR-22 什么值得记、什么禁止记（含读取边界）**（AD-4、AD-6、AD-17、AD-25；UJ-1）
   可测：抽取输入是会话片段 + 已有记忆的稳定身份，输出只有一张补丁表，禁止逐条流式写库；用户显式偏好 / 决定 / 纠正必须落断言，纯寒暄与纯执行性对话必须不落（两类各有 ≥20 条标注样本可判）；证据缺失时只能标 `evidence-unresolvable`；无合法判别式的推断只能落场景描述文本，不得进断言层；单次抽取失败不重试超过一次，失败留 `rejected` 与错误码、不写半截；越界读取 = 0（测试断言只碰「本轮新增 seq」与「库内已有证据指针」，每次回读记 `session_id` 与 seq 范围）；回读 lookback ≤30 天，超出标 `evidence-expired`；v1 偏 precision（不确定即不落），假阳性 / 假阴性分开统计且及格线按假阳性加权。
 - **FR-23 治理查询命令是 v1 的交付物**（AD-21、AD-24；UJ-3）
-  可测：四条只读命令是聊天内斜杠命令 `/omw explain <mem_key|关键词>`、`/omw version-chain <mem_key>`、`/omw flag-queue [--status open]`、`/omw export [--include-quotes]`，字段名与 AD-24 治理投影 DTO 对齐；结果以消息文本返回、无退出码，未命中返回空结果 + `NOT_FOUND` 标记，不使用交互式分页；输出同时有结构化 JSON 与人类可读两种且字段名一致；任取一条记忆，从执行命令到看到三个答案 ≤30 秒；命令只读（零写入、不更新热度）。
+  可测：本 FR 的命令是聊天内斜杠命令 `/omw-explain <mem_key|关键词>`、`/omw-flag-queue [--status open]`、`/omw-export [--include-quotes]`（命令面全量十条见 ARCHITECTURE-SPINE §命令面，2026-11-26 P0-3 定形），字段名与 AD-24 治理投影 DTO 对齐；结果以消息文本返回、无退出码，未命中返回空结果 + `NOT_FOUND` 标记，不使用交互式分页；输出同时有结构化 JSON 与人类可读两种且字段名一致；任取一条记忆，从执行命令到看到三个答案 ≤30 秒；命令只读（零写入、不更新热度）。
 - **FR-24 全量数据可导出（纯文本 + JSONL）**（AD-3、AD-5；UJ-2）
   可测：一条命令导出全部断言（含版本链关系）、偏好、场景摘要与账本；默认不含已脱敏引文与节点 id；格式为纯文本 + JSONL，可直接归档、不需本产品即可读懂；导出是卸载前置条件（未导出不允许卸载）。
 
@@ -689,7 +689,7 @@ So that「为什么这一轮它没记得」这种问题能用数据回答，而�
 
 **验收闸门（PRD §7.1，判据原文在那里）：** 本 epic 承载 **G-E3-1**（治理与证明链，落在 Story 3.6 的证明四列 + 邻域一致性、以及 Story 3.7 的三关与置信带）、**G-E3-2**（召回返回契约扩展可缺席，落在 Story 3.6 的「四字段全缺省时返回体与 Story 2.5 逐字段相同」）、**G-E3-4**（自有文案门禁，落在 Story 3.8 的 `assets/copy-rules.json` 结构检查）。三者任一不过，本 epic 不算完成——**延后而非降级**，不得把这批条目挪进 v1.5 当作已交付。
 
-> **形态已定（2026-11-25 用户裁定：「不要任何 CLI，只保留 command」）**：本 epic 的命令面是**聊天内斜杠命令** `/omw explain`、`/omw version-chain`、`/omw flag-queue`、`/omw export`，与既有 `/omw doctor` 同一注册路径（`ctx.commands.register`）。本项目不提供任何进程外 CLI：无 `bin`、无面向用户的 `scripts/` 命令、不 spawn 子进程（AD-1）。因此 Story 3.1–3.5 的 AC 里「退出码 0/2」一律读作「以消息文本返回明确结果；未命中返回空结果 + `NOT_FOUND` 标记，不打印调用栈」。`scripts/eval.ts` 是开发期评测驱动、不是交付命令，它直接走治理投影 DTO 的读取路径，不 fork 子进程。
+> **形态已定（2026-11-25 用户裁定「不要任何 CLI，只保留 command」；2026-11-26 P0-3 定形为平铺注册）**：本 epic 的命令面是**聊天内斜杠命令** `/omw-explain`、`/omw-flag-queue`、`/omw-export`，与既有 `/omw-doctor` 等七条同一注册路径（`ctx.commands.register`），十条各自独立注册、**没有裸 `/omw` 子命令分派**（宿主把首 token 整个当命令名）。本项目不提供任何进程外 CLI：无 `bin`、无面向用户的 `scripts/` 命令、不 spawn 子进程（AD-1）。因此 Story 3.1–3.5 的 AC 里「退出码 0/2」一律读作「以消息文本返回明确结果；未命中返回空结果 + `NOT_FOUND` 标记，不打印调用栈」。`scripts/eval.ts` 是开发期评测驱动、不是交付命令，它直接走治理投影 DTO 的读取路径，不 fork 子进程。
 
 ### Story 3.1: 一条命令答清三个问题
 
@@ -736,7 +736,7 @@ So that「它什么时候变成这样的」是一个可读的事实，而不是�
 **Acceptance Criteria:**
 
 **Given** 一条被改写过的记忆
-**When** 执行 `/omw version-chain <mem_key>`
+**When** 执行 `/omw-history <mem_key>`（命令名 2026-11-26 P0-4 裁定由 `version-chain` 统一为 `history`：两者本来就是同一个读取器）
 **Then** 按时间返回 v1…vn，每版标 `active` 与否，含 `valid_from` / `valid_to` / `superseded_at`（FR-11、FR-3）
 
 **Given** 同一 `op_id` 影响了多个对象
@@ -748,7 +748,7 @@ So that「它什么时候变成这样的」是一个可读的事实，而不是�
 **Then** 只有 append，没有任何 update / delete 路径（测试断言）（FR-11、AD-21）
 
 **Given** 一条从未被改过的记忆
-**When** 执行 version-chain
+**When** 执行 /omw-history
 **Then** 返回单版本而不是空结果（FR-11、NFR-4）
 
 ### Story 3.3: 冲突分三级，只有自动档动数据

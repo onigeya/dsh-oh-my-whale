@@ -62,7 +62,6 @@ describe('schema: the first bootstrap', () => {
       cardinality: 'multi',
       status: 'active',
       decided_by: 'seed',
-      evidence_count: 0,
       active_slot: 1,
     })
     expect(templates.findPredByName('name')?.payload['cardinality']).toBe('single')

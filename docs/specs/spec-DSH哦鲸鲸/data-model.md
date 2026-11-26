@@ -33,7 +33,7 @@ multi  谓词：assertion:<subj>:<pred>:<obj_norm>
 
 - `evidence` 边按 `source_independence` 去重——两条证据算**同一来源** ⟺ 指向同一宿主 `session_id`，**或**规范化后的引文前缀（前 80 字符）完全相同。同源多条只算 1。
 - FR-34 的精确去重**不新建断言节点**，但重复命中要**追加一条指向本次 `source seq` 的 `evidence` 边**；因此「重复陈述 10 次」可两头核：断言节点净增 1、该断言的 `evidence` 边净增 10（同源去重后按实际来源数）。
-- 这条与 §3 里 `pred.evidence_count` 的区别：那是**谓词登记表**的元数据（一个谓词被多少断言用过），不是某条断言的出现次数，两者不是同一量。
+- §3 里的 `pred` 节点曾有一个 `evidence_count` 字段，想表达「这个谓词被多少断言用过」。它已按 §7.1 删除：该值恒为 0、全仓无任何自增路径，读时从断言聚合即可，不必也不该进库。
 
 **为什么不用计数器**：写入侧去重会吃掉重复（FR-34 命中就不写新条），若另存计数器又只在写入路径自增，恢复快照后计数与库不同步；而 `evidence` 边随断言一起进出快照，天然一致。与 FR-36「热度只算不写回」同向。
 
@@ -45,11 +45,11 @@ multi  谓词：assertion:<subj>:<pred>:<obj_norm>
 | `evidence` | 指向宿主日志的证据 | `session_id, seq_from, seq_to, quote(≤200), quote_truncated, deidentified` |
 | `entity` | 被谈论的对象 | `name, aliases[], type(person\|place\|thing\|org\|topic), first_seen` |
 | `episode` | 一段对话的片段 | `title, summary, started_at, ended_at, session_id, seq_from, seq_to` |
-| `scene` | 多方收敛出的情境 | `name, description, episode_refs[], confidence` |
+| `scene` | 多方收敛出的情境 | `name, description, episode_refs[]`（**无 `confidence`**：可信度读时由边现算，见 §7.1） |
 | `pref` | 用户偏好 | `key, value, source{kind,uri,line_from,line_to}, confidence` |
 | `persona_state` | 可变关系状态 | `dims{temperature,trust,intimacy,understanding}, updated_at, last_event?` |
 | `flag` | 待处理或已处理的标记 | `flag_type, severity, status(open\|resolved), detail, resolved_at?, resolved_by(auto\|human)?` |
-| `pred` | 谓词登记：基数、别名与状态 | `pred, cardinality(single\|multi), status(active\|candidate\|deprecated), aliases[], decided_by(user\|seed\|model), decided_at, evidence_count, norm_version` |
+| `pred` | 谓词登记：基数、别名与状态 | `pred, cardinality(single\|multi), status(active\|candidate\|deprecated), aliases[], decided_by(user\|seed\|model), decided_at, norm_version`（**无 `evidence_count`**：见 §7.1） |
 | `decision` | 每次改动的账本 | `kind`（恒为 `'decision'`，节点判别）+ `decision_kind(insert\|supersede\|arbitrate\|resolve_flag\|migrate\|revert)`, `ts, actor, op_id, affected[], target_mem_key, from?, to?, reason, precedent_id?, contract_version` |
 | `dream_log` | 固化每一步一条，支持断点续跑 | `date, step, seed, diff, tokens, status` |
 | `rejected` | 被校验拒收的补丁 | `patch, reason, at` |
@@ -80,20 +80,23 @@ multi  谓词：assertion:<subj>:<pred>:<obj_norm>
 
 **为什么必须现在做**：推导事实不存历史，事后补 `rule_id` 意味着全部历史推导无法溯源。这是扩展组里唯一「现在不做以后做不了」的项。
 
-## 4. 边 label（11 个）
+## 4. 边 label（v1 封闭集 5 条）
 
-| label | 语义 | 方向 |
-| --- | --- | --- |
-| `supports` / `refutes` | 证据对断言的极性 | evidence → assertion |
-| `supersedes` | 新版本取代旧版本 | new → old |
-| `contradicts` | 两条互斥断言 | 双向可查 |
-| `enriches` | 补充而不取代 | new → old |
-| `about` | 任何节点关于某实体 | * → entity |
-| `in_episode` | 断言发生在某片段 | assertion → episode |
-| `part_of` | 片段属于场景 | episode → scene |
-| `derived_from` | 场景由断言归纳而来 | scene → assertion |
-| `anchor` | 推演挂靠的事实锚点 | whatif → assertion |
-| `covers` | 周期覆盖 | dream_cycle → episode |
+**封闭集**（2026-11-26 定案，P0-6）：`supports` / `refutes` / `supersedes` / `contradicts` / `part_of`。代码常量在 `src/store/templates/evidence.ts` 的 `EDGE_LABELS`，`PlannedLink.label` 的类型就是它——封闭集之外的值在编译期与提交期都进不来。
+
+| label | 语义 | 方向 | 实现状态 |
+| --- | --- | --- | --- |
+| `supports` | 证据支持断言 | evidence → assertion | **已实现**：`SUPPORTS_LABEL`，写入点在 `src/seams/write-port.ts:632`，读法在 `evidence.ts:56` |
+| `refutes` | 证据反驳断言 | evidence → assertion | 未实现，首建方 Story 3.3（自动档裁决） |
+| `supersedes` | 新版本取代旧版本 | new → old | 未实现，首建方 Story 3.4（撤销闭包）。当前「取代」只以 `decision_kind: 'supersede'` 表达，**不是边** |
+| `contradicts` | 两条互斥断言 | **有向两条边**（A→B 与 B→A 各一条） | 未实现，首建方 Story 3.3 |
+| `part_of` | 片段属于场景 | episode → scene | 未实现，首建方 Epic 6（dream 归纳） |
+
+**`contradicts` 为什么是有向两条边**：它是唯一被 `affected[]` 点名、又需要双向可查的标签。存成一条「无向边」会让 `(from_key, label, to_key)` 这个三元组表达不完整，撤销时也说不清该反向删哪一条。有向两条边的代价是闭包计数按边数算（2），这正是 AD-22 撤销需要的粒度。
+
+**原先列出的 6 条不进 v1 封闭集**：`enriches` / `about` / `in_episode` / `derived_from` / `anchor` / `covers`。它们不是被否决，而是**尚未有任何实现方**——登记在这里只会让读者以为已经能画。等对应的 epic 落地时再逐条加进 `EDGE_LABELS`，并在此表补一行。
+
+**去重规则**：同一批次内 `(src, label, dst)` 唯一，由 `src/store/commits/engine.ts` 的 `#operationsOf` 去重。键是三元组不是二元组：同一对节点之间不同标签是两条真实的边。库里没有边唯一索引（`store/schema.ts` 的两个索引都只针对节点），所以这条约束落在批次构造处，而不是引擎层。
 
 `flag` 与 `decision` 都是**节点**不是边——治理视图分别靠 `kind=flag ∧ status=open` 与 `kind=decision` 查询；旧写法 `supported_by`（断言→证据）已废弃，统一用 evidence → assertion 的 `supports` / `refutes` 表达极性。
 
@@ -134,15 +137,33 @@ multi  谓词：assertion:<subj>:<pred>:<obj_norm>
 - 每次改动（写入、自动裁决、人工裁定、迁移）在**同一事务**内写一个 `decision` 节点，字段见 §3；人工裁定可指定 `precedent_id` 复用可撤销先例，先例只影响建议排序、不自动改数据；`decision` 只增、不改、不删。
 - **`kind` 与 `decision_kind` 各司其职**：节点的 `kind` 恒为 `'decision'`（§6 前三行的治理查询全按 `kind` 扫），动作落在 `decision_kind`；AC 与读面看到的 `kind`（`insert` / `supersede` / …）由 `src/core/decisions.ts` 的 `decisionView` 投影得到，`/omw explain <mem_key>` 输出的十个键与 AC③ 一致。
 - 断言自身也必须带来源：`actor`、`cause`、`prompt_version`，dream 产物另带 `cycle_id`——否则「这条是哪版提示词生成的」永远答不出来。
-- **`affected[]` 闭包** = 该操作写入或改动的全部**状态**节点与边（断言、flag、scene、evidence，以及 `supersedes` / `contradicts` / `part_of` 这些边；边以 `(from_key, label, to_key)` 表达，绝不用节点 id）。账本类（`decision`、`dream_log`、`rejected`、`dream_cycle`）不在闭包内，也永不撤销。
+- **`affected[]` 闭包** = 该操作写入或改动的全部**状态**节点与边（断言、flag、scene、evidence，以及 §4 封闭集里的边；边以 `(from_key, label, to_key)` 表达，绝不用节点 id）。闭包判据就是那五个标签，不在封闭集里的标签根本进不了批次，所以也不会有「闭包该不该收它」的含糊。`contradicts` 按有向两条边计两个条目。账本类（`decision`、`dream_log`、`rejected`、`dream_cycle`）不在闭包内，也永不撤销。
 - 撤销 = 按 `op_id` 反向生成补丁表、在**一个事务**里执行（事务 op 只有整体替换的 `updatePayload`，能 `$unset` 的 `patchPayload` 不是事务 op），并追加一条 `decision(kind=revert, precedent_id=原 op_id)`。
 
 ## 7. 标记（flag）生命周期
 
-- 按方案设计的形状：`status ∈ {open, resolved}`，`resolved_by ∈ {auto, human}`，`flag_type ∈ {dangling_evidence, contradiction, refuted, rejected, dream_truncated, migration, predicate_new}`（七值；末项见本节末条）。
+- 按方案设计的形状：`status ∈ {open, resolved}`，`resolved_by ∈ {auto, human}`，`flag_type ∈ {dangling_evidence, contradiction, refuted, rejected, dream_truncated, migration, predicate_new, predicate_rekey}`（**八值封闭集**；`predicate_new` 与 `predicate_rekey` 见本节末条）。
 - `flag` 是节点不是边；治理队列查询 = `kind=flag ∧ status=open`；flag 本身不删除。
 - 自动档只有 AD-9 那一种情形（`status=resolved, resolved_by=auto`）；其余一律 `open`，等人。
 - **已裁决（2026-11-23）**：PRD FR-12 的「创建 / 挂起 / 已解决 / 已证伪 / 已撤销」是 status 与 `flag_type` 的混写。定案按本节两态 + `flag_type` + `resolved_by` 记录——创建与挂起都是 `open`；已解决是 `resolved` + `resolved_by(auto|human)`；已证伪是 `flag_type=refuted`；已撤销由 `decision(kind=revert)` 表达，flag 本身不设 `revoked` 状态。新增 `flag_type=predicate_new` 用于承接口径开放后的新谓词提案。
+
+**第八值 `predicate_rekey`（2026-11-26 补入）**：谓词改名重写既有断言时挂这一条，与 `predicate_new`（新建谓词）是两件事——把两者并成一个值会丢失「这是改名还是新增」的区分，而撤销时恰恰要按这个区分重放。代码侧对应 `src/core/patch.ts` 的 `flagType: 'predicate_new' | 'predicate_rekey'`。
+
+**`contract_version` 不是 flag**：`src/store/meta.ts` 落的是一个 meta 键值，字段名恰好也叫 `flag_type`，取值 `'contract_version'`。它是库自身的契约版本戳（ADR-19 首启时写入），**不参与本节封闭集**，不进治理队列、不算 flag 节点。读到它时按 meta 处理，不要往八值里加。
+
+---
+
+## 7.1 计数一律读时算（P0-7 定案，2026-11-26）
+
+库内**不存任何可变计数器，也不存浮点置信度**。§2.1 早已这么定，但 `pred.evidence_count` 与 `scene.confidence` 两个字段当时留在了 §3 的字段表里，实测两者都已失效：`evidence_count` 全仓无自增、恒为 0；`confidence` 由 `patch.ts` 硬编码为 `0.5`。两者本轮一并删除。
+
+| 想回答的问题 | 怎么算 | 不存的原因 |
+| --- | --- | --- |
+| 这条断言出现过几次 | 读时对它的 `evidence` 边计数（按 §2.1 的 `source_independence` 去重） | 写入侧去重会吃掉重复，另存计数器在快照恢复后与库不同步 |
+| 某谓词被多少断言用过 | 读时扫描 `pred:<名>` 的引用断言 | 同上；且该值恒为 0，没有任何实现方写过它 |
+| 场景的可信程度 | 由它的 `derived_from` / `evidence` 边现算或由上层判断 | 硬编码的 0.5 不是测量，进库只会被误读成结论 |
+
+**旧快照兼容**：带 `evidence_count` / `confidence` 的历史 payload 读取时忽略这两个键，不报错、不迁移、不写回。字段因此自然消亡，不需要一次 rekey 迁移。
 
 ## 8. L0–L3 分层映射
 
@@ -169,24 +190,19 @@ focus_ratio = (身份段 + 状态尾巴 + 未折叠的近期原文) 的估算 to
 
 ## 9. 节点与边形状
 
+只画 §4 的 v1 封闭集五条。六条未列入的标签（`enriches` / `about` / `in_episode` / `derived_from` / `anchor` / `covers`）没有实现方，画进来会让人以为已经能写。
+
 ```mermaid
 graph LR
-  E["evidence 指针"] -->|supports| A["assertion 断言"]
-  E -->|refutes| A
-  A -->|supersedes| OLD["assertion 旧版本"]
-  A2["assertion 变体"] -->|contradicts| A
-  A -->|about| EN["entity 实体"]
-  A -->|in_episode| EP["episode 片段"]
-  EP -->|part_of| SC["scene 场景"]
-  SC -->|derived_from| A
-  W["whatif 推演"] -->|anchor| A
-  F["flag 标记"] -->|about| A
-  PS["persona_state"] -->|about| EN
-  PR["pref 偏好"] -->|about| EN
-  DC["decision 账本"] -->|about| A
-  C["dream_cycle 周期标记"] -->|covers| EP
+  E["evidence 指针"] -->|supports<br/>已实现| A["assertion 断言"]
+  E -.->|refutes<br/>未实现| A
+  A -.->|supersedes<br/>未实现| OLD["assertion 旧版本"]
+  A2["assertion 变体"] -.->|contradicts<br/>未实现，有向两条| A
+  EP["episode 片段"] -.->|part_of<br/>未实现| SC["scene 场景"]
   FD["fold 折叠块\n(上下文状态, 非记忆)"] -.->|禁止任何边\n谱系写在 block_refs| X["—"]
 ```
+
+实线是已实现的边，虚线是封闭集里已登记、尚无实现方的边。`episode` 与 `scene` 两种节点本身也还没有写入路径（Epic 6 起才产生），所以 `part_of` 连两端都还不存在。
 
 `fold` 与 `req_ledger` **不参与这张图**：它们与记忆图之间没有任何边（AD-37），唯一的联系是「证据指针指向 seq 区间，而折叠不改 seq」。虚线只是标出这个刻意缺席——`block_refs` 里的谱系是 seq 坐标，不是节点。
 

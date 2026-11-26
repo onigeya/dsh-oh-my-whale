@@ -86,9 +86,11 @@ export interface RecordingContext {
    * This is the only way a test can drive the injection audit row, because the
    * session id is handed over at assembly time and nowhere else.
    * @param sessionId - the session the host is assembling for.
+   * @param events - that session's events, when the test needs the recall tier
+   *   to build a query from the conversation (P0-1).
    * @returns every rendered entry and their concatenation.
    */
-  assemble(sessionId: string): { sections: RenderedEntry[]; text: string }
+  assemble(sessionId: string, events?: readonly TestSessionEvent[]): { sections: RenderedEntry[]; text: string }
   /**
    * Run every recorded disposer, newest first.
    *
@@ -97,6 +99,12 @@ export interface RecordingContext {
    * directory while a transaction is still being written into it.
    */
   dispose(): Promise<void>
+}
+
+/** One session event a test hands the host, in the shape the composer reads. */
+export interface TestSessionEvent {
+  readonly type: 'user/message'
+  readonly data?: unknown
 }
 
 /** A section or context as it reads for one assembly. */
@@ -203,8 +211,13 @@ export function createRecordingContext(options: RecordingContextOptions = {}): R
     get disposed() {
       return disposed
     },
-    assemble(sessionId: string) {
-      const context: PromptAssemblyContext = { session: { id: sessionId } }
+    assemble(sessionId: string, events: readonly TestSessionEvent[] = []) {
+      const context: PromptAssemblyContext = {
+        session: {
+          id: sessionId,
+          ownEvents: () => events,
+        },
+      }
       const entries = [...sections, ...contexts]
         .slice()
         .sort((left, right) => left.order - right.order)

@@ -19,6 +19,7 @@
  * @module
  */
 import type { TransactionOperation, Vector } from 'triviumdb'
+import type { EdgeLabel } from '../templates/evidence.ts'
 import type { Database } from '../db.ts'
 
 /** Fields the engine names in a uniqueness violation. */
@@ -216,7 +217,7 @@ export function createCommitEngine(db: Database, dim: number): CommitEngine {
 export interface PlannedLink {
   readonly src: number
   readonly dst: number
-  readonly label: string
+  readonly label: EdgeLabel
 }
 
 /**
@@ -252,7 +253,18 @@ export function toTransactionOperations(input: {
       operations.push({ type: 'insertWithId', id: insert.id, vector: [...input.zeroVector], payload: insert.payload })
     }
   }
+  //
+  // Edges go last, and each `(src, label, dst)` appears once (P0-6). A plan that
+  // asked for the same edge twice would otherwise write two rows and count two
+  // edges in `affected[]`, making a revert remove a duplicate that never existed
+  // as a separate fact. The key is the triple, not the pair: two different labels
+  // between the same nodes are two real edges.
+  //
+  const seen = new Set<string>()
   for (const link of input.links ?? []) {
+    const key = `${link.src}:${link.label}:${link.dst}`
+    if (seen.has(key)) continue
+    seen.add(key)
     operations.push({ type: 'link', src: link.src, dst: link.dst, label: link.label })
   }
   return operations

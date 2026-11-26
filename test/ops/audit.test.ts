@@ -130,6 +130,7 @@ function injection(overrides: Partial<InjectionAuditRow> = {}): InjectionAuditRo
     items: ['identity'],
     truncated: false,
     prefix_unchanged: false,
+    elapsed_ms: 1,
     host_cache_read: null,
     host_cache_write: null,
     host_cache_uncached: null,
@@ -138,16 +139,21 @@ function injection(overrides: Partial<InjectionAuditRow> = {}): InjectionAuditRo
 }
 
 describe('audit: the injection tier vocabulary', () => {
-  it('names the two shapes an injection can take', () => {
-    expect([...INJECTION_TIERS]).toEqual(['identity', 'identity+state'])
+  it('names the four shapes an injection can take, one per combination of tail and recall', () => {
+    expect([...INJECTION_TIERS]).toEqual([
+      'identity',
+      'identity+state',
+      'identity+recall',
+      'identity+state+recall',
+    ])
   })
 
-  it('accepts both tiers and refuses anything else before it reaches the sink', () => {
+  it('accepts every tier and refuses anything else before it reaches the sink', () => {
     for (const tier of INJECTION_TIERS) {
       expect(() => assertClosedTier(injection({ tier }))).not.toThrow()
     }
-    expect(() => assertClosedTier(injection({ tier: 'identity+recall' as never })))
-      .toThrow(/unknown injection tier "identity\+recall"; closed set is identity, identity\+state/u)
+    expect(() => assertClosedTier(injection({ tier: 'identity+everything' as never })))
+      .toThrow(/unknown injection tier "identity\+everything"; closed set is identity, identity\+state, identity\+recall, identity\+state\+recall/u)
     const home = tempHome('omw-audit-')
     try {
       const sink = createMemoryAuditSink()

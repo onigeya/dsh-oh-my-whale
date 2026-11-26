@@ -59,7 +59,6 @@ export function seedPredicate(
     aliases: extras.aliases ?? [],
     decidedBy: 'seed',
     decidedAt: nowIso,
-    evidenceCount: extras.evidenceCount ?? 0,
     normVersion: NORM_VERSION,
     activeSlot: 1,
     recordedAt: nowIso,

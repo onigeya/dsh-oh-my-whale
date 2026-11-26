@@ -21,12 +21,10 @@ import { DEGRADED_REASONS, isDegradedReason, type DegradedReason } from '../core
  *
  * A tier names which channels actually landed in one assembly, not which ones
  * were attempted: `identity` means the identity section was the only thing on the
- * wire (the tail was absent, empty, or refused by the host), `identity+state`
- * means the state tail rode along. Recall is absent from this list on purpose —
- * recall has no injection channel yet (Story 2.5 delivered the tool, Epic 7 the
- * per-round plan), so a tier naming it would describe something nothing writes.
+ * wire. Recall joined the list with P0-1 — until then it had no channel, so a
+ * tier naming it described something nothing wrote.
  */
-export const INJECTION_TIERS = ['identity', 'identity+state'] as const
+export const INJECTION_TIERS = ['identity', 'identity+state', 'identity+recall', 'identity+state+recall'] as const
 
 /** One injection tier. */
 export type InjectionTier = (typeof INJECTION_TIERS)[number]
@@ -53,6 +51,15 @@ export interface InjectionAuditRow {
   readonly items: readonly string[]
   readonly truncated: boolean
   readonly prefix_unchanged: boolean
+  /**
+   * Wall time of this assembly, whole milliseconds (P0-8).
+   *
+   * The injection tier is the one number `omw-stats` could not compute before:
+   * every other row carries its own duration, and this one did not. The provider
+   * that assembles the prompt is the only place both ends of the measurement are
+   * visible, so it hands the number over rather than the row guessing.
+   */
+  readonly elapsed_ms: number
   readonly host_cache_read: number | null
   readonly host_cache_write: number | null
   readonly host_cache_uncached: number | null

@@ -39,7 +39,7 @@ sources:
 
 - **CAP-3 治理**
   - **intent:** 用户可以对任一条记忆问清「谁改的、依据什么、为什么」，并撤销一次操作，让默认查询与召回回到操作前。
-  - **success:** FR-11…FR-14、FR-23、FR-24 全过——一次查询同时返回版本链、决策账本与证据指针；自动档只在「同键 + 有效区间重叠 + 归一化值不同」一种情形下改数据且可整体撤销；按 `op_id` 撤销后，固定 20 条 fixture 查询的 `{mem_key, active_version, flag_status, edge_label}` 集合逐条等于操作前（排除账本类节点）；四条只读命令是聊天内斜杠命令（`/omw explain` / `/omw version-chain` / `/omw flag-queue` / `/omw export`），未命中返回明确空结果并带标记而非退出码；全量导出为纯文本 + JSONL，不含节点 id 与已脱敏引文。**扩展 2026-11-25**：FR-41 的邻域一致性闸门（不一致整批返 `UNRELIABLE`，检查 ≤50ms）、FR-44 的契约层准入三关（P1/P2 不过拒收落 `rejected`，P3 不过只落 flag）、FR-45 的 `source_independence` 封闭定义与同源只算 1、FR-58 的不确定性折扣 `U`。
+  - **success:** FR-11…FR-14、FR-23、FR-24 全过——一次查询同时返回版本链、决策账本与证据指针；自动档只在「同键 + 有效区间重叠 + 归一化值不同」一种情形下改数据且可整体撤销；按 `op_id` 撤销后，固定 20 条 fixture 查询的 `{mem_key, active_version, flag_status, edge_label}` 集合逐条等于操作前（排除账本类节点）；命令面为十条平铺注册（2026-11-26 P0-3/P0-4 裁定；`/omw-explain` / `/omw-flag-queue` / `/omw-export` 为本批新增，`version-chain` 统一为 `history`），未命中返回明确空结果并带标记而非退出码；全量导出为纯文本 + JSONL，不含节点 id 与已脱敏引文。**扩展 2026-11-25**：FR-41 的邻域一致性闸门（不一致整批返 `UNRELIABLE`，检查 ≤50ms）、FR-44 的契约层准入三关（P1/P2 不过拒收落 `rejected`，P3 不过只落 flag）、FR-45 的 `source_independence` 封闭定义与同源只算 1、FR-58 的不确定性折扣 `U`。
 
 - **CAP-4 人格**
   - **intent:** 库不可用时鲸鲸仍是鲸鲸；库可用时它带着一小段可解释的关系状态，而不是每轮重写一份画像。

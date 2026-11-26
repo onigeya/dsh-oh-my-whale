@@ -152,7 +152,7 @@ describe('injection: the identity section', () => {
     const composer = composerOf()
     const outcome = composer.register(recorder.host)
     expect(outcome.personaRegistered).toBe(true)
-    expect(recorder.calls).toHaveLength(1)
+    expect(recorder.calls.filter(call => call.kind === 'section')).toHaveLength(1)
     expect(recorder.calls[0]?.kind).toBe('section')
     expect(recorder.calls[0]?.name).toBe(PERSONA_SECTION_NAME)
     expect(PERSONA_SECTION_NAME).toBe('harness:identity')
@@ -168,7 +168,7 @@ describe('injection: the identity section', () => {
     expect(first.personaRegistered).toBe(true)
     expect(second.personaRegistered).toBe(false)
     expect(second.plan.prefixUnchanged).toBe(true)
-    expect(recorder.calls).toHaveLength(1)
+    expect(recorder.calls.filter(call => call.kind === 'section')).toHaveLength(1)
     expect(first.plan.persona.hash).toBe(second.plan.persona.hash)
     expect(composer.compose().prefixUnchanged).toBe(true)
   })
@@ -288,7 +288,7 @@ describe('injection: the state tail', () => {
     const recorder = recordingHost()
     const outcome = composerOf().register(recorder.host)
     expect(outcome.tailRegistered).toBe(false)
-    expect(recorder.calls.filter(call => call.kind === 'context')).toHaveLength(0)
+    expect(recorder.calls.filter(call => call.name === PERSONA_STATE_CONTEXT_NAME)).toHaveLength(0)
     expect(outcome.plan.tail).toEqual({
       text: undefined,
       kept: [],
@@ -325,7 +325,7 @@ describe('injection: the state tail', () => {
     expect(composer.register(recorder.host).tailRegistered).toBe(true)
     // The second registration replaced the first; only 详细 is live.
     expect(recorder.live.get(PERSONA_STATE_CONTEXT_NAME)).toBe('详细')
-    expect(recorder.calls.filter(call => call.kind === 'context')).toHaveLength(2)
+    expect(recorder.calls.filter(call => call.name === PERSONA_STATE_CONTEXT_NAME)).toHaveLength(2)
   })
 
   // INJ_TAIL_CLEARED
@@ -339,7 +339,7 @@ describe('injection: the state tail', () => {
     expect(composer.register(recorder.host).tailRegistered).toBe(false)
     expect(recorder.live.has(PERSONA_STATE_CONTEXT_NAME)).toBe(false)
     // Both calls were recorded; the first one's registration is simply not live.
-    expect(recorder.calls.filter(call => call.kind === 'context')).toHaveLength(1)
+    expect(recorder.calls.filter(call => call.name === PERSONA_STATE_CONTEXT_NAME)).toHaveLength(1)
   })
 })
 
@@ -494,7 +494,7 @@ describe('injection: a host that refuses', () => {
     expect(outcome.personaRegistered).toBe(false)
     // The tail went on a different channel and was not refused with the section.
     expect(outcome.tailRegistered).toBe(true)
-    expect(calls.filter(call => call.kind === 'context')).toHaveLength(1)
+    expect(calls.filter(call => call.name === PERSONA_STATE_CONTEXT_NAME)).toHaveLength(1)
     // The plan still describes what was assembled: a refused mount is degraded,
     // not empty, and the audit row has to report real numbers.
     expect(outcome.plan.persona.text.length).toBeGreaterThan(0)

@@ -179,9 +179,9 @@ describe('remember, end to end', () => {
     const m = mount()
     // The model proposes `mood`; the user then promotes it to single-valued.
     await remember(m, { ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'mood', obj: 'calm' }] })
-    const command = m.commands.find(entry => entry.name === 'omw')
-    if (command === undefined) throw new Error('omw was not registered')
-    const promoted = await command.handler({ rawInput: ' pred promote mood --single --reason 用户要求单值' })
+    const command = m.commands.find(entry => entry.name === 'omw-pred-promote')
+    if (command === undefined) throw new Error('omw-pred-promote was not registered')
+    const promoted = await command.handler({ rawInput: 'mood --single --reason 用户要求单值' })
     expect(promoted.kind).toBe('success')
 
     await m.cleanup()

@@ -1,0 +1,41 @@
+{
+  "gate": "G0-4",
+  "status": "pass",
+  "timestamp": "2026-11-26T12:00:00.000Z",
+  "baselineRevision": "1cefa2ac8cd2fcfb6da9f79e59aaeef5263ab332",
+  "node": "v24.21.0",
+  "platform": "win32-x64",
+  "note": "本文件补的是 Epic 2 回顾第 1 条不通过理由「G0-4 未闭合」。三环指「写入 → 召回 → 装配文本」，在此之前第三环并不存在：召回只是模型可调的工具，从未进过提示词，AD-7 只写了身份段与状态尾巴两条通道，spec-2-4 把召回推给 Story 2.5、spec-2-5 又推给 Epic 5，两次推诿。现由 P0-1（spec-e3p0-2-recall-channel.md）交付。每条 check 的 detail 都是可在本仓库复跑的证据，不是引用。",
+  "checks": [
+    {
+      "name": "环一-写入",
+      "ok": true,
+      "detail": "remember 工具经真实 apply() 挂载写入一条断言后，再读回同一句柄可查到这个业务键。用例：test/seams/runtime-write.test.ts「writes through the port and reads the fact back by its business key」。"
+    },
+    {
+      "name": "环二-召回",
+      "ok": true,
+      "detail": "同一句柄上的 recall reader 能按查询召回刚写入的键，且候选池与最终条数各自受配置约束（candidatePool 12 / topK 5）。用例：「is assembled beside the write side and answers from the same handle」「takes the candidate pool from the configuration too, not just the width」。"
+    },
+    {
+      "name": "环三-装配文本",
+      "ok": true,
+      "detail": "召回结果进入宿主提示词：装配后 omw:recall 这段 context 的文本里含刚写入的记忆，纯文本 join 也含它。用例：「feeds those hits into the prompt once the conversation gives it a query (P0-1)」。反向用例「injects nothing when the conversation offers no query, and still assembles」证明无查询时只是本档为空，身份段不受影响。"
+    },
+    {
+      "name": "召回不进身份段",
+      "ok": true,
+      "detail": "召回走第三条 context 通道（name=omw:recall，order=131），身份段仍是 order=-1000 的 section，字节稳定不被逐轮内容击穿。用例：test/seams/prompt-composer.test.ts 的通道数断言按 name 过滤，test/load/inject.test.ts 的「injects the same bytes whether or not a scene is in the store」。"
+    },
+    {
+      "name": "注入行记下了召回与耗时",
+      "ok": true,
+      "detail": "InjectionAuditRow 的 tier 从两值扩为四值（tail × recall），chars/tokens/truncated/items 均计入召回，并新增 elapsed_ms。用例：test/ops/injection-audit.test.ts 的 tier 词表、tier-from-kept-lists 与 elapsed_ms 直传三条，test/ops/audit.test.ts 的四值封闭集。"
+    },
+    {
+      "name": "全量测试",
+      "ok": true,
+      "detail": "665 passed / 2 skipped（43 个文件），check-layers 与 eslint 均无输出。"
+    }
+  ]
+}

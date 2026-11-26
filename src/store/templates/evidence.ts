@@ -22,6 +22,28 @@ export const EVIDENCE_BY_KEY_QUERY =
 /** The edge label that points an evidence node at the assertion it supports. */
 export const SUPPORTS_LABEL = 'supports'
 
+/**
+ * The closed set of edge labels this build may write (P0-6, data-model §4).
+ *
+ * Only `supports` has an implementation today; the other four are declared here
+ * because `affected[]` names them and a revert has to recognise them, but nothing
+ * in this build draws one. A label outside this list is refused at commit time,
+ * which is what makes the closure a real bound rather than a convention.
+ */
+export const EDGE_LABELS = ['supports', 'refutes', 'supersedes', 'contradicts', 'part_of'] as const
+
+/** One edge label. */
+export type EdgeLabel = (typeof EDGE_LABELS)[number]
+
+/**
+ * Whether a label belongs to the closed set.
+ * @param label - the candidate label.
+ * @returns true when this build recognises it.
+ */
+export function isEdgeLabel(label: unknown): label is EdgeLabel {
+  return typeof label === 'string' && (EDGE_LABELS as readonly string[]).includes(label)
+}
+
 /** One pointer as this module reports it: the engine id plus its payload. */
 export type StoredEvidenceNode = StoredNode
 

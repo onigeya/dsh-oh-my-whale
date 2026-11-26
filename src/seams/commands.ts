@@ -32,6 +32,8 @@ import type { Logger } from './logger.ts'
 import type { WritePort } from './write-port.ts'
 import type { EvidenceReadAnswer, EvidenceReader } from './evidence-reader.ts'
 import type { LedgerAnswer, VersionHistoryAnswer, VersionReader } from './version-reader.ts'
+import type { Audit } from '../ops/audit.ts'
+import { parseStatsWindow, renderStats, summarizeAudit } from '../ops/stats.ts'
 
 /** Outcome of one invocation, as the host's command registry expects it. */
 export type CommandResultLike =
@@ -250,13 +252,17 @@ export function inspectInProcess(view: DoctorView): DoctorReport {
   return { lines, failures, text }
 }
 
-/** Usage text for `/omw` with no or an unknown subcommand. */
-export const OMW_USAGE = `/omw doctor — 在本进程内跑五项体检（库、快照、维度、凭据、注入段），复用当前实例的库句柄
-/omw pred promote <谓词名> --single|--multi --reason <理由> — 把谓词提升为单值或多值（只有用户能做这件事）
-/omw evidence <mem_key> — 列出该业务键的证据指针（会话、区间、引文、是否截断、是否脱敏）
-/omw history <mem_key> — 列出该业务键的全部版本（旧值、valid_from/valid_to、谁在什么时候退役了它）
-/omw ledger <mem_key> — 列出改动过该业务键的决策记录（动作、操作号、影响范围、理由）
-/omw help — 显示这段说明`
+/** Usage text for `/omw-help`-less hosts: one line per registered command. */
+export const OMW_USAGE = `/omw-doctor — 在本进程内跑五项体检（库、快照、维度、凭据、注入段），复用当前实例的库句柄
+/omw-pred-promote <谓词名> --single|--multi --reason <理由> — 把谓词提升为单值或多值（只有用户能做这件事）
+/omw-evidence <mem_key> — 列出该业务键的证据指针（会话、区间、引文、是否截断、是否脱敏）
+/omw-history <mem_key> — 列出该业务键的全部版本（旧值、valid_from/valid_to、谁在什么时候退役了它）
+/omw-ledger <mem_key> — 列出改动过该业务键的决策记录（动作、操作号、影响范围、理由）
+/omw-stats --since 24h — 按时间窗聚合注入/召回/写事务三条路的 p50/p95 与降级计数
+/omw-explain <mem_key> — 一次答清「谁改的、依据什么、为什么」（尚未交付）
+/omw-flag-queue [--status open] — 列出待处理标记（尚未交付）
+/omw-export [--include-quotes] — 导出全量为 JSONL（尚未交付）
+/omw-brief — 出当天只读简报（尚未交付）`
 
 /** One parsed `/omw pred promote` invocation. */
 export interface PromoteRequest {
@@ -271,31 +277,28 @@ export type PromoteParse =
   | { readonly ok: false; readonly reason: string }
 
 /**
- * Parse `pred promote <名> --single|--multi --reason <文本>`.
+ * Parse `<谓词名> --single|--multi --reason <文本>`.
  *
- * Two rules that are easy to get wrong and are decided here:
+ * The command name is no longer part of the text: the host cuts it out, so the
+ * predicate is `tokens[0]`. Two rules that are easy to get wrong and are decided
+ * here:
  *
- * - the flag names are case-insensitive (`/omw PRED PROMOTE` works), but the
- *   reason keeps its original case, because it is prose the user wrote;
+ * - the flag names are case-insensitive (`--SINGLE` works), but the reason keeps
+ *   its original case, because it is prose the user wrote;
  * - everything after `--reason` is the reason, verbatim. A `--multi` inside the
  *   sentence is text, not a second cardinality — while an unrecognised token
  *   *before* `--reason` is an error rather than silently folded into the reason.
- * @param raw - the command text after `/omw`.
+ * @param raw - the command text after the command name.
  * @returns the parsed request or a reason it cannot be used.
  */
 export function parsePromote(raw: string): PromoteParse {
   const text = raw.trim()
   const tokens = [...text.matchAll(/\S+/gu)]
-  const lower = tokens.map(match => match[0].toLowerCase())
-  if (lower[0] !== 'pred') return { ok: false, reason: '未知子命令' }
-  if (lower[1] !== 'promote') {
-    return { ok: false, reason: `未知子命令 "pred ${tokens[1]?.[0] ?? ''}"`.trim() }
-  }
-  const name = tokens[2]?.[0]
-  if (name === undefined) return { ok: false, reason: '缺少谓词名：/omw pred promote <谓词名> --single|--multi --reason <理由>' }
+  const name = tokens[0]?.[0]
+  if (name === undefined) return { ok: false, reason: '缺少谓词名：/omw-pred-promote <谓词名> --single|--multi --reason <理由>' }
   let cardinality: 'single' | 'multi' | undefined
   let reason: string | undefined
-  for (let position = 3; position < tokens.length; position += 1) {
+  for (let position = 1; position < tokens.length; position += 1) {
     const token = tokens[position]!
     const flag = token[0].toLowerCase()
     if (flag === '--reason') {
@@ -318,67 +321,152 @@ export function parsePromote(raw: string): PromoteParse {
 }
 
 /**
- * Register `/omw` on a command registry.
+ * Register the `/omw-*` command family on a command registry.
+ *
+ * Ten separate names, not one `/omw` with subcommands (P0-3). The host's parser
+ * takes the first token as the command name, so a subcommand form is only ever
+ * `name: 'omw'` plus a raw string — the文档 claimed separate registrations, and
+ * this is that shape for real. `version-chain` folded into `history`: they were
+ * the same reader under two names.
+ *
+ * The four commands whose stories have not landed yet are registered too, so the
+ * surface and the documentation agree today; each answers with the story that
+ * owns it instead of pretending to be absent.
  * @param registry - the host's command registry.
  * @param view - reads the live instance at invocation time.
  * @param write - reads the write side at invocation time, or `undefined` when it is not ready.
- * @returns the disposer.
+ * @param evidence - reads the evidence reader at invocation time.
+ * @param version - reads the version reader at invocation time.
+ * @returns one disposer releasing all ten registrations.
  */
-export function registerOmwCommand(
+export function registerOmwCommands(
   registry: CommandRegistryLike,
   view: () => DoctorView,
   write?: () => WritePort | undefined,
   evidence?: () => EvidenceReader | undefined,
   version?: () => VersionReader | undefined,
+  audit?: () => Audit | undefined,
 ): () => void {
-  return registry.register({
-    name: 'omw',
-    description: '鲸鲸体检：/omw doctor 在当前进程内跑五项检查；/omw pred promote 提升谓词基数；/omw evidence 查证据指针；/omw history 查版本链；/omw ledger 查决策账本',
-    input: { hint: 'doctor | pred promote <名> --single|--multi --reason <理由> | evidence <mem_key> | history <mem_key> | ledger <mem_key>' },
-    // The handler is `async` only so it can await nothing today and still be free
-    // to in Story 2.6; the registry accepts either shape.
-    handler: async (invocation: CommandInvocationLike): Promise<CommandResultLike> => {
-      const sub = invocation.rawInput.trim().toLowerCase()
-      // The subcommand is the first token, whatever separated it from its
-      // argument: a tab after `history` is the same request as a space, and a
-      // literal `'history '` prefix test answered 'unknown subcommand' to it.
-      const head = /^[^\s]*/u.exec(sub)?.[0] ?? ''
-      if (sub === 'doctor') {
+  const disposers = [
+    register(registry, {
+      name: 'omw-doctor',
+      description: '在当前进程内跑五项体检（库、快照、维度、凭据、注入段），复用当前实例的库句柄',
+      handler: () => {
         const report = inspectInProcess(view())
         return { kind: report.failures === 0 ? 'success' : 'error', text: report.text }
-      }
-      // Exactly `pred promote`: a prefix match would route `/omw predict` or
-      // `/omw predicate` here and then answer "unknown subcommand" about a
-      // command the user never typed.
-      if (head === 'pred') {
-        return promote(invocation.rawInput, write)
-      }
-      // `evidence` reads a business key, which is case-sensitive: the dispatch
-      // test above lowercases, so the key is cut from the raw text instead.
-      if (head === 'evidence') {
-        return readEvidence(invocation.rawInput, evidence)
-      }
-      if (head === 'history') {
-        return readHistory(invocation.rawInput, version)
-      }
-      if (head === 'ledger') {
-        return readLedger(invocation.rawInput, version)
-      }
-      if (sub === '' || sub === 'help' || sub === '--help') {
-        return { kind: 'success', text: OMW_USAGE }
-      }
-      return { kind: 'error', text: `未知子命令 "${sub}"\n\n${OMW_USAGE}` }
-    },
-  })
+      },
+    }),
+    register(registry, {
+      name: 'omw-pred-promote',
+      description: '把谓词提升为单值或多值（只有用户能做这件事）',
+      input: { hint: '<谓词名> --single|--multi --reason <理由>' },
+      handler: (invocation) => promote(invocation.rawInput, write),
+    }),
+    register(registry, {
+      name: 'omw-evidence',
+      description: '列出该业务键的证据指针（会话、区间、引文、是否截断、是否脱敏）',
+      input: { hint: '<mem_key>' },
+      handler: (invocation) => readEvidence(invocation.rawInput, evidence),
+    }),
+    register(registry, {
+      name: 'omw-history',
+      description: '列出该业务键的全部版本（旧值、valid_from/valid_to、谁在什么时候退役了它）',
+      input: { hint: '<mem_key>' },
+      handler: (invocation) => readHistory(invocation.rawInput, version),
+    }),
+    register(registry, {
+      name: 'omw-ledger',
+      description: '列出改动过该业务键的决策记录（动作、操作号、影响范围、理由）',
+      input: { hint: '<mem_key>' },
+      handler: (invocation) => readLedger(invocation.rawInput, version),
+    }),
+    register(registry, {
+      name: 'omw-stats',
+      description: '按时间窗聚合注入/召回/写事务三条路的 p50/p95 与降级计数',
+      input: { hint: '[--since 24h|7d|--all]' },
+      handler: (invocation) => readStats(invocation.rawInput, audit),
+    }),
+    register(registry, undelivered('omw-explain', '一次答清「谁改的、依据什么、为什么」', 'Story 3.1')),
+    register(registry, undelivered('omw-flag-queue', '列出待处理标记，只按 status 过滤', 'Story 3.3')),
+    register(registry, undelivered('omw-export', '把全量记忆导出为纯文本 + JSONL', 'Story 3.5')),
+    register(registry, undelivered('omw-brief', '出当天只读简报，只出文件、不进注入与召回', 'Story 3.8')),
+  ]
+  return () => {
+    for (const dispose of disposers) dispose()
+  }
+}
+
+/** Register one definition and hand back its disposer. */
+function register(registry: CommandRegistryLike, definition: CommandDefinitionLike): () => void {
+  return registry.register(definition)
 }
 
 /**
- * Run one `pred promote`.
+ * A command that exists in the surface but whose story has not landed.
+ *
+ * It is a real registration on purpose: the architecture and the epics describe
+ * ten commands, and a surface that silently lacks four of them is what let the
+ * docs drift in the first place. The answer names who will fill it in, so an
+ * operator learns why rather than guessing.
+ * @param name - the command name.
+ * @param description - what it will do.
+ * @param owner - the story or spec that delivers it.
+ * @returns a definition whose handler refuses clearly.
+ */
+function undelivered(name: string, description: string, owner: string): CommandDefinitionLike {
+  return {
+    name,
+    description: `${description}（尚未交付，由 ${owner} 负责）`,
+    handler: (): CommandResultLike => ({
+      kind: 'error',
+      text: `/${name} 尚未交付：由 ${owner} 交付。本版本只登记了命令名，避免命令面与文档再次不一致。`,
+    }),
+  }
+}
+
+/**
+ * Run one `/omw-stats`.
+ *
+ * The window argument is parsed here rather than in `ops/stats.ts` so the
+ * aggregation stays a pure function of rows and a window: a bad flag is a command
+ * error, not an empty report.
+ * @param raw - the command text after the command name.
+ * @param audit - reads the audit facade at invocation time.
+ * @returns the command result.
+ */
+async function readStats(raw: string, audit?: () => Audit | undefined): Promise<CommandResultLike> {
+  const text = raw.trim()
+  // `--since <value>` or `--all`; a bare value is read as the window itself,
+  // because `omw-stats 24h` is what a person actually types.
+  let windowRaw = ''
+  const flag = /--since\s+(\S+)/u.exec(text)
+  if (flag !== null) {
+    windowRaw = flag[1] ?? ''
+  } else if (text.startsWith('--all')) {
+    windowRaw = 'all'
+  } else if (text !== '' && !text.startsWith('-')) {
+    windowRaw = text
+  } else if (text.startsWith('-')) {
+    return { kind: 'error', text: `无法识别的参数 "${text}"：只支持 --since <24h|7d> 或 --all` }
+  }
+
+  const parsed = parseStatsWindow(windowRaw)
+  if (!parsed.ok) return { kind: 'error', text: parsed.reason }
+
+  const facade = audit?.()
+  if (facade === undefined) {
+    return { kind: 'error', text: '审计面未就绪，本次没有读到任何审计行。' }
+  }
+  return { kind: 'success', text: renderStats(summarizeAudit(facade.rows, parsed.window)) }
+}
+
+/**
+ * Run one `/omw-pred-promote`.
  *
  * A missing write side is reported as such rather than as a failure of the
  * request: the user asks "did it work", and the honest answer is "the store is
  * not writable on this start".
- * @param raw - the command text after `/omw`.
+ * @param raw - the command text after the command name.
  * @param write - reads the write side at invocation time.
  * @returns the command result.
  */
@@ -417,27 +505,28 @@ export type EvidenceKeyParse =
  * @returns the key as typed, or the reason it cannot be taken.
  */
 export function parseEvidenceKey(raw: string): EvidenceKeyParse {
-  return parseMemKeyArgument(raw, 'evidence')
+  return parseMemKeyArgument(raw, 'omw-evidence')
 }
 
 /**
- * Cut the business key out of `<subcommand> <mem_key>`.
+ * Cut the business key out of `<command> <mem_key>`.
  *
  * Shared by every single-key read so the three commands cannot drift: a key is
  * case-sensitive, never contains whitespace, and a second token is a mistake
- * reported back rather than silently dropped.
- * @param raw - the command text after `/omw`.
- * @param subcommand - the subcommand, used only in the usage hint.
+ * reported back rather than silently dropped. The command name is the host's, not
+ * part of `raw`, so the key is `tokens[0]`.
+ * @param raw - the command text after the command name.
+ * @param command - the command name, used only in the usage hint.
  * @returns the key as typed, or the reason it cannot be taken.
  */
-export function parseMemKeyArgument(raw: string, subcommand: string): EvidenceKeyParse {
-  const tokens = raw.trim().split(/\s+/u)
-  const key = tokens[1] ?? ''
+export function parseMemKeyArgument(raw: string, command: string): EvidenceKeyParse {
+  const tokens = raw.trim().split(/\s+/u).filter(token => token !== '')
+  const key = tokens[0] ?? ''
   if (key === '') return { ok: true, key }
-  if (tokens.length > 2) {
+  if (tokens.length > 1) {
     return {
       ok: false,
-      reason: `/omw ${subcommand} 一次只查一个业务键，后面这些多写的词没有当作键：${tokens.slice(2).join(' ')}`,
+      reason: `/${command} 一次只查一个业务键，后面这些多写的词没有当作键：${tokens.slice(1).join(' ')}`,
     }
   }
   return { ok: true, key }
@@ -483,7 +572,7 @@ async function readEvidence(
   }
   const memKey = parsed.key
   if (memKey === '') {
-    return { kind: 'error', text: `需要给出一个业务键：/omw evidence <mem_key>\n\n${OMW_USAGE}` }
+    return { kind: 'error', text: `需要给出一个业务键：/omw-evidence <mem_key>\n\n${OMW_USAGE}` }
   }
   const reader = evidence?.()
   if (reader === undefined) {
@@ -591,11 +680,11 @@ function readHistory(
   raw: string,
   version?: () => VersionReader | undefined,
 ): CommandResultLike {
-  const parsed = parseMemKeyArgument(raw, 'history')
+  const parsed = parseMemKeyArgument(raw, 'omw-history')
   if (!parsed.ok) return { kind: 'error', text: `${parsed.reason}\n\n${OMW_USAGE}` }
   const memKey = parsed.key
   if (memKey === '') {
-    return { kind: 'error', text: `需要给出一个业务键：/omw history <mem_key>\n\n${OMW_USAGE}` }
+    return { kind: 'error', text: `需要给出一个业务键：/omw-history <mem_key>\n\n${OMW_USAGE}` }
   }
   const reader = version?.()
   if (reader === undefined) {
@@ -626,11 +715,11 @@ function readLedger(
   raw: string,
   version?: () => VersionReader | undefined,
 ): CommandResultLike {
-  const parsed = parseMemKeyArgument(raw, 'ledger')
+  const parsed = parseMemKeyArgument(raw, 'omw-ledger')
   if (!parsed.ok) return { kind: 'error', text: `${parsed.reason}\n\n${OMW_USAGE}` }
   const memKey = parsed.key
   if (memKey === '') {
-    return { kind: 'error', text: `需要给出一个业务键：/omw ledger <mem_key>\n\n${OMW_USAGE}` }
+    return { kind: 'error', text: `需要给出一个业务键：/omw-ledger <mem_key>\n\n${OMW_USAGE}` }
   }
   const reader = version?.()
   if (reader === undefined) {

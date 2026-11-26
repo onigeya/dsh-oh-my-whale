@@ -215,12 +215,11 @@ describe('patch: the predicate registry', () => {
       status: 'active',
       decided_by: 'user',
       aliases: ['feeling'],
-      evidence_count: 0,
       active_slot: 1,
     })
     expect(plan.decisions).toHaveLength(1)
     expect(plan.decisions[0]?.decisionKind).toBe('insert')
-    expect(plan.decisions[0]?.to).toEqual({ cardinality: 'single', aliases: ['feeling'], evidence_count: 0 })
+    expect(plan.decisions[0]?.to).toEqual({ cardinality: 'single', aliases: ['feeling'] })
     expect(plan.items[0]?.outcome).toBe('created')
   })
 
@@ -307,7 +306,6 @@ describe('patch: the predicate registry', () => {
       status: 'active',
       decided_by: 'seed',
       aliases: ['feeling'],
-      evidence_count: 7,
       active_slot: PLAN_NOW,
       superseded_at: PLAN_NOW,
     })
@@ -319,7 +317,6 @@ describe('patch: the predicate registry', () => {
       status: 'active',
       decided_by: 'user',
       aliases: ['feeling', 'vibe'],
-      evidence_count: 7,
       active_slot: 1,
     })
 
@@ -327,8 +324,8 @@ describe('patch: the predicate registry', () => {
     expect(plan.decisions[0]).toMatchObject({
       decisionKind: 'supersede',
       targetMemKey: predKey,
-      from: { status: 'active', aliases: ['feeling'], evidence_count: 7 },
-      to: { status: 'active', aliases: ['feeling', 'vibe'], evidence_count: 7 },
+      from: { status: 'active', aliases: ['feeling'] },
+      to: { status: 'active', aliases: ['feeling', 'vibe'] },
     })
     expect(plan.items[0]?.outcome).toBe('promoted')
   })
@@ -340,14 +337,15 @@ describe('patch: the predicate registry', () => {
       ops: [{ op: 'pred', pred: 'mood', cardinality: 'multi' }],
     }, fakeContext(store, { caller: 'user' })))
 
-    // The candidate is retired as it stood; the activation is the new version,
-    // so the proof the model gathered survives the promotion.
+    // The candidate is retired as it stood; the activation is the new version.
+    // Neither carries a proof counter: the store keeps no mutable counts (P0-7),
+    // so what survives the promotion is the status history, not a number.
     expect(plan.updates).toHaveLength(1)
     expect(plan.updates[0]).toMatchObject({ nodeId: live.id })
-    expect(plan.updates[0]?.payload).toMatchObject({ status: 'candidate', evidence_count: 3, decided_by: 'seed' })
+    expect(plan.updates[0]?.payload).toMatchObject({ status: 'candidate', decided_by: 'seed' })
 
     expect(plan.nodes).toHaveLength(1)
-    expect(plan.nodes[0]?.payload).toMatchObject({ status: 'active', evidence_count: 3, decided_by: 'user', active_slot: 1 })
+    expect(plan.nodes[0]?.payload).toMatchObject({ status: 'active', decided_by: 'user', active_slot: 1 })
     expect(plan.items[0]?.outcome).toBe('promoted')
   })
 
@@ -370,7 +368,6 @@ describe('patch: the predicate registry', () => {
       status: 'active',
       active_slot: 1,
       aliases: ['feeling', 'vibe'],
-      evidence_count: 4,
     })
 
     const flag = plan.nodes.find(node => node.memKey.startsWith('flag:predicate_rekey:'))
@@ -379,8 +376,8 @@ describe('patch: the predicate registry', () => {
 
     expect(plan.decisions).toHaveLength(1)
     expect(plan.decisions[0]?.decisionKind).toBe('supersede')
-    expect(plan.decisions[0]?.from).toEqual({ cardinality: 'multi', aliases: ['feeling'], evidence_count: 4 })
-    expect(plan.decisions[0]?.to).toEqual({ cardinality: 'single', aliases: ['feeling', 'vibe'], evidence_count: 4 })
+    expect(plan.decisions[0]?.from).toEqual({ cardinality: 'multi', aliases: ['feeling'] })
+    expect(plan.decisions[0]?.to).toEqual({ cardinality: 'single', aliases: ['feeling', 'vibe'] })
     // The closure ends with the key the entry is about, so a reader that only
     // looks at the last element still finds the changed predicate.
     expect(plan.decisions[0]?.affected).toEqual([`flag:predicate_rekey:mood:${PLAN_NOW}:1`, predKey])
@@ -606,7 +603,6 @@ describe('patch: a predicate the model proposes', () => {
       status: 'candidate',
       decided_by: 'model',
       aliases: [],
-      evidence_count: 0,
     })
     const flag = plan.nodes.find(node => node.memKey === 'flag:predicate_new:mood')
     expect(flag?.payload).toMatchObject({ flag_type: 'predicate_new', severity: 'info', status: 'open' })

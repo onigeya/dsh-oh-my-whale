@@ -12,7 +12,7 @@
  * exactly one `omw.log` line, and a load line there would break that count.
  * @module
  */
-import { registerOmwCommand, type CommandRegistryLike, type DoctorView } from './seams/commands.ts'
+import { registerOmwCommands, type CommandRegistryLike, type DoctorView } from './seams/commands.ts'
 import { parseConfig } from './seams/config.ts'
 import type { Logger } from './seams/logger.ts'
 import { PERSONA_SECTION_NAME } from './seams/prompt-composer.ts'
@@ -104,7 +104,7 @@ export function apply(ctx: ApplyContext, config?: unknown, seams?: ApplySeams): 
     const commands = resolveCommandRegistry(ctx)
     if (commands === undefined) return undefined
     try {
-      return registerOmwCommand(commands, (): DoctorView => ({
+      return registerOmwCommands(commands, (): DoctorView => ({
         state: runtime.state,
         ...(runtime.code === undefined ? {} : { code: runtime.code }),
         config: runtime.config,
@@ -114,7 +114,7 @@ export function apply(ctx: ApplyContext, config?: unknown, seams?: ApplySeams): 
         sectionRegistered: runtime.loaded.sectionRegistered,
         sectionChars: runtime.sectionChars,
         tools: runtime.loaded.tools,
-      }), () => runtime.write, () => runtime.evidence, () => runtime.version)
+      }), () => runtime.write, () => runtime.evidence, () => runtime.version, () => runtime.audit)
     } catch {
       return undefined
     }

@@ -15,6 +15,7 @@ import type { CommandDefinitionLike } from '../../src/seams/commands.ts'
 import { DEFAULT_TAIL_MAX_TOKENS, DEFAULT_TOP_K, parseConfig, RECALL_ITEM_BUDGET_TOKENS, type Config } from '../../src/seams/config.ts'
 import { createLogger, createMemorySink, type MemorySink } from '../../src/seams/logger.ts'
 import { startRuntime, type Runtime } from '../../src/seams/runtime.ts'
+import { RECALL_CONTEXT_NAME } from '../../src/seams/prompt-composer.ts'
 import { closeDatabase, nodeCount, openDatabase } from '../../src/store/db.ts'
 import { createAssertionTemplates } from '../../src/store/templates/assertions.ts'
 import { createRecordingContext, readJsonLines, tempHome, type TempHome } from '../support/fake-ctx.ts'
@@ -154,7 +155,9 @@ describe('runtime: installing the store', () => {
     expect(plan?.tail.text).toBeUndefined()
     expect(plan?.tail.tokens).toBe(0)
     expect(plan?.prefixUnchanged).toBe(false)
-    // No recall tier is wired yet, so the plan recalls nothing and drops nothing.
+    // The mount-time plan carries no recall: the tier is wired but has no query
+    // yet, so its reader answers nothing. What it must NOT be is absent — the
+    // plan object always names the tier (P0-1).
     expect(plan?.recall.kept).toEqual([])
     expect(plan?.truncatedItems).toEqual([])
     // The budget is derived from the three caps as configured, not from numbers
@@ -322,7 +325,7 @@ describe('runtime: promoting a predicate through the chat surface', () => {
 
     apply(context, { db: { dim: TEST_DIM } })
 
-    const command = commands.find(entry => entry.name === 'omw')
+    const command = commands.find(entry => entry.name === 'omw-pred-promote')
     expect(command).toBeDefined()
     if (command === undefined) return
 
@@ -331,7 +334,7 @@ describe('runtime: promoting a predicate through the chat surface', () => {
     expect(remember).toBeDefined()
 
     const promoted = await command.handler({
-      rawInput: ' pred promote mood --single --reason 探针',
+      rawInput: 'mood --single --reason 探针',
     }) as { kind: string; text?: string }
     expect(promoted.kind).toBe('success')
     expect(promoted.text).toContain('已更新谓词登记表')
@@ -487,10 +490,10 @@ describe('runtime: the host session log (AD-6)', () => {
     }, { agent: { id: 'session-alpha' } }) as { ok: boolean }
     expect(written.ok).toBe(true)
 
-    const command = commands.find(entry => entry.name === 'omw')
+    const command = commands.find(entry => entry.name === 'omw-evidence')
     expect(command).toBeDefined()
     if (command === undefined) return
-    const result = await command.handler({ rawInput: ' evidence assertion:Elliott:likes:coffee' }) as { kind: string; text?: string }
+    const result = await command.handler({ rawInput: 'assertion:Elliott:likes:coffee' }) as { kind: string; text?: string }
     expect(result.kind).toBe('success')
     const text = result.text ?? ''
     expect(text).toContain('session-alpha #11-11')
@@ -539,6 +542,122 @@ describe('runtime: the recall reader (Story 2.5)', () => {
     // — and the sentence has to name it rather than report three as a shortfall.
     expect(answer?.hits).toHaveLength(3)
     expect(answer?.message).toBe('找到 5 条未失效记忆，其中 3 条进入候选池，返回前 3 条。')
+  })
+
+  it('caps what it injects at topK while still returning every hit to the tool', async () => {
+    // The two cuts are different questions: the tool answers with what the store
+    // holds, the prompt gets at most topK. Five memories and topK=2 makes the
+    // difference visible on both sides at once.
+    const { home } = homeAt()
+    const recorder = createRecordingContext({ home: home.dir })
+    let cleanup: (() => Promise<void>) | undefined
+    apply({
+      ...recorder.ctx,
+      effect: (callback) => {
+        cleanup = callback() as (() => Promise<void>) | undefined
+      },
+    }, { db: { dim: TEST_DIM }, recall: { topK: 2 } })
+
+    const remember = recorder.definitions.find(definition => definition.name === 'remember')
+    if (remember === undefined) throw new Error('no remember tool')
+    for (let index = 0; index < 5; index += 1) {
+      await remember.execute({
+        patch: { ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'likes', obj: `whale note ${index}` }] },
+      }, { agent: { id: 'session-alpha' } })
+    }
+
+    const recalled = await recorder.definitions.find(definition => definition.name === 'recall')
+      ?.execute({ query: 'whale' }, { agent: { id: 'session-alpha' } }) as { items?: unknown[] } | undefined
+    expect(recalled?.items).toHaveLength(2)
+
+    const assembled = recorder.assemble('session-alpha', [
+      { type: 'user/message', data: { content: [{ type: 'text', text: 'whale' }] } },
+    ])
+    const recallText = assembled.sections.find(entry => entry.name === RECALL_CONTEXT_NAME)?.text ?? ''
+    // Two items, no more: the injected tier obeys the same cap the tool does.
+    const lines = recallText.split('\n').filter(line => line.trim() !== '')
+    expect(lines).toHaveLength(2)
+
+    await cleanup?.()
+  })
+
+  it('keeps the identity section when the recall reader throws', async () => {
+    const { home } = homeAt()
+    const recorder = createRecordingContext({ home: home.dir })
+    let cleanup: (() => Promise<void>) | undefined
+    apply({
+      ...recorder.ctx,
+      effect: (callback) => {
+        cleanup = callback() as (() => Promise<void>) | undefined
+      },
+    }, { db: { dim: TEST_DIM } })
+
+    const assembled = recorder.assemble('session-alpha', [
+      { type: 'user/message', data: { content: [{ type: 'text', text: 'whale' }] } },
+    ])
+    // Nothing to recall from an empty store, and that must cost only the tier.
+    expect(assembled.sections.find(entry => entry.name === RECALL_CONTEXT_NAME)?.text).toBe('')
+    expect(assembled.text.trim().length).toBeGreaterThan(0)
+
+    await cleanup?.()
+  })
+
+  it('feeds those hits into the prompt once the conversation gives it a query (P0-1)', async () => {
+    // The whole point of the wiring: recall is not only a tool a model may call,
+    // it also rides into the prompt. A store with one memory plus a session whose
+    // last turn mentions whales must produce condensed text carrying that memory.
+    const { home } = homeAt()
+    const recorder = createRecordingContext({ home: home.dir })
+    let cleanup: (() => Promise<void>) | undefined
+    apply({
+      ...recorder.ctx,
+      effect: (callback) => {
+        cleanup = callback() as (() => Promise<void>) | undefined
+      },
+    }, { db: { dim: TEST_DIM } })
+
+    const remember = recorder.definitions.find(definition => definition.name === 'remember')
+    if (remember === undefined) throw new Error('no remember tool')
+    await remember.execute({
+      patch: { ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'likes', obj: 'whale watching' }] },
+    }, { agent: { id: 'session-alpha' } })
+
+    const assembled = recorder.assemble('session-alpha', [
+      { type: 'user/message', data: { content: [{ type: 'text', text: '我最近想去看 whale' }] } },
+    ])
+    // The recall channel is its own context, named and ordered apart from the tail.
+    const recallEntry = assembled.sections.find(entry => entry.name === RECALL_CONTEXT_NAME)
+    expect(recallEntry).toBeDefined()
+    expect(recallEntry?.text).toContain('whale watching')
+    // And the pure-text join, which is what the model actually receives.
+    expect(assembled.text).toContain('whale watching')
+
+    await cleanup?.()
+  })
+
+  it('injects nothing when the conversation offers no query, and still assembles', async () => {
+    const { home } = homeAt()
+    const recorder = createRecordingContext({ home: home.dir })
+    let cleanup: (() => Promise<void>) | undefined
+    apply({
+      ...recorder.ctx,
+      effect: (callback) => {
+        cleanup = callback() as (() => Promise<void>) | undefined
+      },
+    }, { db: { dim: TEST_DIM } })
+
+    const remember = recorder.definitions.find(definition => definition.name === 'remember')
+    if (remember === undefined) throw new Error('no remember tool')
+    await remember.execute({
+      patch: { ops: [{ op: 'assert', kind: 'assertion', subj: 'Elliott', pred: 'likes', obj: 'whale watching' }] },
+    }, { agent: { id: 'session-alpha' } })
+
+    const assembled = recorder.assemble('session-alpha', [])
+    expect(assembled.sections.find(entry => entry.name === RECALL_CONTEXT_NAME)?.text).toBe('')
+    // The identity section survives: "no query" is not "no prompt" (FR-15).
+    expect(assembled.text.trim().length).toBeGreaterThan(0)
+
+    await cleanup?.()
   })
   it('keeps answering while the write side is down', () => {
     // Two live versions of one key already in the file: the bootstrap cannot
@@ -685,9 +804,14 @@ describe('runtime: the version reader (Story 2.3)', () => {
       expect(written.ok).toBe(true)
     }
 
-    const command = commands.find(entry => entry.name === 'omw')
-    if (command === undefined) throw new Error('/omw was not registered')
-    const history = await command.handler({ rawInput: ' history assertion:Elliott:lives_in' }) as { kind: string; text?: string }
+    const historyCommand = commands.find(entry => entry.name === 'omw-history')
+    expect(historyCommand).toBeDefined()
+    if (historyCommand === undefined) return
+    const ledgerCommand = commands.find(entry => entry.name === 'omw-ledger')
+    expect(ledgerCommand).toBeDefined()
+    if (ledgerCommand === undefined) return
+
+    const history = await historyCommand.handler({ rawInput: 'assertion:Elliott:lives_in' }) as { kind: string; text?: string }
     expect(history.kind).toBe('success')
     const historyText = history.text ?? ''
     expect(historyText).toContain('[已退役] 杭州')
@@ -695,7 +819,7 @@ describe('runtime: the version reader (Story 2.3)', () => {
     const historyJson = JSON.parse(historyText.split('\n').at(-1) ?? '{}') as { versions: { live: boolean }[] }
     expect(historyJson.versions.map(version => version.live)).toEqual([false, true])
 
-    const ledger = await command.handler({ rawInput: ' ledger assertion:Elliott:lives_in' }) as { kind: string; text?: string }
+    const ledger = await ledgerCommand.handler({ rawInput: 'assertion:Elliott:lives_in' }) as { kind: string; text?: string }
     expect(ledger.kind).toBe('success')
     const ledgerText = ledger.text ?? ''
     expect(ledgerText).toContain('insert')
@@ -704,7 +828,7 @@ describe('runtime: the version reader (Story 2.3)', () => {
     expect(ledgerJson.entries.map(entry => entry.kind)).toEqual(['insert', 'supersede'])
 
     // The ledger key itself has no chain: it is a record, not a memory version.
-    const refused = await command.handler({ rawInput: ' history rejected:let-me' }) as { kind: string; text?: string }
+    const refused = await historyCommand.handler({ rawInput: 'rejected:let-me' }) as { kind: string; text?: string }
     expect(refused.kind).toBe('error')
     expect(refused.text ?? '').toContain('账本')
     await cleanup?.()

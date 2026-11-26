@@ -151,11 +151,10 @@ action_items:
     ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-2-retro-2026-11-25.md"
   - id: "epic-2-retro-item-2-g0-4-记未闭合"
     epic: 2
-    action: "G0-4 记为 blocked 而非通过：在 gates/g0-4.json 写一份 status: blocked 的记录，内容为本轮闭环探针实测（写入
-      ok、召回 ok、装配文本只有身份段）与缺失的第三环"
+    action: "**已闭合（2026-11-26，P0-1 + P0-2）**：第三环原本结构性缺失——召回只是模型可调的工具，从未进过提示词；AD-7 只写了身份段与状态尾巴两条通道，spec-2-4 把召回推给 Story 2.5、spec-2-5 又推给 Epic 5。现交付 `omw:recall` 第三通道（`order 131`，查询由最近 `user/message` 事件生成，召回在身份段 provider 内计算并由召回段重放，注入行补 `elapsed_ms` 与四值 tier）。`gates/g0-4.json` 记 status: pass，三环各有可复跑用例。"
     owner: "Epic 2 收尾"
-    status: open
-    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/epic-2-retro-2026-11-25.md"
+    status: done
+    ref: "D:/src/dsh-oh-my-whale/docs/implementation-artifacts/gates/g0-4.json"
   - id: "epic-2-retro-item-3-flag-predicate-new-归属改到-epic-3"
     epic: 2
     action: "把 flag:predicate_new 的归属从 Epic 2/2.3 改到 Epic 3，并让 src/core/patch.ts 的写法与「Epic

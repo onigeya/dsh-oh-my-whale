@@ -53,6 +53,18 @@ export const PERSONA_SECTION_ORDER = -1000
 export const PERSONA_STATE_CONTEXT_ORDER = 130
 
 /**
+ * Name of the recall context (P0-1).
+ *
+ * Its own channel rather than a third segment of the tail: the tail is 30 tokens
+ * and the recap pool is up to five items. It also cannot ride the identity
+ * section, whose byte stability is what keeps the prefix cache alive (AD-7).
+ */
+export const RECALL_CONTEXT_NAME = 'omw:recall'
+
+/** Where the recall context sorts: after the state tail, so the tail keeps its slot. */
+export const RECALL_CONTEXT_ORDER = PERSONA_STATE_CONTEXT_ORDER + 1
+
+/**
  * The slice of the host's `AssembleContext` this composer reads (AD-20).
  *
  * Declared structurally rather than imported: the plugin never depends on a host
@@ -61,7 +73,36 @@ export const PERSONA_STATE_CONTEXT_ORDER = 130
  */
 export interface PromptAssemblyContext {
   /** The session this assembly is for, when the host has one. */
-  readonly session?: { readonly id: string }
+  readonly session?: PromptSessionLike
+}
+
+/**
+ * The session facts the recall tier reads (P0-1).
+ *
+ * Structural, like {@link PromptAssemblyContext} itself: the host passes its own
+ * `Session` object, and this module must not import the host package (AD-1). Only
+ * the synchronous event reader is declared — an async read would put a promise on
+ * the injection path, which AD-7's 20 ms synchronous budget forbids.
+ */
+export interface PromptSessionLike {
+  /** The host's session id; the audit row's only attribution. */
+  readonly id: string
+  /** The session's own events, oldest first. Absent on a host that withholds them. */
+  readonly ownEvents?: () => readonly PromptEventLike[]
+}
+
+/**
+ * One `user/message` event, as far as the query builder cares.
+ *
+ * The interface models only the event kind this module reads, so `type` is that
+ * one literal rather than `string`: the repo's layer gate reads this field to
+ * exclude the hard-delete op names, and a bare `string` is the unreadable case it
+ * refuses. A real session hands over other kinds too; the filter in
+ * {@link recallQueryFrom} is what skips them.
+ */
+export interface PromptEventLike {
+  readonly type: 'user/message'
+  readonly data?: unknown
 }
 
 /**
@@ -238,13 +279,13 @@ export interface PromptComposerOptions {
   /** Current tail inputs, evaluated on each assembly. Defaults to no tail. */
   readonly readState?: () => PersonaState | undefined
   /**
-   * Current recall inputs, evaluated on each assembly.
+   * Current recall inputs, evaluated with this assembly's query (P0-1).
    *
-   * Absent in a real mount until Story 2.5 wires the recall channel: this class
-   * composes what a tier *would* inject and reports its cost, but the channel
-   * that carries recalled text into the prompt does not exist yet.
+   * The query comes from the recent conversation, so this is asked once per
+   * assembly rather than once per mount. Absent means "no recall tier", which is
+   * what a store that never came up looks like.
    */
-  readonly readRecall?: () => readonly RecallItem[] | undefined
+  readonly readRecall?: (query: string) => readonly RecallItem[] | undefined
   /**
    * Called when a tier's reader throws, instead of letting the throw escape.
    *
@@ -260,8 +301,10 @@ export interface PromptComposerOptions {
    * place a `session_id` exists, so it is where the audit row is produced (AD-20).
    * A throw here is caught and ignored: a bookkeeping failure must never cost the
    * prompt its identity (FR-15).
+   * @param elapsedMs - wall time this assembly took, in milliseconds (P0-8's
+   *   injection p50/p95 has no other source: only the provider sees both ends).
    */
-  readonly onInject?: (plan: InjectionPlan, context: PromptAssemblyContext | undefined) => void
+  readonly onInject?: (plan: InjectionPlan, context: PromptAssemblyContext | undefined, elapsedMs: number) => void
 }
 
 /**
@@ -375,7 +418,72 @@ export function composeStateTail(state: PersonaState | undefined, maxTokens: num
 }
 
 /** Which host channel a registration attempt was made on. */
-export type HostChannel = 'section' | 'context'
+export type HostChannel = 'section' | 'context' | 'recall'
+
+/** How many characters of recent conversation become one recall query (P0-1). */
+export const RECALL_QUERY_MAX_CHARS = 200
+
+/**
+ * Build a recall query from the recent conversation (P0-1).
+ *
+ * Newest first, joined until {@link RECALL_QUERY_MAX_CHARS}: the latest thing the
+ * user said is what this turn is about, and older turns are context for it. Only
+ * `user/message` counts — an assistant line is the model reading its own output
+ * back, and a query built from it would recall what the plugin already said.
+ *
+ * Synchronous on purpose: this runs inside the identity provider, on the injection
+ * path, where AD-7 allows 20 ms for `compose()` and nothing for a promise.
+ * @param session - the host session, when the host supplied one.
+ * @returns the query, or `undefined` when there is nothing to ask with.
+ */
+export function recallQueryFrom(session: PromptSessionLike | undefined): string | undefined {
+  if (session?.ownEvents === undefined) return undefined
+  let events: readonly PromptEventLike[]
+  try {
+    events = session.ownEvents()
+  } catch {
+    // A host that cannot enumerate its own log is a host that has nothing to
+    // recall with; the tier contributes nothing and the prompt is unaffected.
+    return undefined
+  }
+  const parts: string[] = []
+  let used = 0
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event === undefined || event.type !== 'user/message') continue
+    const text = messageTextOf(event.data)
+    if (text === undefined) continue
+    if (used + text.length > RECALL_QUERY_MAX_CHARS && parts.length > 0) break
+    parts.push(text.slice(0, RECALL_QUERY_MAX_CHARS - used))
+    used += text.length
+    if (used >= RECALL_QUERY_MAX_CHARS) break
+  }
+  if (parts.length === 0) return undefined
+  return parts.reverse().join(' ')
+}
+
+/**
+ * The text of one `user/message` payload.
+ *
+ * The host's message shape is `{ content: ContentBlock[] }`, and only `text`
+ * blocks carry words a query could be built from.
+ * @param data - the event's payload.
+ * @returns the joined text, or `undefined` when it carries none.
+ */
+function messageTextOf(data: unknown): string | undefined {
+  if (typeof data !== 'object' || data === null) return undefined
+  const content = (data as { content?: unknown }).content
+  if (!Array.isArray(content)) return undefined
+  const texts: string[] = []
+  for (const block of content) {
+    if (typeof block !== 'object' || block === null) continue
+    const candidate = block as { type?: unknown; text?: unknown }
+    if (candidate.type === 'text' && typeof candidate.text === 'string' && candidate.text.trim() !== '') {
+      texts.push(candidate.text.trim())
+    }
+  }
+  return texts.length === 0 ? undefined : texts.join(' ')
+}
 
 /** What {@link PromptComposer.register} produced. */
 export interface RegisterOutcome {
@@ -387,6 +495,8 @@ export interface RegisterOutcome {
   readonly personaRegistered: boolean
   /** Whether a state tail was registered. */
   readonly tailRegistered: boolean
+  /** Whether the recall context was registered this call (P0-1). */
+  readonly recallRegistered: boolean
   /**
    * Host channels that threw, in the order they were tried.
    *
@@ -410,8 +520,18 @@ export class PromptComposer {
   readonly #options: PromptComposerOptions
   #personaRegistration: { hash: string; dispose: () => void } | undefined
   #tailRegistration: { text: string; plan: TailPlan; dispose: () => void } | undefined
+  /** The recall context registration, when one landed (P0-1). */
+  #recallRegistration: { dispose: () => void } | undefined
+  /**
+   * The recall text this assembly computed, replayed by the recall provider.
+   *
+   * Written by the identity provider (which runs first) and read by the recall
+   * context's provider (order 131). Keeping the computation on the earlier side
+   * is what lets the audit row describe the prompt the model actually receives.
+   */
+  #recallText: string | undefined
   readonly #onReaderFailure: ((tier: string, error: unknown) => void) | undefined
-  readonly #onInject: ((plan: InjectionPlan, context: PromptAssemblyContext | undefined) => void) | undefined
+  readonly #onInject: ((plan: InjectionPlan, context: PromptAssemblyContext | undefined, elapsedMs: number) => void) | undefined
   /**
    * The plan the prompt actually carries, kept current by `register`.
    *
@@ -502,9 +622,11 @@ export class PromptComposer {
    * own character cap. Cutting the identity section to make room would break the
    * byte stability that the prefix cache depends on (FR-15, I9), so it never
    * yields to another tier.
+   * @param query - this assembly's recall query; absent means "no recall tier",
+   *   which is the mount-time plan and any assembly outside a session.
    * @returns the plan.
    */
-  compose(): InjectionPlan {
+  compose(query?: string): InjectionPlan {
     // Identity first, and it cannot fail: FR-15 says an unusable store must not
     // cost the prompt its identity, so nothing that reads the store may run
     // before this line or be allowed to throw past it.
@@ -527,7 +649,11 @@ export class PromptComposer {
     // recall bound depend on the host's state and turn "each tier has a budget"
     // into "there is one pool split three ways". `tokens <= budget` still holds
     // without needing to be enforced: every tier is already inside its own cap.
-    const recalled = this.#readOrNothing(this.#options.readRecall, 'recall') ?? []
+    // The tier is always consulted; what varies with the assembly is the query it
+    // is asked with. A mount-time plan passes `''`, and a reader that cannot use a
+    // blank query answers "nothing" — which is exactly the old behaviour for a
+    // mount, without a second code path deciding it here.
+    const recalled = this.#readOrNothing(() => this.#options.readRecall?.(query ?? ''), 'recall') ?? []
     const kept: RecallItem[] = []
     let recallTokens = 0
     let recallChars = 0
@@ -671,9 +797,24 @@ export class PromptComposer {
           // story forbids, and would report a tail the host may never receive.
           //
           text: (context?: PromptAssemblyContext) => {
-            const assembled = this.#offeredPlan ?? this.#livePlan ?? plan
+            const started = performance.now()
+            // Recall first, and it must be here rather than in the recall
+            // context's own provider: the host renders sections in ascending
+            // order, so this provider (order -1000) runs *before* the recall
+            // context (order 131). Computing there would mean the audit row
+            // below reports a plan with no recall while the prompt carries it —
+            // the one mismatch AD-20 forbids. So the answer is computed once,
+            // here, and the recall provider only replays it.
+            const query = recallQueryFrom(context?.session)
+            const assembled = query === undefined
+              ? (this.#offeredPlan ?? this.#livePlan ?? plan)
+              : this.compose(query)
+            const recallText = assembled.recall.kept.length === 0
+              ? undefined
+              : assembled.recall.kept.map(item => item.text).join('\n')
+            this.#recallText = recallText
             try {
-              this.#onInject?.(assembled, context)
+              this.#onInject?.(assembled, context, Math.round(performance.now() - started))
             } catch {
               // Bookkeeping failure must never cost the prompt its identity.
               //
@@ -705,11 +846,33 @@ export class PromptComposer {
       }
     }
     if (!personaRefused) this.#livePlan = nextPlan
+    //
+    // The recall context is registered last and only once: its provider replays
+    // whatever the identity provider computed for this assembly (order 131 runs
+    // after order -1000), so the registration itself carries no text and never
+    // needs replacing. A host that refuses it costs the plugin its recall tier
+    // and nothing else (AD-18).
+    //
+    let recallRegistered = false
+    if (this.#recallRegistration === undefined) {
+      try {
+        const dispose = systemPrompt.context({
+          name: RECALL_CONTEXT_NAME,
+          order: RECALL_CONTEXT_ORDER,
+          text: (): string => this.#recallText ?? '',
+        })
+        this.#recallRegistration = { dispose }
+        recallRegistered = true
+      } catch {
+        failed.push('recall')
+      }
+    }
     return {
       plan,
       persona,
       personaRegistered,
       tailRegistered,
+      recallRegistered,
       failed,
       dispose: () => this.dispose(),
     }
@@ -725,5 +888,7 @@ export class PromptComposer {
     this.#personaRegistration = undefined
     this.#tailRegistration?.dispose()
     this.#tailRegistration = undefined
+    this.#recallRegistration?.dispose()
+    this.#recallRegistration = undefined
   }
 }

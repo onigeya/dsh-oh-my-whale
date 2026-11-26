@@ -79,8 +79,8 @@ describe('injection audit: a session it cannot name', () => {
   it('writes nothing at all rather than a fabricated session_id', () => {
     const { home, audit, auditor } = harness()
     try {
-      expect(auditor.record({ sessionId: undefined, plan: identityOnly() })).toBeUndefined()
-      expect(auditor.record({ sessionId: '', plan: identityOnly() })).toBeUndefined()
+      expect(auditor.record({ sessionId: undefined, elapsedMs: 1, plan: identityOnly() })).toBeUndefined()
+      expect(auditor.record({ sessionId: '', elapsedMs: 1, plan: identityOnly() })).toBeUndefined()
       expect(audit.rows).toEqual([])
     } finally {
       home.remove()
@@ -92,7 +92,7 @@ describe('injection audit: what the row says was injected', () => {
   it('reports the identity tier when there is no tail', () => {
     const { home, auditor } = harness()
     try {
-      const row = auditor.record({ sessionId: 's1', plan: identityOnly() }) as InjectionAuditRow
+      const row = auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow
       expect(row.tier).toBe('identity')
       expect(row.items).toEqual(['identity'])
       expect(row.chars).toBe(19)
@@ -105,7 +105,7 @@ describe('injection audit: what the row says was injected', () => {
   it('reports identity+state and names every kept segment when the tail rode along', () => {
     const { home, auditor } = harness()
     try {
-      const row = auditor.record({ sessionId: 's1', plan: withTail() }) as InjectionAuditRow
+      const row = auditor.record({ sessionId: 's1', elapsedMs: 1, plan: withTail() }) as InjectionAuditRow
       expect(row.tier).toBe('identity+state')
       expect(row.items).toEqual(['identity', 'state:relationship', 'state:preference'])
       expect(row.chars).toBe(19 + 18)
@@ -122,7 +122,7 @@ describe('injection audit: what the row says was injected', () => {
     const { home, auditor } = harness()
     try {
       const stale = identityOnly({ tail: tail({ kept: [], chars: 0, tokens: 0 }) })
-      const row = auditor.record({ sessionId: 's1', plan: stale }) as InjectionAuditRow
+      const row = auditor.record({ sessionId: 's1', elapsedMs: 1, plan: stale }) as InjectionAuditRow
       expect(row.tier).toBe('identity')
       expect(row.items).toEqual(['identity'])
     } finally {
@@ -130,22 +130,25 @@ describe('injection audit: what the row says was injected', () => {
     }
   })
 
-  it('never counts recall tokens, because recall has no channel into the prompt', () => {
+  it('counts recall tokens, because recall now has a channel into the prompt', () => {
     const { home, auditor } = harness()
     try {
       const plan = withTail({
         recall: { kept: [{ memKey: 'assertion:Elliott:likes:coffee', text: '喜欢咖啡' }], chars: 4, overCount: 0, overBudget: 0, tokens: 99, truncated: false },
         tokens: 16 + 99,
       })
-      const row = auditor.record({ sessionId: 's1', plan }) as InjectionAuditRow
-      expect(row.tokens).toBe(16)
-      expect(row.items).not.toContain('assertion:Elliott:likes:coffee')
+      const row = auditor.record({ sessionId: 's1', elapsedMs: 1, plan }) as InjectionAuditRow
+      expect(row.tokens).toBe(16 + 99)
+      expect(row.tier).toBe('identity+state+recall')
+      // The business key never reaches the row: an injection names units, and a
+      // `mem_key` belongs to the recall row that returned it.
+      expect(row.items).toEqual(['identity', 'state:relationship', 'state:preference', 'recall:1'])
     } finally {
       home.remove()
     }
   })
 
-  it('counts a cut only when an injected tier was cut, not when recall was', () => {
+  it('counts a cut on whichever tier was cut, recall included', () => {
     const { home, auditor } = harness()
     try {
       const recallCut: InjectionPlan = withTail({
@@ -153,13 +156,40 @@ describe('injection audit: what the row says was injected', () => {
         truncatedItems: ['recall'],
         truncated: true,
       })
-      expect((auditor.record({ sessionId: 's1', plan: recallCut }) as InjectionAuditRow).truncated).toBe(false)
+      expect((auditor.record({ sessionId: 's1', elapsedMs: 1, plan: recallCut }) as InjectionAuditRow).truncated).toBe(true)
       const tailCut: InjectionPlan = withTail({
         tail: tail({ kept: ['relationship'], dropped: ['preference'], truncated: true }),
         truncatedItems: ['state:preference'],
         truncated: true,
       })
-      expect((auditor.record({ sessionId: 's2', plan: tailCut }) as InjectionAuditRow).truncated).toBe(true)
+      expect((auditor.record({ sessionId: 's2', elapsedMs: 1, plan: tailCut }) as InjectionAuditRow).truncated).toBe(true)
+    } finally {
+      home.remove()
+    }
+  })
+
+  it('names the tier from the kept lists, so it can never contradict the items', () => {
+    const { home, auditor } = harness()
+    try {
+      const recallOnly = identityOnly({
+        recall: { kept: [{ memKey: 'assertion:a:b:c', text: 'x' }], chars: 1, overCount: 0, overBudget: 0, tokens: 1, truncated: false },
+      })
+      expect((auditor.record({ sessionId: 's1', elapsedMs: 1, plan: recallOnly }) as InjectionAuditRow).tier).toBe('identity+recall')
+      const neither = identityOnly()
+      expect((auditor.record({ sessionId: 's2', elapsedMs: 1, plan: neither }) as InjectionAuditRow).tier).toBe('identity')
+    } finally {
+      home.remove()
+    }
+  })
+
+  it('carries the assembly duration it was handed, and invents nothing when none was measured', () => {
+    const { home, auditor } = harness()
+    try {
+      const row = auditor.record({ sessionId: 's1', elapsedMs: 7, plan: identityOnly() }) as InjectionAuditRow
+      expect(row.elapsed_ms).toBe(7)
+      // Zero is a real measurement (an assembly that took under a millisecond),
+      // and it must survive as zero rather than be replaced by a placeholder.
+      expect((auditor.record({ sessionId: 's2', elapsedMs: 0, plan: identityOnly() }) as InjectionAuditRow).elapsed_ms).toBe(0)
     } finally {
       home.remove()
     }
@@ -170,7 +200,7 @@ describe('injection audit: prefix_unchanged', () => {
   it('is false on the first assembly, because nothing was compared', () => {
     const { home, auditor } = harness()
     try {
-      const row = auditor.record({ sessionId: 's1', plan: identityOnly() }) as InjectionAuditRow
+      const row = auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow
       expect(row.prefix_unchanged).toBe(false)
     } finally {
       home.remove()
@@ -180,10 +210,10 @@ describe('injection audit: prefix_unchanged', () => {
   it('is true on the second identical assembly and false once the text differs', () => {
     const { home, auditor } = harness()
     try {
-      auditor.record({ sessionId: 's1', plan: identityOnly() })
-      expect((auditor.record({ sessionId: 's1', plan: identityOnly() }) as InjectionAuditRow).prefix_unchanged).toBe(true)
+      auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() })
+      expect((auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow).prefix_unchanged).toBe(true)
       const changed = identityOnly({ tail: tail({ text: '关系：同事。' }) })
-      expect((auditor.record({ sessionId: 's1', plan: changed }) as InjectionAuditRow).prefix_unchanged).toBe(false)
+      expect((auditor.record({ sessionId: 's1', elapsedMs: 1, plan: changed }) as InjectionAuditRow).prefix_unchanged).toBe(false)
     } finally {
       home.remove()
     }
@@ -192,9 +222,9 @@ describe('injection audit: prefix_unchanged', () => {
   it('keeps one history per session, so two sessions never compare against each other', () => {
     const { home, auditor } = harness()
     try {
-      auditor.record({ sessionId: 's1', plan: identityOnly() })
-      expect((auditor.record({ sessionId: 's2', plan: identityOnly() }) as InjectionAuditRow).prefix_unchanged).toBe(false)
-      expect((auditor.record({ sessionId: 's1', plan: identityOnly() }) as InjectionAuditRow).prefix_unchanged).toBe(true)
+      auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() })
+      expect((auditor.record({ sessionId: 's2', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow).prefix_unchanged).toBe(false)
+      expect((auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow).prefix_unchanged).toBe(true)
     } finally {
       home.remove()
     }
@@ -203,9 +233,9 @@ describe('injection audit: prefix_unchanged', () => {
   it('treats a forgotten session as new', () => {
     const { home, auditor } = harness()
     try {
-      auditor.record({ sessionId: 's1', plan: identityOnly() })
+      auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() })
       auditor.forget('s1')
-      expect((auditor.record({ sessionId: 's1', plan: identityOnly() }) as InjectionAuditRow).prefix_unchanged).toBe(false)
+      expect((auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow).prefix_unchanged).toBe(false)
     } finally {
       home.remove()
     }
@@ -217,8 +247,8 @@ describe('injection audit: prefix_unchanged', () => {
       // Same concatenated text, different split: the host sees the same bytes, but
       // a row claiming they are the same prefix would hide that the identity section
       // changed length. The digest separates them with a NUL.
-      auditor.record({ sessionId: 's1', plan: identityOnly({ persona: { name: 'harness:identity', order: -1000, text: 'AB', hash: 'b'.repeat(64), chars: 2, truncated: false }, tail: tail({ text: 'C', kept: ['relationship'], chars: 1, tokens: 1 }) }) })
-      const row = auditor.record({ sessionId: 's1', plan: identityOnly({ persona: { name: 'harness:identity', order: -1000, text: 'A', hash: 'c'.repeat(64), chars: 1, truncated: false }, tail: tail({ text: 'BC', kept: ['relationship'], chars: 2, tokens: 2 }) }) }) as InjectionAuditRow
+      auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly({ persona: { name: 'harness:identity', order: -1000, text: 'AB', hash: 'b'.repeat(64), chars: 2, truncated: false }, tail: tail({ text: 'C', kept: ['relationship'], chars: 1, tokens: 1 }) }) })
+      const row = auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly({ persona: { name: 'harness:identity', order: -1000, text: 'A', hash: 'c'.repeat(64), chars: 1, truncated: false }, tail: tail({ text: 'BC', kept: ['relationship'], chars: 2, tokens: 2 }) }) }) as InjectionAuditRow
       expect(row.prefix_unchanged).toBe(false)
     } finally {
       home.remove()
@@ -230,7 +260,7 @@ describe('injection audit: the host cache columns', () => {
   it('are null when the host cannot say', () => {
     const { home, auditor } = harness()
     try {
-      const row = auditor.record({ sessionId: 's1', plan: identityOnly() }) as InjectionAuditRow
+      const row = auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow
       expect(row.host_cache_read).toBeNull()
       expect(row.host_cache_write).toBeNull()
       expect(row.host_cache_uncached).toBeNull()
@@ -247,11 +277,11 @@ describe('injection audit: the host cache columns', () => {
     let index = 0
     const { home, auditor } = harness({ hostUsage: () => readings[index++] })
     try {
-      const first = auditor.record({ sessionId: 's1', plan: identityOnly() }) as InjectionAuditRow
+      const first = auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow
       // The first row is measured from zero: everything the session spent is this
       // session's, and there is no earlier observation to subtract.
       expect([first.host_cache_read, first.host_cache_write, first.host_cache_uncached]).toEqual([1000, 200, 3000])
-      const second = auditor.record({ sessionId: 's1', plan: identityOnly() }) as InjectionAuditRow
+      const second = auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow
       expect([second.host_cache_read, second.host_cache_write, second.host_cache_uncached]).toEqual([500, 50, 500])
     } finally {
       home.remove()
@@ -267,11 +297,11 @@ describe('injection audit: the host cache columns', () => {
     let index = 0
     const { home, auditor } = harness({ hostUsage: () => readings[index++] })
     try {
-      auditor.record({ sessionId: 's1', plan: identityOnly() })
-      const reset = auditor.record({ sessionId: 's1', plan: identityOnly() }) as InjectionAuditRow
+      auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() })
+      const reset = auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow
       expect([reset.host_cache_read, reset.host_cache_write, reset.host_cache_uncached]).toEqual([null, null, null])
       // The baseline moved to the post-reset reading, so the next delta is real.
-      const after = auditor.record({ sessionId: 's1', plan: identityOnly() }) as InjectionAuditRow
+      const after = auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow
       expect([after.host_cache_read, after.host_cache_write, after.host_cache_uncached]).toEqual([20, 10, 40])
     } finally {
       home.remove()
@@ -303,9 +333,9 @@ describe('injection audit: the host cache columns', () => {
     })
     const auditor = createInjectionAuditor({ audit: refusing, now: () => NOW, hostUsage: () => readings[index++] })
     try {
-      expect(() => auditor.record({ sessionId: 's1', plan: identityOnly() })).toThrow('disk full')
+      expect(() => auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() })).toThrow('disk full')
       // The retry is measured from zero, as if the refused row had never happened.
-      const row = auditor.record({ sessionId: 's1', plan: identityOnly() }) as InjectionAuditRow
+      const row = auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow
       expect([row.host_cache_read, row.host_cache_write, row.host_cache_uncached]).toEqual([1500, 250, 3500])
       // The digest did not advance either, so nothing was compared.
       expect(row.prefix_unchanged).toBe(false)
@@ -321,8 +351,8 @@ describe('injection audit: the host cache columns', () => {
     }
     const { home, auditor } = harness({ hostUsage: (sessionId: string) => readings[sessionId] })
     try {
-      auditor.record({ sessionId: 's1', plan: identityOnly() })
-      const row = auditor.record({ sessionId: 's2', plan: identityOnly() }) as InjectionAuditRow
+      auditor.record({ sessionId: 's1', elapsedMs: 1, plan: identityOnly() })
+      const row = auditor.record({ sessionId: 's2', elapsedMs: 1, plan: identityOnly() }) as InjectionAuditRow
       expect([row.host_cache_read, row.host_cache_write, row.host_cache_uncached]).toEqual([7, 3, 11])
     } finally {
       home.remove()
@@ -335,7 +365,7 @@ describe('injection audit: the row it lands', () => {
     const { home, audit } = harness()
     try {
       const spot = createInjectionAuditor({ audit, now: () => NOW })
-      spot.record({ sessionId: 'session-alpha', plan: withTail() })
+      spot.record({ sessionId: 'session-alpha', elapsedMs: 1, plan: withTail() })
       expect(audit.rows).toHaveLength(1)
       const row = audit.rows[0] as InjectionAuditRow
       expect(row.kind).toBe('injection')

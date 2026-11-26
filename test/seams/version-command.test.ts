@@ -13,7 +13,7 @@ import { createWritePort, type WritePort } from '../../src/seams/write-port.ts'
 import { createVersionReader, type VersionReader } from '../../src/seams/version-reader.ts'
 import {
   parseMemKeyArgument,
-  registerOmwCommand,
+  registerOmwCommands,
   type CommandDefinitionLike,
   type CommandRegistryLike,
 } from '../../src/seams/commands.ts'
@@ -61,15 +61,17 @@ function cityOp(obj: string): Record<string, unknown> {
 }
 
 /** A registry that keeps the definition so a test can invoke the handler. */
-function registry(): CommandRegistryLike & { invoke(rawInput: string): Promise<unknown> } {
+function registry(): CommandRegistryLike & { invoke(name: string, rawInput?: string): Promise<unknown> } {
   const definitions: CommandDefinitionLike[] = []
   return {
     register(definition: CommandDefinitionLike) {
       definitions.push(definition)
       return () => {}
     },
-    async invoke(rawInput: string) {
-      return definitions[0]!.handler({ rawInput })
+    async invoke(name: string, rawInput = '') {
+      const definition = definitions.find(entry => entry.name === name)
+      if (definition === undefined) throw new Error(`no command registered as ${name}`)
+      return definition.handler({ rawInput })
     },
   }
 }
@@ -79,7 +81,7 @@ interface CommandResult { readonly kind: string; readonly text?: string }
 /** Wire the command with only the version reader, which is all these reads need. */
 function commandFor(h: Harness, reader?: () => VersionReader | undefined) {
   const commands = registry()
-  registerOmwCommand(
+  registerOmwCommands(
     commands,
     () => { throw new Error('the doctor view is not used here') },
     undefined,
@@ -101,7 +103,7 @@ describe('/omw history', () => {
     h.at(LATER)
     await h.port.remember({ ops: [cityOp('上海')] }, 'model', 'remember')
 
-    const result = await commandFor(h).invoke(' history ' + KEY) as CommandResult
+    const result = await commandFor(h).invoke('omw-history', KEY) as CommandResult
     expect(result.kind).toBe('success')
     const text = result.text ?? ''
     expect(text).toContain('2 个版本')
@@ -124,7 +126,7 @@ describe('/omw history', () => {
     await h.port.remember({ ops: [cityOp('杭州')] }, 'model', 'remember')
     h.at(LATER)
     await h.port.remember({ ops: [cityOp('上海')] }, 'model', 'remember')
-    const text = (await commandFor(h).invoke(' history ' + KEY) as CommandResult).text ?? ''
+    const text = (await commandFor(h).invoke('omw-history', KEY) as CommandResult).text ?? ''
     expect(text).toContain(new Date(LATER).toISOString())
     expect(text).toContain('至今')
   })
@@ -132,7 +134,7 @@ describe('/omw history', () => {
   it('says a key was never rewritten rather than showing one lonely line', async () => {
     const h = harness()
     await h.port.remember({ ops: [cityOp('杭州')] }, 'model', 'remember')
-    const text = (await commandFor(h).invoke(' history ' + KEY) as CommandResult).text ?? ''
+    const text = (await commandFor(h).invoke('omw-history', KEY) as CommandResult).text ?? ''
     expect(text).toContain('从未被改写')
   })
 
@@ -141,7 +143,7 @@ describe('/omw history', () => {
     // The question was well formed; the answer is that this store has never
     // seen the key. Reporting an error would make a script read 'never
     // written' as a broken request and retry it.
-    const result = await commandFor(h).invoke(' history assertion:Elliott:name') as CommandResult
+    const result = await commandFor(h).invoke('omw-history', 'assertion:Elliott:name') as CommandResult
     expect(result.kind).toBe('success')
     expect(result.text ?? '').toContain('没有找到这个业务键的任何版本')
     expect(jsonOf(result.text ?? '')).toMatchObject({ ok: true, mem_key: 'assertion:Elliott:name', versions: [] })
@@ -156,7 +158,7 @@ describe('/omw history', () => {
       kind: 'evidence', mem_key: 'evidence:session-alpha:12:12', session_id: 'session-alpha',
       seq_from: 12, seq_to: 12, quote: '一段来源。', quote_truncated: false, deidentified: false,
     })
-    const result = await commandFor(h).invoke(' history evidence:session-alpha:12:12') as CommandResult
+    const result = await commandFor(h).invoke('omw-history', 'evidence:session-alpha:12:12') as CommandResult
     expect(result.kind).toBe('success')
     expect(result.text ?? '').toContain('没有版本链')
     expect(result.text ?? '').toContain('证据指针')
@@ -167,21 +169,21 @@ describe('/omw history', () => {
     const h = harness()
     // A decision is a record of a change, not a memory that changes. Offering
     // it a version chain would invite treating the audit trail as mutable.
-    const result = await commandFor(h).invoke(' history decision:1:0:abcdef') as CommandResult
+    const result = await commandFor(h).invoke('omw-history', 'decision:1:0:abcdef') as CommandResult
     expect(result.kind).toBe('error')
     expect(result.text ?? '').toContain('账本')
   })
 
   it('asks for a key when none was given', async () => {
     const h = harness()
-    const result = await commandFor(h).invoke(' history') as CommandResult
+    const result = await commandFor(h).invoke('omw-history') as CommandResult
     expect(result.kind).toBe('error')
     expect(result.text ?? '').toContain('需要给出一个业务键')
   })
 
   it('says the store is unreadable rather than that the key is missing', async () => {
     const h = harness()
-    const result = await commandFor(h, () => undefined).invoke(' history ' + KEY) as CommandResult
+    const result = await commandFor(h, () => undefined).invoke('omw-history', KEY) as CommandResult
     expect(result.kind).toBe('error')
     expect(result.text ?? '').toContain('不可读')
   })
@@ -193,7 +195,7 @@ describe('/omw history', () => {
       ledger() { throw new Error('engine went away') },
       dispose() {},
     }
-    const result = await commandFor(h, () => broken).invoke(' history ' + KEY) as CommandResult
+    const result = await commandFor(h, () => broken).invoke('omw-history', KEY) as CommandResult
     expect(result.kind).toBe('error')
     expect(result.text ?? '').toContain('读取版本链时出错')
     expect(result.text ?? '').toContain('engine went away')
@@ -201,7 +203,7 @@ describe('/omw history', () => {
 
   it('reports a second word instead of answering about the first', async () => {
     const h = harness()
-    const result = await commandFor(h).invoke(' history ' + KEY + ' 谢谢') as CommandResult
+    const result = await commandFor(h).invoke('omw-history', KEY + ' 谢谢') as CommandResult
     expect(result.kind).toBe('error')
     expect(result.text ?? '').toContain('谢谢')
   })
@@ -214,7 +216,7 @@ describe('/omw ledger', () => {
     h.at(LATER)
     await h.port.remember({ ops: [cityOp('上海')], reason: '用户搬家' }, 'user', 'remember')
 
-    const result = await commandFor(h).invoke(' ledger ' + KEY) as CommandResult
+    const result = await commandFor(h).invoke('omw-ledger', KEY) as CommandResult
     expect(result.kind).toBe('success')
     const text = result.text ?? ''
     expect(text).toContain('2 条决策记录')
@@ -236,7 +238,7 @@ describe('/omw ledger', () => {
     await h.port.remember({ ops: [cityOp('杭州')] }, 'model', 'remember')
     h.at(LATER)
     await h.port.remember({ ops: [cityOp('上海')] }, 'user', 'remember')
-    const text = (await commandFor(h).invoke(' ledger ' + KEY) as CommandResult).text ?? ''
+    const text = (await commandFor(h).invoke('omw-ledger', KEY) as CommandResult).text ?? ''
     expect(text).toContain('杭州')
     expect(text).toContain('上海')
     expect(text).toContain('操作号')
@@ -246,14 +248,14 @@ describe('/omw ledger', () => {
     const h = harness()
     await h.port.remember({ ops: [cityOp('杭州')] }, 'model', 'remember')
     // `pred:lives_in` is written by the seed installer, not by a patch table.
-    const result = await commandFor(h).invoke(' ledger pred:lives_in') as CommandResult
+    const result = await commandFor(h).invoke('omw-ledger', 'pred:lives_in') as CommandResult
     expect(result.kind).toBe('success')
     expect(result.text ?? '').toContain('没有决策记录')
   })
 
   it('answers that a key was never written instead of refusing the question', async () => {
     const h = harness()
-    const result = await commandFor(h).invoke(' ledger assertion:Elliott:name') as CommandResult
+    const result = await commandFor(h).invoke('omw-ledger', 'assertion:Elliott:name') as CommandResult
     expect(result.kind).toBe('success')
     expect(result.text ?? '').toContain('没有找到这个业务键的任何决策记录')
     expect(jsonOf(result.text ?? '')).toMatchObject({ ok: true, entries: [] })
@@ -261,14 +263,14 @@ describe('/omw ledger', () => {
 
   it('asks for a key when none was given', async () => {
     const h = harness()
-    const result = await commandFor(h).invoke(' ledger') as CommandResult
+    const result = await commandFor(h).invoke('omw-ledger') as CommandResult
     expect(result.kind).toBe('error')
     expect(result.text ?? '').toContain('需要给出一个业务键')
   })
 
   it('says the store is unreadable rather than that there is no ledger', async () => {
     const h = harness()
-    const result = await commandFor(h, () => undefined).invoke(' ledger ' + KEY) as CommandResult
+    const result = await commandFor(h, () => undefined).invoke('omw-ledger', KEY) as CommandResult
     expect(result.kind).toBe('error')
     expect(result.text ?? '').toContain('不可读')
   })
@@ -290,10 +292,17 @@ describe('a version reader that was disposed', () => {
 
 describe('cutting the key out of a version invocation', () => {
   it('keeps the key as typed, colons and all', () => {
-    expect(parseMemKeyArgument(' history assertion:Elliott:lives_in', 'history'))
+    // The command name is the host's, so it is not part of the text any more.
+    expect(parseMemKeyArgument('assertion:Elliott:lives_in', 'omw-history'))
       .toEqual({ ok: true, key: 'assertion:Elliott:lives_in' })
-    expect(parseMemKeyArgument(' ledger pred:lives_in', 'ledger'))
+    expect(parseMemKeyArgument('pred:lives_in', 'omw-ledger'))
       .toEqual({ ok: true, key: 'pred:lives_in' })
-    expect(parseMemKeyArgument(' history', 'history')).toEqual({ ok: true, key: '' })
+    expect(parseMemKeyArgument('', 'omw-history')).toEqual({ ok: true, key: '' })
+  })
+
+  it('reports a second word rather than treating it as part of the key', () => {
+    const parsed = parseMemKeyArgument('assertion:a:b 谢谢', 'omw-history')
+    expect(parsed.ok).toBe(false)
+    expect(parsed.ok ? '' : parsed.reason).toContain('一次只查一个业务键')
   })
 })

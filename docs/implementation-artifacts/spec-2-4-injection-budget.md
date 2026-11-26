@@ -12,7 +12,7 @@ context:
 warnings: ['oversized']
 deferred:
   - "逐轮注入计划：Runtime.injection 现在只在挂载时组装一次，逐轮重算要等 Epic 7 给状态尾巴真实数据源；届时 AC6 需要复测，那一轮再补逐轮采样与真实库不可用的用例。"
-  - "召回通道：composer 已能规划召回（InjectionPlan.recall），但 register() 只登记身份段与尾巴两条宿主通道，真装配下 readRecall 从不传入，故真实挂载的 tokens 里召回恒为 0。Story 2.5 接入召回后该字段才恢复为真现场。"
+  - "召回通道：composer 已能规划召回（InjectionPlan.recall），但 register() 只登记身份段与尾巴两条宿主通道，真装配下 readRecall 从不传入，故真实挂载的 tokens 里召回恒为 0。召回通道已由 P0-1（spec-e3p0-2-recall-channel.md，2026-11-26）交付，该字段即恢复为真现场。"
   - "prefix_unchanged 只有单次取样：它在 composer 层与 personaRegistered 互补且有用例，但「与上一轮相同」需要轮级第二个数据点，随 Epic 7 的逐轮组装一并补。"
   - "CI 未在 GitHub 实跑：.github/workflows/ci.yml 是本故事之前就存在的门，本故事没有改动它，也没有权限在远端触发；所有数字来自本机全量命令。"
 ---
@@ -130,7 +130,7 @@ deferred:
 - **blind24-17** `[low]` `[patch]` runtime-write 用例把 30 / 5 / 60 硬编码且缺空行 — 改为 DEFAULT_TAIL_MAX_TOKENS / DEFAULT_TOP_K / RECALL_ITEM_BUDGET_TOKENS 推导，空行已补
 - **edge24-1** `[high]` `[patch]` register() 首句改 compose() 后，读取方抛错会先于 section 抛，本轮提示词没有身份段 — 新增 #readOrNothing 把读取失败降级为「本档没有内容」并回调 onReaderFailure；补两条用例，断线验证：拆掉兜底后 2 条转红
 - **edge24-2** `[medium]` `[patch]` 召回循环用 continue，剩余额度 50 时 40-token 首项被丢而 20-token 次项被留 — 与 blind24-4 同一处，已改 break 并补「drops the tail of the list rather than skipping ahead to a smaller item」
-- **edge24-3** `[medium]` `[defer]` readRecall 供了条目时召回文本从未送到宿主通道，而 tokens 自述「whole injection」 — 已改写 JSDoc 明说只计能真正进提示词的档；召回通道本身属 Story 2.5，届时该字段才恢复为真
+- **edge24-3** `[medium]` `[defer]` readRecall 供了条目时召回文本从未送到宿主通道，而 tokens 自述「whole injection」 — 已改写 JSDoc 明说只计能真正进提示词的档；召回通道本身由 P0-1 交付（spec-e3p0-2-recall-channel.md，2026-11-26），该字段已恢复为真
 - **edge24-4** `[medium]` `[patch]` 候选多于 topK 而额度还装得下时，正常截断被计进 recallDropped 并写入 truncatedItems — 已拆 overCount / overBudget（同 blind24-5），并补「stops at topK … without calling it a cut」
 - **edge24-5** `[low]` `[patch]` section 抛错时 register() 不返回，injection = outcome.plan 永不执行、停在 undefined，与相邻注释相反 — 失败路径改为 failed: [section] 就地返回 plan；runtime 侧 catch 也已清空 injection（同 blind24-9）
 - **vgap24-F1** `[medium]` `[patch]` #readOrNothing 的兜底行为已修好但全仓没有一个抛错的 reader 用例，删掉兜底仍旧全绿 — 新增两条抛错 reader 用例；断线验证后恰好这 2 条转红
@@ -144,7 +144,7 @@ deferred:
 - **intent24-5** `[medium]` `[patch]` Runtime.injection 是挂载快照而非每轮数据，与 AD-7「尾巴每轮可变」冲突 — JSDoc 已改为「挂载时组装的计划」；每轮重算列入 deferred（与 blind24-8 同源）
 - **intent24-6** `[medium]` `[defer]` INJ_100_ROUNDS 的「若干轮库不可用」被换成 composer 层 readState 轮换，真库不可用从未发生 — 100 轮哈希稳定已由用例守住；「库不可用轮次仍注册身份段」需宿主侧注入失败，随 Epic 7 复测 AC6 时一并补
 - **intent24-7** `[medium]` `[patch]` 被审的 .review-2-4.diff 是早于最终版本的快照，缺的正是 AC 点名的 truncated: boolean — 评审材料生成后代码又被补丁改动；已在 finalize 前重新生成 diff 并复核一致性
-- **intent24-8** `[medium]` `[defer]` INJ_RECALL_ABSENT 的 recall 是对象而非空数组，且真装配下 readRecall 从不传入 — 契约上 recall 恒为计划对象；召回通道在 Story 2.5 接入后该行才有真实取值
+- **intent24-8** `[medium]` `[defer]` INJ_RECALL_ABSENT 的 recall 是对象而非空数组，且真装配下 readRecall 从不传入 — 契约上 recall 恒为计划对象；召回通道已由 P0-1（spec-e3p0-2-recall-channel.md）交付，该行已有真实取值
 - **intent24-9** `[low]` `[patch]` 召回丢弃方向无法被现有断言区分（两条等长 30-token 条目） — 已补方向可区分的用例：25-token 超 20 池时 kept 为空、overBudget 2
 - **intent24-10** `[low]` `[patch]` config 单源被复制进 composer（DEFAULT_TOP_K / DEFAULT_RECALL_ITEM_TOKENS） — 已改为导入（同 blind24-6）
 - **intent24-11** `[low]` `[patch]` plan 没有 per-tier chars 字段 — 已补齐三档 chars（同 blind24-13）
@@ -198,7 +198,7 @@ deferred:
 
 **Findings.** 四层评审共 38 条（blind 17 / edge 5 / vgap 4 / intent 12），裁定 high 5 / medium 22 / low 11，patch 34 / defer 4 / reject 0，无 intent_gap、无 bad_spec。三条 high 是真缺陷：召回吃尾巴余量（`room` 算法）、两种截断混记成一个 `dropped`、读取方抛错会让本轮丢失身份段。四条 defer 都是「本故事没有数据源」而非实现缺陷：逐轮注入计划、召回宿主通道、`prefixUnchanged` 的轮级取样（三者都要 Epic 7 或 2.5 的真实数据源）、以及 CI 未在 GitHub 实跑。
 
-**Follow-up.** Story 2.5 接入召回通道后，`InjectionPlan.tokens` 里的召回那一档才会变成真实数字，本故事 JSDoc 已写明这一点。Story 2.6 直接把 `Runtime.injection` 的字段写成 `InjectionAuditRow`，不需要重算。Epic 7 交付状态尾巴真实内容后需复测 AC6（≤1 条偏好、≤1 条 flag）与逐轮注入。
+**Follow-up.** 召回通道已由 **P0-1**（`spec-e3p0-2-recall-channel.md`，2026-11-26）交付，`InjectionPlan.tokens` 里的召回那一档现在是真实数字。原先本文把这件事记在 Story 2.5 名下，而 `spec-2-5` 又把它推给 Epic 5 —— 两次推诿正是 P0-1 要关掉的空档。Story 2.6 直接把 `Runtime.injection` 的字段写成 `InjectionAuditRow`，不需要重算。Epic 7 交付状态尾巴真实内容后需复测 AC6（≤1 条偏好、≤1 条 flag）与逐轮注入。
 
 **Verification.**
 - `pnpm build` / `pnpm lint` / `pnpm test` / `pnpm test:coverage` 四命令全部 exit 0（BUILD=0 LINT=0 TEST=0 COV=0）。

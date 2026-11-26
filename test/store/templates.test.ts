@@ -63,7 +63,6 @@ function predPayload(name: string, extra: Record<string, unknown> = {}): Record<
       aliases: [],
       decidedBy: 'seed',
       decidedAt: iso,
-      evidenceCount: 0,
       normVersion: NORM_VERSION,
       activeSlot: 1,
       recordedAt: iso,

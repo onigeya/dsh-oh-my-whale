@@ -13,7 +13,7 @@ import {
   type ToolDefinitionLike,
   type ToolRegistryLike,
 } from '../../src/seams/tools.ts'
-import { parsePromote, registerOmwCommand, type DoctorView } from '../../src/seams/commands.ts'
+import { parsePromote, registerOmwCommands, type DoctorView } from '../../src/seams/commands.ts'
 import { E_OK } from '../../src/core/tool-errors.ts'
 import { DEFAULT_CANDIDATE_POOL, DEFAULT_TOP_K, MAX_TOP_K } from '../../src/core/recall.ts'
 import type { RecallAnswer, RecallReader } from '../../src/seams/recall-reader.ts'
@@ -313,16 +313,17 @@ describe('the remember tool', () => {
   })
 })
 
-describe('parsing /omw pred promote', () => {
+describe('parsing omw-pred-promote', () => {
+  // The command name is the host's, so none of these strings start with it.
   it('accepts a single-valued promotion', () => {
-    expect(parsePromote('pred promote mood --single --reason 用户要求单值')).toEqual({
+    expect(parsePromote('mood --single --reason 用户要求单值')).toEqual({
       ok: true,
       request: { name: 'mood', cardinality: 'single', reason: '用户要求单值' },
     })
   })
 
   it('reads flags case-insensitively and keeps the reason as written', () => {
-    const parsed = parsePromote('PRED PROMOTE mood --SINGLE --Reason 用户要求 Single 值')
+    const parsed = parsePromote('mood --SINGLE --Reason 用户要求 Single 值')
     expect(parsed).toEqual({
       ok: true,
       request: { name: 'mood', cardinality: 'single', reason: '用户要求 Single 值' },
@@ -330,7 +331,7 @@ describe('parsing /omw pred promote', () => {
   })
 
   it('treats a flag word inside the reason as prose', () => {
-    const parsed = parsePromote('pred promote mood --single --reason 之前是多值，不是 --multi')
+    const parsed = parsePromote('mood --single --reason 之前是多值，不是 --multi')
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
     expect(parsed.request.cardinality).toBe('single')
@@ -338,25 +339,25 @@ describe('parsing /omw pred promote', () => {
   })
 
   it('refuses an unrecognised token before the reason', () => {
-    const parsed = parsePromote('pred promote mood --single --quiet --reason 用户要求')
+    const parsed = parsePromote('mood --single --quiet --reason 用户要求')
     expect(parsed).toEqual({ ok: false, reason: '无法识别的参数 "--quiet"（参数必须写在 --reason 之前）' })
   })
 
   it('refuses both cardinalities at once', () => {
-    const parsed = parsePromote('pred promote mood --single --multi --reason 用户要求')
+    const parsed = parsePromote('mood --single --multi --reason 用户要求')
     expect(parsed).toEqual({ ok: false, reason: '--single 与 --multi 只能选一个' })
   })
 
   it('names what is missing', () => {
-    expect(parsePromote('pred promote')).toEqual({
+    expect(parsePromote('')).toEqual({
       ok: false,
-      reason: '缺少谓词名：/omw pred promote <谓词名> --single|--multi --reason <理由>',
+      reason: '缺少谓词名：/omw-pred-promote <谓词名> --single|--multi --reason <理由>',
     })
-    expect(parsePromote('pred promote mood --reason 用户要求')).toEqual({
+    expect(parsePromote('mood --reason 用户要求')).toEqual({
       ok: false,
       reason: '必须用 --single 或 --multi 指定基数',
     })
-    expect(parsePromote('pred promote mood --single')).toEqual({
+    expect(parsePromote('mood --single')).toEqual({
       ok: false,
       reason: '必须用 --reason 给出理由',
     })
@@ -377,21 +378,26 @@ describe('the /omw command', () => {
   }
 
   function mount(write?: () => WritePort | undefined) {
-    let handler: ((invocation: { rawInput: string }) => unknown) | undefined
+    const handlers = new Map<string, (invocation: { rawInput: string }) => unknown>()
     const registry = {
-      register(definition: { handler: (invocation: { rawInput: string }) => unknown }): () => void {
-        handler = definition.handler
-        return () => { handler = undefined }
+      register(definition: { name: string; handler: (invocation: { rawInput: string }) => unknown }): () => void {
+        handlers.set(definition.name, definition.handler)
+        return () => {
+          handlers.delete(definition.name)
+        }
       },
     }
-    registerOmwCommand(registry as never, view, write)
-    return async (rawInput: string) => await handler?.({ rawInput }) as { kind: string; text: string }
+    registerOmwCommands(registry as never, view, write)
+    return async (name: string, rawInput = '') => {
+      const handler = handlers.get(name)
+      return await handler?.({ rawInput }) as { kind: string; text: string }
+    }
   }
 
   it('promotes through the write side', async () => {
     const port = stubPort({ ...OK_ANSWER, tool: 'omw', message: '写入 1 条新事实。' })
     const invoke = mount(() => port)
-    const result = await invoke(' pred promote mood --single --reason 用户要求单值')
+    const result = await invoke('omw-pred-promote', 'mood --single --reason 用户要求单值')
 
     expect(result.kind).toBe('success')
     expect(result.text).toBe('已更新谓词登记表：写入 1 条新事实。')
@@ -401,7 +407,7 @@ describe('the /omw command', () => {
   it('reports a failed promotion with its closed code', async () => {
     const port = stubPort({ ...OK_ANSWER, ok: false, code: 'E_CONFLICT', message: '业务键已被占用' })
     const invoke = mount(() => port)
-    const result = await invoke('pred promote mood --single --reason 用户要求单值')
+    const result = await invoke('omw-pred-promote', 'mood --single --reason 用户要求单值')
 
     expect(result.kind).toBe('error')
     expect(result.text).toBe('未能更新谓词登记表（E_CONFLICT）：业务键已被占用')
@@ -409,7 +415,7 @@ describe('the /omw command', () => {
 
   it('says the write side is not ready rather than failing silently', async () => {
     const invoke = mount(() => undefined)
-    const result = await invoke('pred promote mood --single --reason 用户要求单值')
+    const result = await invoke('omw-pred-promote', 'mood --single --reason 用户要求单值')
 
     expect(result.kind).toBe('error')
     expect(result.text).toContain('写面未就绪')
@@ -418,22 +424,25 @@ describe('the /omw command', () => {
   it('explains a bad request instead of pretending to promote', async () => {
     const port = stubPort(OK_ANSWER)
     const invoke = mount(() => port)
-    const result = await invoke('pred promote mood')
+    const result = await invoke('omw-pred-promote', 'mood')
 
     expect(result.kind).toBe('error')
     expect(result.text).toContain('必须用 --single 或 --multi 指定基数')
     expect(port.calls).toEqual([])
   })
 
-  it('keeps doctor, help and the unknown-subcommand answer', async () => {
+  it('registers the ten names and refuses the four whose stories have not landed', async () => {
     const invoke = mount()
-    const help = await invoke(' help')
-    expect(help.kind).toBe('success')
-    expect(help.text).toContain('/omw doctor')
-    expect(help.text).toContain('pred promote')
+    // No bare /omw exists any more, and no subcommand dispatch either: the four
+    // undelivered commands answer with the story that owns them.
+    const undelivered = await invoke('omw-explain', 'assertion:a:b:c')
+    expect(undelivered.kind).toBe('error')
+    expect(undelivered.text).toContain('Story 3.1')
 
-    const unknown = await invoke(' nope')
-    expect(unknown.kind).toBe('error')
-    expect(unknown.text).toContain('未知子命令')
+    const flagged = await invoke('omw-flag-queue')
+    expect(flagged.text).toContain('Story 3.3')
+
+    const exported = await invoke('omw-export')
+    expect(exported.text).toContain('Story 3.5')
   })
 })

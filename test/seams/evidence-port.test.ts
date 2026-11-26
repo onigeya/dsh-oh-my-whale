@@ -19,7 +19,7 @@ import { createEvidenceReader } from '../../src/seams/evidence-reader.ts'
 import { createQuoteSource, type QuoteSource } from '../../src/seams/evidence-source.ts'
 import {
   parseEvidenceKey,
-  registerOmwCommand,
+  registerOmwCommands,
   type CommandDefinitionLike,
   type CommandRegistryLike,
 } from '../../src/seams/commands.ts'
@@ -358,15 +358,16 @@ describe('the reader behind /omw evidence', () => {
 })
 
 describe('the /omw evidence command', () => {
-  function registry(): CommandRegistryLike & { invoke(rawInput: string): Promise<unknown> } {
+  function registry(): CommandRegistryLike & { invoke(name: string, rawInput?: string): Promise<unknown> } {
     const definitions: CommandDefinitionLike[] = []
     return {
       register(definition: CommandDefinitionLike) {
         definitions.push(definition)
         return () => {}
       },
-      async invoke(rawInput: string) {
-        const definition = definitions[0]!
+      async invoke(name: string, rawInput = '') {
+        const definition = definitions.find(entry => entry.name === name)
+        if (definition === undefined) throw new Error(`no command registered as ${name}`)
         return definition.handler({ rawInput })
       },
     }
@@ -378,9 +379,9 @@ describe('the /omw evidence command', () => {
     await h.port.remember({ ops: [assertOp({ evidence: { seq_from: 50, seq_to: 50 } })] }, 'model', 'remember', SESSION)
     const reader = createEvidenceReader({ db: h.store.db, readQuote: source })
     const commands = registry()
-    registerOmwCommand(commands, () => { throw new Error('the doctor view is not used here') }, undefined, () => reader)
+    registerOmwCommands(commands, () => { throw new Error('the doctor view is not used here') }, undefined, () => reader)
 
-    const result = await commands.invoke(' evidence assertion:Elliott:likes:coffee') as { kind: string; text?: string }
+    const result = await commands.invoke('omw-evidence', 'assertion:Elliott:likes:coffee') as { kind: string; text?: string }
     expect(result.kind).toBe('success')
     const text = result.text ?? ''
     expect(text).toContain('session-alpha #50-50')
@@ -397,8 +398,8 @@ describe('the /omw evidence command', () => {
     const reader = createEvidenceReader({ db: h.store.db })
     await h.port.remember({ ops: [assertOp()] }, 'model', 'remember', SESSION)
     const commands = registry()
-    registerOmwCommand(commands, () => { throw new Error('unused') }, undefined, () => reader)
-    const result = await commands.invoke(' evidence assertion:Elliott:likes:coffee') as { kind: string; text?: string }
+    registerOmwCommands(commands, () => { throw new Error('unused') }, undefined, () => reader)
+    const result = await commands.invoke('omw-evidence', 'assertion:Elliott:likes:coffee') as { kind: string; text?: string }
     expect(result.kind).toBe('success')
     expect(result.text ?? '').toContain('assertion:Elliott:likes:coffee')
     reader.dispose()
@@ -406,31 +407,32 @@ describe('the /omw evidence command', () => {
 
   it('asks for a key when none was given', async () => {
     const commands = registry()
-    registerOmwCommand(commands, () => { throw new Error('unused') })
-    const result = await commands.invoke(' evidence') as { kind: string; text: string }
+    registerOmwCommands(commands, () => { throw new Error('unused') })
+    const result = await commands.invoke('omw-evidence') as { kind: string; text: string }
     expect(result.kind).toBe('error')
     expect(result.text).toContain('需要给出一个业务键')
   })
 
   it('says the store is unreadable when no reader is wired', async () => {
     const commands = registry()
-    registerOmwCommand(commands, () => { throw new Error('unused') })
-    const result = await commands.invoke(' evidence assertion:Elliott:likes:coffee') as { kind: string; text: string }
+    registerOmwCommands(commands, () => { throw new Error('unused') })
+    const result = await commands.invoke('omw-evidence', 'assertion:Elliott:likes:coffee') as { kind: string; text: string }
     expect(result.kind).toBe('error')
     expect(result.text).toContain('不可读')
   })
 })
 
 describe('cutting the key out of an invocation', () => {
-  it('keeps everything after the subcommand, colons and all', () => {
-    expect(parseEvidenceKey(' evidence assertion:Elliott:likes:coffee'))
+  it('keeps the key as typed, colons and all', () => {
+    // The command name is the host's, so the text starts at the key.
+    expect(parseEvidenceKey('assertion:Elliott:likes:coffee'))
       .toEqual({ ok: true, key: 'assertion:Elliott:likes:coffee' })
-    expect(parseEvidenceKey(' evidence   evidence:s1#5-6 ')).toEqual({ ok: true, key: 'evidence:s1#5-6' })
-    expect(parseEvidenceKey(' evidence')).toEqual({ ok: true, key: '' })
+    expect(parseEvidenceKey('  evidence:s1#5-6 ')).toEqual({ ok: true, key: 'evidence:s1#5-6' })
+    expect(parseEvidenceKey('')).toEqual({ ok: true, key: '' })
   })
 
   it('reports a second word instead of dropping it into a confident not-found', () => {
-    const parsed = parseEvidenceKey(' evidence assertion:Elliott:likes:coffee 谢谢')
+    const parsed = parseEvidenceKey('assertion:Elliott:likes:coffee 谢谢')
     expect(parsed.ok).toBe(false)
     if (!parsed.ok) expect(parsed.reason).toContain('谢谢')
   })

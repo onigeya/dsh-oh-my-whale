@@ -306,7 +306,6 @@ interface PlannedPredicate {
   readonly name: string
   readonly cardinality: PredicateCardinality
   readonly aliases: readonly string[]
-  readonly evidenceCount: number
   /** Registry status: a user declaration activates, a model proposal only candidates. */
   readonly status: PredicateStatus
 }
@@ -328,12 +327,13 @@ function readPredicate(context: PatchContext, name: string): PlannedPredicate | 
   const aliases = Array.isArray(rawAliases)
     ? rawAliases.filter((alias): alias is string => typeof alias === 'string')
     : []
-  const evidenceCount = typeof payload['evidence_count'] === 'number' ? payload['evidence_count'] : 0
+  // AD-5 / P0-7: the store keeps no mutable counters, so a legacy payload's
+  // `evidence_count` is ignored here rather than read and copied forward. That is
+  // what makes the field leave the store without a migration.
   return {
     name,
     cardinality: payload['cardinality'] === 'single' ? 'single' : 'multi',
     aliases,
-    evidenceCount,
     status: payload['status'] === 'candidate'
       ? 'candidate'
       : (payload['status'] === 'deprecated' ? 'deprecated' : 'active'),
@@ -473,7 +473,6 @@ export function buildDowngradedScenePayload(input: {
       name: input.pred,
       description: `${input.subj} ${input.pred} ${input.obj}`,
       episode_refs: [],
-      confidence: 0.5,
       subj: input.subj,
       pred: input.pred,
       obj: input.obj,
@@ -632,7 +631,6 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
       name,
       cardinality: op.cardinality,
       aliases,
-      evidenceCount: live?.evidenceCount ?? 0,
       // A user declaration is authoritative: it activates a candidate outright.
       status: 'active',
     }
@@ -651,7 +649,6 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
           aliases: state.aliases,
           decidedBy: 'user',
           decidedAt: nowIso,
-          evidenceCount: state.evidenceCount,
           normVersion: NORM_VERSION,
           activeSlot: 1,
           recordedAt: nowIso,
@@ -663,7 +660,7 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
         decisionKind: 'insert',
         targetMemKey: predKey,
         affected: [predKey],
-        to: { cardinality: state.cardinality, aliases: state.aliases, evidence_count: state.evidenceCount },
+        to: { cardinality: state.cardinality, aliases: state.aliases },
         reason,
       })
       items.push({ index: index + 1, op: 'pred', outcome: 'created', memKey: predKey, kind: 'pred' })
@@ -706,7 +703,6 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
           aliases: state.aliases,
           decidedBy: 'user',
           decidedAt: nowIso,
-          evidenceCount: state.evidenceCount,
           normVersion: NORM_VERSION,
           activeSlot: 1,
           recordedAt: nowIso,
@@ -718,8 +714,8 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
         decisionKind: 'supersede',
         targetMemKey: predKey,
         affected: [predKey],
-        from: { status: live.status, aliases: live.aliases, evidence_count: live.evidenceCount },
-        to: { status: 'active', aliases: state.aliases, evidence_count: state.evidenceCount },
+        from: { status: live.status, aliases: live.aliases },
+        to: { status: 'active', aliases: state.aliases },
         reason,
       })
       items.push({ index: index + 1, op: 'pred', outcome: 'promoted', memKey: predKey, kind: 'pred' })
@@ -745,7 +741,6 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
         aliases: state.aliases,
         decidedBy: 'user',
         decidedAt: nowIso,
-        evidenceCount: state.evidenceCount,
         normVersion: NORM_VERSION,
         activeSlot: 1,
         recordedAt: nowIso,
@@ -770,8 +765,8 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
       // looks at the last element still finds the subject of the change. The
       // flag is written by this same op, so it belongs in the closure ahead of it.
       affected: [flagKey, predKey],
-      from: { cardinality: live.cardinality, aliases: live.aliases, evidence_count: live.evidenceCount },
-      to: { cardinality: state.cardinality, aliases: state.aliases, evidence_count: state.evidenceCount },
+      from: { cardinality: live.cardinality, aliases: live.aliases },
+      to: { cardinality: state.cardinality, aliases: state.aliases },
       reason,
     })
     items.push({ index: index + 1, op: 'pred', outcome: 'promoted', memKey: predKey, kind: 'pred' })
@@ -857,7 +852,7 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
         continue
       } else {
         // A predicate this installation has never seen: always multi/candidate.
-        state = { name: pred.name, cardinality: 'multi', aliases: [], evidenceCount: 0, status: 'candidate' }
+        state = { name: pred.name, cardinality: 'multi', aliases: [], status: 'candidate' }
         planned.set(pred.name, state)
         newPredsHere += 1
         const predKey = predicateMemKey(pred.name)
@@ -870,7 +865,6 @@ export function planPatchTable(table: PatchTable, context: PatchContext): PlanRe
             aliases: state.aliases,
             decidedBy: 'model',
             decidedAt: nowIso,
-            evidenceCount: state.evidenceCount,
             normVersion: NORM_VERSION,
             activeSlot: 1,
             recordedAt: nowIso,
