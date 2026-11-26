@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { ensureSchema } from '../../src/store/schema.ts'
 import { createWritePort, type WritePort } from '../../src/seams/write-port.ts'
 import { createVersionReader, type VersionReader } from '../../src/seams/version-reader.ts'
+import { isLive } from '../../src/store/filters.ts'
 import {
   parseMemKeyArgument,
   registerOmwCommands,
@@ -304,5 +305,35 @@ describe('cutting the key out of a version invocation', () => {
     const parsed = parseMemKeyArgument('assertion:a:b 谢谢', 'omw-history')
     expect(parsed.ok).toBe(false)
     expect(parsed.ok ? '' : parsed.reason).toContain('一次只查一个业务键')
+  })
+})
+
+describe('version-reader: "live" is the same predicate the templates use', () => {
+  it('reads a version that carries `superseded_at` at all as retired, whatever the value', () => {
+    // AD-5: 未失效时不写该字段，也从不写 null；模板用 `$exists: false` 表达未失效，
+    // `store/filters.ts` 的 isLive 用 `Object.hasOwn`，两者同义。一份带键的负载只可能
+    // 来自一次坏写入，而它必须被当成退役——否则 `/omw history` 会把模板判为退役的
+    // 那条报成「在用」，两个读面给出相反答案。
+    const h = harness()
+    h.store.db.insert([0, 0, 0, 0], {
+      kind: 'assertion',
+      mem_key: 'assertion:Elliott:null_slot',
+      subj: 'Elliott',
+      pred: 'null_slot',
+      obj: 'x',
+      active_slot: 1,
+      valid_from: new Date(NOW).toISOString(),
+      recorded_at: new Date(NOW).toISOString(),
+      superseded_at: null,
+    })
+
+    const answer = h.reader.history('assertion:Elliott:null_slot')
+
+    expect(answer.ok).toBe(true)
+    expect(answer.versions).toHaveLength(1)
+    // 契约是「两个读面对同一行给出同一答案」，所以断言与模板侧同一个谓词比较，
+    // 而不是写死某个布尔值——写死的话，实现方式一变测试就失效，契约却没被钉住。
+    const payload = { kind: 'assertion', mem_key: 'assertion:Elliott:null_slot', active_slot: 1, superseded_at: null }
+    expect(answer.versions[0]?.live).toBe(isLive(payload))
   })
 })

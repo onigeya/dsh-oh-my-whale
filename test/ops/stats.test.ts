@@ -139,14 +139,14 @@ describe('stats: each road uses its own criterion', () => {
   it('groups recalls by reason, and counts a two-reason recall in both', () => {
     const report = summarizeAudit([
       recall({ degraded: true, degraded_reason: ['rerank_unavailable'] }),
-      recall({ degraded: true, degraded_reason: ['rerank_unavailable', 'timeout'] }),
+      recall({ degraded: true, degraded_reason: ['rerank_unavailable', 'recall_timeout'] }),
       recall({ degraded: false, degraded_reason: [] }),
     ], { all: true }, NOW)
 
     expect(report.recall.degraded).toBe(2)
     expect(report.recall.reasons).toEqual([
       { name: 'rerank_unavailable', count: 2 },
-      { name: 'timeout', count: 1 },
+      { name: 'recall_timeout', count: 1 },
     ])
   })
 

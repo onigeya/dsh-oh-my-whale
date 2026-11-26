@@ -15,6 +15,7 @@
  */
 import type { Database } from '../store/db.ts'
 import { createReadGateway } from '../store/commits/reads.ts'
+import { isLive } from '../store/filters.ts'
 import { decisionView, type DecisionView } from '../core/decisions.ts'
 import { E_OK } from '../core/tool-errors.ts'
 
@@ -22,7 +23,16 @@ import { E_OK } from '../core/tool-errors.ts'
 export interface VersionView {
   /** The version's own `mem_key` (every version of one key shares it). */
   readonly mem_key: string
-  /** Whether this is the version a default read returns. */
+  /**
+   * Whether this is the version a default read returns.
+   *
+   * Two different questions answered from two different facts: this flag asks
+   * "is the field present", which is the predicate the templates and
+   * `store/filters.ts` use; the `superseded_at` field below is only reported
+   * when it reads as a number. A payload carrying `superseded_at: null` is
+   * therefore retired here and shows no timestamp — the status is still right,
+   * and there is no number to show.
+   */
   readonly live: boolean
   /** The node kind, so a caller can tell an assertion version from a predicate one. */
   readonly kind: string
@@ -145,7 +155,10 @@ function toVersionView(payload: Readonly<Record<string, unknown>>): VersionView 
   }
   return {
     mem_key: memKey,
-    live: supersededAt === undefined,
+    // 「在用」的判据只有一个：`store/filters.ts` 的 isLive（键不存在）。这里不另判
+    // 一次，否则模板用 `$exists: false` 筛掉的那条，历史面会把 `superseded_at: null`
+    // 报成「在用」——两个读面对同一行给出相反答案。
+    live: isLive(payload),
     kind: textField(payload, 'kind') ?? '',
     ...optional,
   }

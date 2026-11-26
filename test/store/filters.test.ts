@@ -117,6 +117,10 @@ describe('filters: the template and the predicate agree', () => {
       // A retired version whose timestamp is 0: present, therefore retired. The
       // single case where a truthiness bug would be visible.
       { kind: 'assertion', mem_key: 'assertion:Elliott:timezone', active_slot: 1, superseded_at: 0 },
+      // Present but not a number. `$exists: false` excludes it and `isLive` says
+      // retired, so both agree — this is the value that `/omw history` used to
+      // report as live, which is why the reader now asks `isLive` too.
+      { kind: 'assertion', mem_key: 'assertion:Elliott:null_slot', active_slot: 1, superseded_at: null },
     ]
     for (const payload of payloads) store.db.insert([...ZERO], payload)
 

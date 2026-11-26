@@ -78,9 +78,17 @@ graph TD
 
 - **Binds:** CAP-1, CAP-4, seams/
 - **Prevents:** 各模块自行调 `section()` 导致前缀缓存天天失效；预算失控；说不清一轮对话到底注入了多少。
-- **Rule:** 三条注入通道各管一档，不得混用：身份段（≤1200 字符、字节稳定）走 `ctx.systemPrompt.section({name:'harness:identity', order, text})`——它的渲染结果被提交为节点 0，文本一变就原地替换、击穿前缀缓存，所以不许承载任何逐轮变化的文本；状态尾巴（≤30 token、每轮可变）**只能**走 `ctx.systemPrompt.context({name:'omw:persona-state', order, text})`，那是宿主给出的 cache-safe 通道，快照只在变化或 compaction 后才追加；召回走 `ctx.systemPrompt.context({name:'omw:recall', order: 131})`（见下段）。三处都只允许出现在 `seams/prompt-composer.ts`；它持有预算表——身份段 ≤1200 字符、状态尾巴 ≤30 token（关系四维与档位 ≈12、最近一条已确认偏好 ≈10、一条待处理 flag ≈8）、场景常驻为 0；身份段文本哈希不变即不重写，保持字节稳定；超预算按 身份 > 状态 > 召回 顺序裁剪并记账。此处有意取代设计稿的 ≤120 token 常驻档：v1 只留身份段与 30 token 尾巴，场景与更多偏好走按需召回（用户第四轮裁定）。
+- **Rule:** 注入通道按**登记制**管理，**不按数量枚举**——枚举式写法（「两条」「三条」）会让每条新增通道都看起来像违约，而新增一条 `context` 通道本身完全合法。规则是：每一档必须在下面的登记表里占一行（名字 / 宿主通道 / 序位 / 上限 / 稳定性等级），**未登记者不得注册**，且所有注册只允许出现在 `seams/prompt-composer.ts`；新增一档 = 改这张表 + 补一条「注册的通道集合 == 登记表」的断言，不改本条。当前登记三档：身份段（≤1200 字符、字节稳定）走 `ctx.systemPrompt.section({name:'harness:identity', order, text})`——它的渲染结果被提交为节点 0，文本一变就原地替换、击穿前缀缓存，所以不许承载任何逐轮变化的文本；状态尾巴（≤30 token、每轮可变）**只能**走 `ctx.systemPrompt.context({name:'omw:persona-state', order, text})`，那是宿主给出的 cache-safe 通道，快照只在变化或 compaction 后才追加；召回走 `ctx.systemPrompt.context({name:'omw:recall', order: 131})`（见下段）。三处都只允许出现在 `seams/prompt-composer.ts`；它持有预算表——身份段 ≤1200 字符、状态尾巴 ≤30 token（关系四维与档位 ≈12、最近一条已确认偏好 ≈10、一条待处理 flag ≈8）、场景常驻为 0；身份段文本哈希不变即不重写，保持字节稳定；超预算按 身份 > 状态 > 召回 顺序裁剪并记账。此处有意取代设计稿的 ≤120 token 常驻档：v1 只留身份段与 30 token 尾巴，场景与更多偏好走按需召回（用户第四轮裁定）。
 
-**召回怎么进注入（2026-11-26 P0-1 补齐）**——上面的两条通道没有回答「召回结果走哪条」，这是 AD-7 与 AD-8 之间长期的空档：两边都没写，于是 recall 只做成了工具、从未进过注入。定案如下：
+**注入通道登记表**（唯一权威；新增一档在此加一行，并同时改 `test/load/inject.test.ts` 的通道集合断言）：
+
+| 段名 | 宿主通道 | 序位 | 上限 | 稳定性 |
+| --- | --- | --- | --- | --- |
+| `harness:identity` | `systemPrompt.section` | -1000 | 1200 字符 | 字节稳定（哈希不变不重注册） |
+| `omw:persona-state` | `systemPrompt.context` | 130 | 30 token | 逐轮可变 |
+| `omw:recall` | `systemPrompt.context` | 131 | 召回池（≤5 条 × 单项估值） | 逐轮可变 |
+
+**召回怎么进注入（2026-11-26 P0-1 补齐）**——登记表原先只有身份段与状态尾巴两行，没有任何一行回答「召回结果走哪条」，这是 AD-7 与 AD-8 之间长期的空档：两边都没写，于是 recall 只做成了工具、从未进过注入。定案如下（并已在上面登记为第三档 `omw:recall`）：
 
 - 召回走**第三条 `context()` 通道**，`name: 'omw:recall'`、`order: 131`（紧跟状态尾巴的 130）。不并进身份段（逐轮变化会击穿前缀缓存），也不并进状态尾巴（30 token 装不下 5 条记忆，且两者寿命不同）。
 - **查询串在装配前生成**，不是装配时现编：从本会话最近若干 `user/message` 事件倒序取文本、累计约 200 字符作为查询。查询与召回是先后两个动作，不是同一个动作——查询决定问什么，召回决定拿什么回来。

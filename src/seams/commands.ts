@@ -95,11 +95,22 @@ export interface DoctorReport {
   readonly text: string
 }
 
-/** Render one check as a single terminal line. */
-function render(line: DoctorLine, index: number): string {
+/**
+ * Render one check as a single terminal line.
+ *
+ * The denominator is the number of checks this run actually produced, not a
+ * literal. Today that is five, but another install site adds its own check
+ * without touching this file, and a hard-coded denominator would then report a
+ * full pass for a run that printed more.
+ * @param line - the check.
+ * @param index - its 1-based position.
+ * @param total - how many checks this run produced.
+ * @returns the rendered line.
+ */
+function render(line: DoctorLine, index: number, total: number): string {
   const mark = line.status === 'pass' ? 'pass' : line.status === 'fail' ? 'FAIL' : 'skip'
   const code = line.code === undefined ? '' : ` [${line.code}]`
-  return `${index}/5 ${line.id.padEnd(10, ' ')} ${mark} ${line.detail}${code}`
+  return `${index}/${total} ${line.id.padEnd(10, ' ')} ${mark} ${line.detail}${code}`
 }
 
 /**
@@ -245,7 +256,7 @@ export function inspectInProcess(view: DoctorView): DoctorReport {
     ? `omw doctor: ${passed}/${lines.length} 通过${skipped === 0 ? '' : `、${skipped} 跳过（库不可用）`}`
     : `omw doctor: ${passed}/${lines.length} 通过、${failures} 失败；首个失败 ${firstFailure?.code ?? firstFailure?.id ?? 'unknown'}`
   const text = [
-    ...lines.map((line, index) => render(line, index + 1)),
+    ...lines.map((line, index) => render(line, index + 1, lines.length)),
     summary,
     `数据目录：${view.paths.dataDir}`,
   ].join('\n')
