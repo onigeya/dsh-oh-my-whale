@@ -2193,3 +2193,61 @@ So that 我不会把一条软指标当成闸门，也不会得到一个只会附
 **五、Epic 8 的整组退回分支**
 
 若 G-E8-0 前置闸门（在 fixture 里真的摘掉宿主 `compaction-basic` 与 `tool-result-pruner`）没过，**Epic 8 整组 14 条退回 Deferred**，Story 8.1–8.4 全部不实施，v1 只剩 Epic 3 的治理面与证明链。这个分支必须写在这里，否则实施者会把「写好了 story」误当成「一定要做」。
+
+---
+
+## 架构审查结转（2026-11-26 登记）
+
+> **来源**：`docs/implementation-artifacts/architecture-review-2026-11-26.md` —— 第一部分的 P1/P2 候选、第二部分仍成立的条目、第三部分未闭合项。
+> **登记目的**与上面「不进 story 的条目」相同：让「没做」与「没规划」可区分。
+> **与那一段的区别**：这些条目**都要做**，只是不属当前这一轮。多数不该夹在功能 story 里（`epic-3-readiness-2026-11-26.md` 的 Q3 / Q9 已作过同样判断）。
+> **编号纪律**：下面写的是**建议落点**，story 编号仍由 `bmad-sprint-planning` 分配，本段不抢号。
+
+### 一、新增 Epic R「结构收口」（非功能 epic）
+
+**为什么单独开一条**：这些改动只为一个目的——让后续每个 story 的改动成本不再随文件行数增长。它们不产出任何用户可见能力，混进功能 story 会让该 story 的 AC 变成「改完还能跑」，既不可验收也无法独立回滚。
+
+**为什么排在 Epic 3 之后、Epic 4 之前**：
+
+- Epic 3 要动的正是 `planPatchTable`（冲突分级、按 `op_id` 撤销）与 `write-port`（`explain`、`export`）。在那之前拆它们，等于边搬边改同一个函数。
+- Epic 4 起（自动抽取）会往 `write-port` 与 `planPatchTable` 再加分支——届时 481 行的函数会变成 600 行以上。**这是这条 epic 存在的唯一硬理由**：晚一轮，拆分成本更高。
+
+| 建议 story | 内容 | 依据（行号为登记时实测） | 完成判据 | 量 |
+| --- | --- | --- | --- | --- |
+| R.1 | 装配中心拆成「探测 → 判定 → 组装」三段 | `src/seams/runtime.ts:308-766`，`startRuntime` 459 行；12 个可变 `let` 在 `:414-425` | `startRuntime` ≤100 行；探针相关测试不再整机启动；`pnpm test` 用例数不减 | 高 |
+| R.2 | 写口拆成「校验+脱敏 → 规划 → 提交」 | `src/seams/write-port.ts:247-749`，`createWritePort` 503 行 | `createWritePort` ≤150 行；`test/seams/write-port*.test.ts` 断言不改仍全绿 | 中高 |
+| R.3 | `planPatchTable` 六个分支收成单一产出物 | `src/core/patch.ts:539-1019`，481 行；`buildPredicatePayload` 重复 4 次、`decisions.push` 6 次 | 函数 ≤150 行；`test/core/patch.test.ts` 覆盖的契约不减 | 中高 |
+| R.4 | 四个零消费者导出收口 | `WRITE_OUTPUT_SCHEMA`（仅声明 1 处）、`composeStateTail`（3）、`EMBEDDING_FAILURE_KINDS`（2）、`isToolErrorCode`（6，全在测试） | 每个符号要么被生产调用，要么删除；删除后无测试变红 | 低 |
+| R.5 | 可选宿主服务解析收敛成一个接缝 | `src/index.ts:140-151`、`src/seams/runtime.ts:787-806`、`:818-827`、`:665-672` 四处四种返回约定 | `ctx.get` 的直接调用只剩一处；`pnpm test` 全绿 | 低 |
+| R.6 | 业务键拼装与解读收进一个 module | 七个构造点（`patch.ts:142`、`templates/assertions.ts:68`、`evidence.ts:211`、`decisions.ts:51/97`、`meta.ts:21`、`patch.ts:738/880`）+ 两处 `split(':')`（`recall-reader.ts:306,385`） | 构造点收敛到一处；`recall-reader` 不再拆键 | 中 |
+| R.7 | 测试只穿过接口 | `test/seams/recall-reader.test.ts` 独占 29 处直接 `db.insert`；`test/support/write-store.ts:51-58` 重抄索引 DDL；`fake-registry.ts:130-134` 另写 slot 过滤 | `db.insert(` 命中数降到个位数；`write-store.ts` 不再重抄 DDL | 中 |
+| R.8 | 静态门规则补全与死字段清除 | `scripts/check-layers.mjs:36-56` 只有 3 条规则而 `src/` 有 4 个目录；`:41` `allowedSpecifiers` 定义后从不读取；`:115-127` 写方法名单与 `test/lint/layers.test.ts:126-138` 各抄一份 | 规则覆盖四个真实目录的邻接矩阵；死字段删除或接线；测试改为表驱动 | 中 |
+
+**R 的验收闸门**：一条都不改变用户可见行为。所以判据统一是——`pnpm lint` 与 `pnpm test` 全绿，且 `git diff --stat` 里没有 `src/` 之外的意外改动。任何一条若需要改测试断言，说明它改的是契约而不是结构，**应退回并重新归类**。
+
+### 二、并进既有 Epic 的增量
+
+| 落点 | 事项 | 挡什么 / 为什么在那 | 依据 | 量 |
+| --- | --- | --- | --- | --- |
+| **Epic 3 前置（建议 Story 3.0）** | 评测基线：建 `eval/` 与 `test/fixtures/` 目录约定，写出 `eval/governance-20.md` 的 20 条治理三问 fixture 与 `eval/rubric.md` 的盲判口径 | **挡 Epic 3 全部 story**：Story 3.1 的 Then 要求写 `eval/governance-20.md`，Story 4.x 的 Given 要求「存在 `eval/golden-l1.jsonl`」，而三个路径**当前都不存在**，epics 里却有 15 处 `eval/` 引用 | `epics.md:720`、`:1057`；实测 `Test-Path eval` 为 False | 中 |
+| **Epic 3 增量** | 注入计划只留一个权威对象 | `explain` 要读审计行，而审计行读的 `plan` 与宿主收到的不是同一份 | `prompt-composer.ts:776` 造 `nextPlan`、`:848` 存进 `#livePlan`、`:810` 回放 `#offeredPlan`，而 `runtime.ts:466` 记的是 `outcome.plan` | 中 |
+| **Epic 3 增量** | 写事务输出契约合并成一份 | `tools.ts:92` 的 schema 缺 `evidence`，`write-port.ts:189` 的 `WRITE_OUTPUT_SCHEMA` 零消费者——模型要查两处才知道返回形状 | 第一部分候选 4 | 低 |
+| **Epic 3 增量** | `active_slot` 的两种含义分开 | 一个字段既当「在用=1」（5 处）又当「退役毫秒」（`patch.ts:1146`）；Story 3.2 的版本链要按它排序 | 第一部分候选 8 | 中 |
+| **Epic 8 前置（架构侧）** | 把「安装位」与「注意力池」补成两个一等概念 | AD-13「两档」vs AD-36「五档」、AD-7「三档预算」vs FR-53「共享池」都靠限定语弥合；Epic 8 要在会变的地基上盖楼 | 第二部分第 4 条 | 中 |
+
+### 三、文档与卫生（不挡任何 story，单独成一次 chore 提交）
+
+| 事项 | 依据 | 完成判据 | 量 |
+| --- | --- | --- | --- |
+| CAP-9（FR-25…FR-33 / AD-46…AD-55）分解为 story | 至今「未分解」；已渗入 v1 两处（错误码 8→11、doctor 第 5 项判据） | CAP-9 有自己的 epic 或明确进 v2，且 `SPEC.md` 不再有指向未交付能力的验收句 | 中 |
+| `ARCHITECTURE-SPINE.md` 的 Structural Seed 标注「计划中」 | 树里 `src/dream`、`src/gui`、`src/core/projections`、`eval/` 四项当前不存在 | 每行标 `# 计划中，Epic N`，或拆成「已存在 / 计划中」两段 | 低 |
+| AD 正文瘦身：模型名、实测耗时、外部端点移出 | `AD-10` 1,713 字符含 G0-8 实测数；`AD-8` 把 Alpha 端点 `SemIf` 写成规则；27 条平均 718 字符、8 条超 800 | AD 只留「两个下一层单元会做出不兼容选择」的部分，数值归 `Stack` 与 `Operations` | 中 |
+| 编号登记表独立成文件 | `SPINE:290-292` 自述三份文档曾同号异义，现靠一张表维持 | 表迁到 `docs/architecture/ID-REGISTRY.md`，三份文档开头引用它 | 低 |
+| `docs/**/imports` 与过期预览移出仓库 | 实测 148.4 MiB / 4,174 文件未被 git 跟踪；`preview/_stale-*` 里 8 张 PNG 与当前副本 SHA256 相同 | 按 `architecture-review-2026-11-26.md` 的 `.gitignore` 建议执行；**执行前需用户确认** | 低 |
+| FR 加状态字段（planned / building / shipped / deferred） | 77 条 FR 里 44 条来自一轮研究，而只交付了 11 个 story；「已规划」失去了承诺含义 | 同一时刻 `planned` 不超过一个 sprint 能消化的量 | 低 |
+
+### 四、本段不包含的事
+
+- **不重写 PRD 或 spine**。它们在 `architecture-review-2026-11-26.md` 第二部分里被逐条评估过：需要收口，不需要推翻。
+- **不重排既有 story**。上面全部是增量或前置，不改 Epic 1–9 已有 AC 的任何一条。
+- **不在本段解决 CAP-9 的归属**。它属 `bmad-sprint-planning` 的分解决定，本段只登记「它仍未被分解」这个事实。

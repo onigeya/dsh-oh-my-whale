@@ -525,6 +525,8 @@ check-layers.mjs  # 99 个源文件，全部规则通过
 
 ## 仍然未动
 
+> **2026-11-26 补记**：下面这些条目已按归属规划进 `docs/planning-artifacts/epics.md` 的「架构审查结转（2026-11-26 登记）」段——结构类进新增的 Epic R，评测基线进 Epic 3 前置，文档卫生单列一次 chore。本节保留为「当时为什么没做」的记录，不再是待办清单。
+
 - **`eval/` 前置 story**——`eval/`、`test/fixtures/`、`epic-3-context.md` 三者仍都不存在，而 `epics.md` 有 15 处引用 `eval/`。这是 Epic 3 开工的实质阻塞。
 - **三个超大函数拆分**——`startRuntime` 459 行 / `createWritePort` 503 行 / `planPatchTable` 481 行。搬迁需要独占工作区。
 - **docs 瘦身**——`docs/**/imports` 仍 148.4 MiB 且未被 git 跟踪。按 C2 约束只出清单，等确认。
